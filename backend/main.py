@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from config import get_settings
 from database import init_db
 from api.router import api_v1_router
-from utils.search_client import search_client
+from utils.search_engine import search_client
 import logging
 from loguru import logger
 
@@ -25,24 +25,24 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("✅ 数据库初始化完成")
     
-    # 初始化 Elasticsearch 索引
+    # 初始化搜索引擎索引
     try:
         await search_client.ensure_index()
-        logger.info("✅ Elasticsearch 索引初始化完成")
+        logger.info("✅ 搜索引擎索引初始化完成")
     except Exception as e:
-        logger.warning(f"⚠️ Elasticsearch 初始化失败: {e}")
+        logger.warning(f"⚠️ 搜索引擎初始化失败: {e}")
     
     yield
     
     # 关闭时
     logger.info("🛑 DocHive 后端服务关闭中...")
     
-    # 关闭 Elasticsearch 连接
+    # 关闭搜索引擎连接
     try:
         await search_client.close()
-        logger.info("✅ Elasticsearch 连接已关闭")
+        logger.info("✅ 搜索引擎连接已关闭")
     except Exception as e:
-        logger.error(f"❌ Elasticsearch 关闭失败: {e}")
+        logger.error(f"❌ 搜索引擎关闭失败: {e}")
 
 
 # 创建 FastAPI 应用

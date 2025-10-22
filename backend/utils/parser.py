@@ -4,7 +4,6 @@ from pathlib import Path
 import PyPDF2
 import docx
 from PIL import Image
-import pytesseract
 from config import get_settings
 
 settings = get_settings()
@@ -73,19 +72,8 @@ class DocumentParser:
     
     @staticmethod
     async def parse_image_ocr(file_data: bytes) -> str:
-        """使用 OCR 解析图片"""
-        try:
-            # 设置 Tesseract 路径
-            if settings.TESSERACT_PATH:
-                pytesseract.pytesseract.tesseract_cmd = settings.TESSERACT_PATH
-            
-            image = Image.open(io.BytesIO(file_data))
-            
-            # 执行 OCR，支持中英文
-            text = pytesseract.image_to_string(image, lang="chi_sim+eng")
-            return text.strip()
-        except Exception as e:
-            raise Exception(f"OCR 解析失败: {str(e)}")
+        """使用 OCR 解析图片, 后续会增加大模型OCR"""
+        raise NotImplementedError("暂不支持图片解析")
     
     @staticmethod
     async def parse_file(file_data: bytes, file_extension: str) -> str:

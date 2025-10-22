@@ -1,5 +1,5 @@
 import time
-from sqlalchemy import Column, Integer, String, Text, JSON, Boolean, ForeignKey, Enum as SQLEnum, inspect, event
+from sqlalchemy import Column, Integer, String, Text, Boolean, ForeignKey, Enum as SQLEnum, inspect, event
 from datetime import datetime
 from database import Base
 import enum
@@ -55,7 +55,7 @@ class ClassTemplate(Base, ToDictMixin):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False, index=True)
     description = Column(Text)
-    levels = Column(JSON, nullable=False)  # 层级定义：[{"level": 1, "name": "年份", "code": "YEAR"}, ...]
+    levels = Column(Text, nullable=False)  # 层级定义：[{"level": 1, "name": "年份", "code": "YEAR"}, ...]
     version = Column(String(20), default="1.0")
     is_active = Column(Boolean, default=True)
     creator_id = Column(Integer, index=True)  # 关联 users.id，无外键约束
@@ -89,7 +89,7 @@ class Document(Base, ToDictMixin):
     
     # 分类信息
     template_id = Column(Integer, index=True)  # 关联 class_templates.id，无外键约束
-    class_path = Column(JSON)  # 分类路径：{"年份": "2025", "部门": "研发部", ...}
+    class_path = Column(Text)  # 分类路径：{"年份": "2025", "部门": "研发部", ...}
     class_code = Column(String(100), unique=True, index=True)  # 唯一分类编号
     
     # 内容信息
@@ -97,8 +97,8 @@ class Document(Base, ToDictMixin):
     summary = Column(Text)  # 文档摘要
     
     # 抽取信息
-    extracted_data = Column(JSON)  # 结构化抽取字段
-    metadata = Column(JSON)  # 元信息（作者、创建时间等）
+    extracted_data = Column(Text)  # 结构化抽取字段
+    document_metadata = Column(Text)  # 元信息（作者、创建时间等）
     
     # 状态信息
     status = Column(String(20), default="pending")  # pending, processing, completed, failed
@@ -117,7 +117,7 @@ class ExtractionConfig(Base, ToDictMixin):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False, index=True)
     doc_type = Column(String(50), nullable=False)  # 简历、报告、合同等
-    extract_fields = Column(JSON, nullable=False)  # 抽取字段配置
+    extract_fields = Column(Text, nullable=False)  # 抽取字段配置
     """
     示例：[
         {"name": "姓名", "type": "text", "method": "regex", "pattern": "姓名[:：]\\s*(\\S+)"},
@@ -149,7 +149,7 @@ class OperationLog(Base, ToDictMixin):
     action = Column(String(50), nullable=False)  # create, update, delete, classify, extract
     resource_type = Column(String(50))  # template, document, config
     resource_id = Column(Integer)
-    details = Column(JSON)
+    details = Column(Text)
     ip_address = Column(String(50))
     created_at = Column(Integer, default=lambda: int(time.time()), index=True)
 
@@ -160,7 +160,7 @@ class SystemConfig(Base, ToDictMixin):
     
     id = Column(Integer, primary_key=True, index=True)
     config_key = Column(String(100), unique=True, nullable=False, index=True)
-    config_value = Column(JSON, nullable=False)
+    config_value = Column(Text, nullable=False)
     description = Column(Text)
     is_public = Column(Boolean, default=False)  # 是否对普通用户可见
     updated_at = Column(Integer, default=lambda: int(time.time()))
