@@ -1,8 +1,30 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, Boolean, ForeignKey, Enum as SQLEnum
-from sqlalchemy.orm import relationship
+import time
+from sqlalchemy import Column, Integer, String, Text, JSON, Boolean, ForeignKey, Enum as SQLEnum, inspect, event
 from datetime import datetime
 from database import Base
 import enum
+
+def update_timestamp_before_update(mapper, connection, target):
+    """更新时间戳的通用函数"""
+    target.updated_at = int(time.time())
+
+class ToDictMixin:
+    def to_dict(self):
+        """将 ORM 实例转为 JSON 可用的 dict"""
+        result = {}
+        for c in inspect(self).mapper.column_attrs:
+            value = getattr(self, c.key)
+            if isinstance(value, datetime):
+                value = value.isoformat()  # 转成字符串
+            elif (
+                isinstance(value, int)
+                and c.key.endswith(("_at", "_date"))
+                and value > 1000000000
+            ):
+                # 将时间戳转为 ISO 格式字符串
+                value = datetime.fromtimestamp(value).isoformat()
+            result[c.key] = value
+        return result
 
 
 class UserRole(str, enum.Enum):
@@ -12,7 +34,7 @@ class UserRole(str, enum.Enum):
     REVIEWER = "reviewer"
 
 
-class User(Base):
+class User(Base, ToDictMixin):
     """用户表"""
     __tablename__ = "users"
     
@@ -22,15 +44,11 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     role = Column(SQLEnum(UserRole), default=UserRole.USER, nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # 关系
-    created_templates = relationship("ClassTemplate", back_populates="creator")
-    uploaded_documents = relationship("Document", back_populates="uploader")
+    created_at = Column(Integer, default=lambda: int(time.time()))
+    updated_at = Column(Integer, default=lambda: int(time.time()))
 
 
-class ClassTemplate(Base):
+class ClassTemplate(Base, ToDictMixin):
     """分类模板表"""
     __tablename__ = "class_templates"
     
@@ -40,33 +58,25 @@ class ClassTemplate(Base):
     levels = Column(JSON, nullable=False)  # 层级定义：[{"level": 1, "name": "年份", "code": "YEAR"}, ...]
     version = Column(String(20), default="1.0")
     is_active = Column(Boolean, default=True)
-    creator_id = Column(Integer, ForeignKey("users.id"))
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # 关系
-    creator = relationship("User", back_populates="created_templates")
-    documents = relationship("Document", back_populates="template")
-    numbering_rules = relationship("NumberingRule", back_populates="template")
+    creator_id = Column(Integer, index=True)  # 关联 users.id，无外键约束
+    created_at = Column(Integer, default=lambda: int(time.time()))
+    updated_at = Column(Integer, default=lambda: int(time.time()))
 
 
-class NumberingRule(Base):
+class NumberingRule(Base, ToDictMixin):
     """编号规则表"""
     __tablename__ = "numbering_rules"
     
     id = Column(Integer, primary_key=True, index=True)
-    template_id = Column(Integer, ForeignKey("class_templates.id"), nullable=False)
+    template_id = Column(Integer, nullable=False, index=True)  # 关联 class_templates.id，无外键约束
     rule_format = Column(String(200), nullable=False)  # 如：{year}-{dept_code}-{type_code}-{seq:04d}
     separator = Column(String(10), default="-")
     auto_increment = Column(Boolean, default=True)
     current_sequence = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # 关系
-    template = relationship("ClassTemplate", back_populates="numbering_rules")
+    created_at = Column(Integer, default=lambda: int(time.time()))
 
 
-class Document(Base):
+class Document(Base, ToDictMixin):
     """文档记录表"""
     __tablename__ = "documents"
     
@@ -78,7 +88,7 @@ class Document(Base):
     file_size = Column(Integer)  # 字节
     
     # 分类信息
-    template_id = Column(Integer, ForeignKey("class_templates.id"))
+    template_id = Column(Integer, index=True)  # 关联 class_templates.id，无外键约束
     class_path = Column(JSON)  # 分类路径：{"年份": "2025", "部门": "研发部", ...}
     class_code = Column(String(100), unique=True, index=True)  # 唯一分类编号
     
@@ -95,17 +105,12 @@ class Document(Base):
     error_message = Column(Text)
     
     # 审计信息
-    uploader_id = Column(Integer, ForeignKey("users.id"))
-    upload_time = Column(DateTime, default=datetime.utcnow, index=True)
-    processed_time = Column(DateTime)
-    
-    # 关系
-    template = relationship("ClassTemplate", back_populates="documents")
-    uploader = relationship("User", back_populates="uploaded_documents")
-    extraction_configs = relationship("ExtractionConfig", secondary="document_extraction_mapping")
+    uploader_id = Column(Integer, index=True)  # 关联 users.id，无外键约束
+    upload_time = Column(Integer, default=lambda: int(time.time()), index=True)
+    processed_time = Column(Integer)
 
 
-class ExtractionConfig(Base):
+class ExtractionConfig(Base, ToDictMixin):
     """信息抽取配置表"""
     __tablename__ = "extraction_configs"
     
@@ -121,35 +126,35 @@ class ExtractionConfig(Base):
     ]
     """
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(Integer, default=lambda: int(time.time()))
+    updated_at = Column(Integer, default=lambda: int(time.time()))
 
 
-class DocumentExtractionMapping(Base):
+class DocumentExtractionMapping(Base, ToDictMixin):
     """文档-抽取配置映射表"""
     __tablename__ = "document_extraction_mapping"
     
     id = Column(Integer, primary_key=True, index=True)
-    document_id = Column(Integer, ForeignKey("documents.id"))
-    extraction_config_id = Column(Integer, ForeignKey("extraction_configs.id"))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    document_id = Column(Integer, index=True)  # 关联 documents.id，无外键约束
+    extraction_config_id = Column(Integer, index=True)  # 关联 extraction_configs.id，无外键约束
+    created_at = Column(Integer, default=lambda: int(time.time()))
 
 
-class OperationLog(Base):
+class OperationLog(Base, ToDictMixin):
     """操作日志表"""
     __tablename__ = "operation_logs"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, index=True)  # 关联 users.id，无外键约束
     action = Column(String(50), nullable=False)  # create, update, delete, classify, extract
     resource_type = Column(String(50))  # template, document, config
     resource_id = Column(Integer)
     details = Column(JSON)
     ip_address = Column(String(50))
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(Integer, default=lambda: int(time.time()), index=True)
 
 
-class SystemConfig(Base):
+class SystemConfig(Base, ToDictMixin):
     """系统配置表"""
     __tablename__ = "system_configs"
     
@@ -158,4 +163,11 @@ class SystemConfig(Base):
     config_value = Column(JSON, nullable=False)
     description = Column(Text)
     is_public = Column(Boolean, default=False)  # 是否对普通用户可见
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(Integer, default=lambda: int(time.time()))
+
+
+# 注册 before_update 事件监听器，自动更新 updated_at 时间戳
+event.listen(User, 'before_update', update_timestamp_before_update)
+event.listen(ClassTemplate, 'before_update', update_timestamp_before_update)
+event.listen(ExtractionConfig, 'before_update', update_timestamp_before_update)
+event.listen(SystemConfig, 'before_update', update_timestamp_before_update)

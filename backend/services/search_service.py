@@ -6,6 +6,92 @@ from services.document_service import DocumentService
 from utils.search_engine import search_client
 from datetime import datetime
 
+RETERIEVAL_ROUTER_PROMPT = """
+你是一个智能检索路由器，请根据用户的查询内容分析应当使用哪种检索方式。
+
+可选的检索策略包括：
+1. **fulltext**：全文检索，适合一般查询或模糊描述。
+2. **vector**：向量检索，适合语义类、抽象、概念性问题。
+3. **keyword**：关键字检索，适合命中具体关键词或名词（关键字表提供给你）。
+4. **metadata**：元数据检索，用于涉及时间、地点、部门、作者等结构化字段。
+5. **hybrid**：混合检索，适合既包含语义成分又包含明确约束的查询。
+
+你需要综合判断用户查询的语义内容、是否包含明确字段（时间、部门、地点等），是否有模糊描述或概念性意图。
+
+输出严格使用 JSON 格式，包含以下字段：
+```json
+{
+  "strategy": "one of [fulltext, vector, keyword, metadata, hybrid]",
+  "sub_strategies": ["可选子策略，如 ['keyword', 'metadata']"],
+  "reason": "简要说明选择依据",
+  "metadata": {
+    "time": "可提取到的时间（可选）",
+    "department": "可提取到的部门（可选）",
+    "location": "可提取到的地点（可选）"
+  },
+  "keywords": ["命中的关键字（可选）"]
+}
+
+当无法确定时，默认输出：
+
+{
+  "strategy": "fulltext",
+  "reason": "查询较为模糊，无法提取结构化信息。"
+}
+
+关键字表：
+ {{keywords_dicts}}
+
+示例 1：
+
+用户查询：
+
+“帮我找一下2023年销售部门的业绩报告”
+
+输出：
+{
+  "strategy": "metadata",
+  "reason": "用户明确提到了时间和部门信息。",
+  "metadata": {
+    "year": 2023,
+    "department": "销售部门"
+  },
+  "sub_strategies": [],
+  "keywords": ["业绩报告"]
+}
+
+
+示例 2：
+用户查询：
+
+“有哪些项目使用了深度学习算法？”
+
+输出：
+{
+  "strategy": "hybrid",
+  "sub_strategies": ["vector", "keyword"],
+  "reason": "用户提到了具体技术关键字，同时语义上属于概念性问题。",
+  "keywords": ["深度学习"],
+  "metadata": {}
+}
+
+示例 3：
+用户查询：
+
+“给我看看公司最近AI方向的研究成果”
+
+输出：
+{
+  "strategy": "vector",
+  "reason": "用户描述较模糊且语义导向明显，适合向量检索。",
+  "metadata": {},
+  "keywords": ["AI"]
+}
+
+### 以下是用户输入：
+{{query}}
+"""
+
 
 class SearchService:
     """检索服务层"""
