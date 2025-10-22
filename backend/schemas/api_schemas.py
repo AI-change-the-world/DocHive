@@ -1,0 +1,278 @@
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+from enum import Enum
+
+
+# ============= 通用模式 =============
+class UserRole(str, Enum):
+    ADMIN = "admin"
+    USER = "user"
+    REVIEWER = "reviewer"
+
+
+class ResponseBase(BaseModel):
+    """API 响应基础模式"""
+    code: int = 200
+    message: str = "success"
+    data: Optional[Any] = None
+
+
+class PaginationParams(BaseModel):
+    """分页参数"""
+    page: int = Field(1, ge=1, description="页码")
+    page_size: int = Field(20, ge=1, le=100, description="每页数量")
+
+
+class PaginatedResponse(BaseModel):
+    """分页响应"""
+    total: int
+    page: int
+    page_size: int
+    items: List[Any]
+
+
+# ============= 用户相关 =============
+class UserBase(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50)
+    email: EmailStr
+
+
+class UserCreate(UserBase):
+    password: str = Field(..., min_length=6)
+    role: UserRole = UserRole.USER
+
+
+class UserUpdate(BaseModel):
+    email: Optional[EmailStr] = None
+    role: Optional[UserRole] = None
+    is_active: Optional[bool] = None
+
+
+class UserInDB(UserBase):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    role: UserRole
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class UserResponse(UserInDB):
+    """用户响应模式（不包含密码）"""
+    pass
+
+
+# ============= 认证相关 =============
+class Token(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
+class TokenData(BaseModel):
+    user_id: Optional[int] = None
+    username: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+# ============= 分类模板相关 =============
+class TemplateLevelSchema(BaseModel):
+    """模板层级定义"""
+    level: int = Field(..., ge=1, description="层级序号")
+    name: str = Field(..., min_length=1, max_length=50, description="层级名称")
+    code: Optional[str] = Field(None, max_length=20, description="层级代码")
+    description: Optional[str] = None
+
+
+class ClassTemplateCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = None
+    levels: List[TemplateLevelSchema] = Field(..., min_length=1)
+    version: str = Field("1.0", max_length=20)
+
+
+class ClassTemplateUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    description: Optional[str] = None
+    levels: Optional[List[TemplateLevelSchema]] = None
+    version: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class ClassTemplateResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    name: str
+    description: Optional[str]
+    levels: List[Dict[str, Any]]
+    version: str
+    is_active: bool
+    creator_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+# ============= 编号规则相关 =============
+class NumberingRuleCreate(BaseModel):
+    template_id: int
+    rule_format: str = Field(..., description="编号格式，如：{year}-{dept_code}-{type_code}-{seq:04d}")
+    separator: str = Field("-", max_length=10)
+    auto_increment: bool = True
+
+
+class NumberingRuleResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    template_id: int
+    rule_format: str
+    separator: str
+    auto_increment: bool
+    current_sequence: int
+    created_at: datetime
+
+
+# ============= 文档相关 =============
+class DocumentCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    template_id: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class DocumentUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=255)
+    class_path: Optional[Dict[str, str]] = None
+    extracted_data: Optional[Dict[str, Any]] = None
+    status: Optional[str] = None
+
+
+class DocumentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    title: str
+    original_filename: str
+    file_path: str
+    file_type: Optional[str]
+    file_size: Optional[int]
+    template_id: Optional[int]
+    class_path: Optional[Dict[str, str]]
+    class_code: Optional[str]
+    summary: Optional[str]
+    extracted_data: Optional[Dict[str, Any]]
+    metadata: Optional[Dict[str, Any]]
+    status: str
+    uploader_id: int
+    upload_time: datetime
+    processed_time: Optional[datetime]
+
+
+class DocumentSearchRequest(BaseModel):
+    """文档检索请求"""
+    keyword: Optional[str] = Field(None, description="全文搜索关键词")
+    template_id: Optional[int] = None
+    class_path: Optional[Dict[str, str]] = Field(None, description="分类路径过滤")
+    extracted_fields: Optional[Dict[str, Any]] = Field(None, description="抽取字段过滤")
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    status: Optional[str] = None
+    page: int = Field(1, ge=1)
+    page_size: int = Field(20, ge=1, le=100)
+
+
+# ============= 信息抽取相关 =============
+class ExtractionFieldSchema(BaseModel):
+    """抽取字段定义"""
+    name: str = Field(..., description="字段名称")
+    type: str = Field(..., description="字段类型：text, number, array, date")
+    method: str = Field(..., description="抽取方法：regex, llm, rule")
+    pattern: Optional[str] = Field(None, description="正则表达式（method=regex时）")
+    prompt: Optional[str] = Field(None, description="LLM提示词（method=llm时）")
+    required: bool = Field(False, description="是否必需")
+
+
+class ExtractionConfigCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    doc_type: str = Field(..., min_length=1, max_length=50)
+    extract_fields: List[ExtractionFieldSchema] = Field(..., min_length=1)
+
+
+class ExtractionConfigUpdate(BaseModel):
+    name: Optional[str] = None
+    extract_fields: Optional[List[ExtractionFieldSchema]] = None
+    is_active: Optional[bool] = None
+
+
+class ExtractionConfigResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    name: str
+    doc_type: str
+    extract_fields: List[Dict[str, Any]]
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+# ============= 分类相关 =============
+class ClassificationRequest(BaseModel):
+    """文档分类请求"""
+    document_id: int
+    template_id: int
+    force_reclassify: bool = Field(False, description="强制重新分类")
+
+
+class ClassificationResponse(BaseModel):
+    """分类结果"""
+    document_id: int
+    class_path: Dict[str, str]
+    class_code: str
+    confidence: Optional[float] = Field(None, description="分类置信度")
+
+
+# ============= 抽取相关 =============
+class ExtractionRequest(BaseModel):
+    """信息抽取请求"""
+    document_id: int
+    config_id: int
+
+
+class ExtractionResponse(BaseModel):
+    """抽取结果"""
+    document_id: int
+    extracted_data: Dict[str, Any]
+    success_fields: List[str]
+    failed_fields: List[str]
+
+
+# ============= 系统配置相关 =============
+class SystemConfigCreate(BaseModel):
+    config_key: str = Field(..., max_length=100)
+    config_value: Dict[str, Any]
+    description: Optional[str] = None
+    is_public: bool = False
+
+
+class SystemConfigUpdate(BaseModel):
+    config_value: Optional[Dict[str, Any]] = None
+    description: Optional[str] = None
+    is_public: Optional[bool] = None
+
+
+class SystemConfigResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    config_key: str
+    config_value: Dict[str, Any]
+    description: Optional[str]
+    is_public: bool
+    updated_at: datetime

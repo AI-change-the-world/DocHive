@@ -1,0 +1,44 @@
+# FastAPI 核心依赖
+fastapi==0.119.1
+uvicorn[standard]==0.38.0
+pydantic==2.12.3
+pydantic-settings==2.11.0
+
+# 数据库相关
+sqlalchemy==2.0.44
+alembic==1.17.0
+asyncpg==0.30.0
+psycopg2-binary==3.2.11
+aiosqlite==0.21.0  # SQLite 异步驱动
+
+# 文件处理
+python-multipart==0.0.20
+aiofiles==25.1.0
+python-docx==1.2.0
+PyPDF2==6.1.2
+Pillow==10.2.0
+## OCR后期考虑用大模型，例如deepseek开源的ocr
+
+# 向量检索
+elasticsearch==9.1.1  # Elasticsearch  （可选）
+qdrant-client==1.15.1
+clickhouse-driver==0.2.9  # ClickHouse 驱动（可选）
+
+# 对象存储
+opendal==0.46.0
+
+# LLM 接口
+openai==2.6.0
+httpx==0.26.0
+
+# 安全与认证
+python-jose[cryptography]==3.5.0
+passlib[bcrypt]==1.7.4
+
+# 异步任务
+celery==5.5.3
+redis==6.4.0
+
+# 工具库
+python-dateutil==2.9.0
+loguru==0.7.3
