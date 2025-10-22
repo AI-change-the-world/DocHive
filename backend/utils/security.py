@@ -1,23 +1,22 @@
-from passlib.context import CryptContext
+from cryptography.fernet import Fernet
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 from config import get_settings
 
 settings = get_settings()
-
-# 密码加密上下文
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+key = settings.SECRET_KEY
+f = Fernet(key)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """验证密码"""
-    return pwd_context.verify(plain_password, hashed_password)
+    return plain_password == f.decrypt(hashed_password.encode()).decode()
 
 
 def get_password_hash(password: str) -> str:
     """生成密码哈希"""
-    return pwd_context.hash(password)
+    return f.encrypt(password.encode()).decode()
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

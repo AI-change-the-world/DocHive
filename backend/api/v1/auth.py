@@ -1,3 +1,4 @@
+import traceback
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
@@ -38,6 +39,7 @@ async def register(
         )
     
     except ValueError as e:
+        traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),

@@ -34,7 +34,7 @@ httpx==0.26.0
 
 # 安全与认证
 python-jose[cryptography]==3.5.0
-passlib[bcrypt]==1.7.4
+cryptography
 
 # 异步任务
 celery==5.5.3

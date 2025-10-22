@@ -4,7 +4,7 @@ from typing import Optional
 from models.database_models import User, UserRole
 from utils.security import verify_password, get_password_hash, create_access_token, create_refresh_token
 from schemas.api_schemas import UserCreate
-
+from loguru import logger
 
 class AuthService:
     """认证服务"""
@@ -49,11 +49,13 @@ class AuthService:
         if result.scalar_one_or_none():
             raise ValueError("邮箱已被注册")
         
+        hashed_password = get_password_hash(user_data.password)
+        
         # 创建用户
         user = User(
             username=user_data.username,
             email=user_data.email,
-            hashed_password=get_password_hash(user_data.password),
+            hashed_password=hashed_password,
             role=user_data.role,
         )
         
