@@ -55,12 +55,38 @@ class ClassTemplate(Base, ToDictMixin):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False, index=True)
     description = Column(Text)
-    levels = Column(Text, nullable=False)  # 层级定义：[{"level": 1, "name": "年份", "code": "YEAR"}, ...]
+    _levels = Column("levels", Text, nullable=False)  # 层级定义：[{"level": 1, "name": "年份", "code": "YEAR"}, ...]
     version = Column(String(20), default="1.0")
     is_active = Column(Boolean, default=True)
     creator_id = Column(Integer, index=True)  # 关联 users.id，无外键约束
     created_at = Column(Integer, default=lambda: int(time.time()))
     updated_at = Column(Integer, default=lambda: int(time.time()))
+    
+    @property
+    def levels(self):
+        """自动将 JSON 字符串转为 list"""
+        import json
+        if isinstance(self._levels, str):
+            return json.loads(self._levels)
+        return self._levels
+    
+    @levels.setter
+    def levels(self, value):
+        """自动将 list 转为 JSON 字符串"""
+        import json
+        if isinstance(value, (list, dict)):
+            self._levels = json.dumps(value, ensure_ascii=False)
+        else:
+            self._levels = value
+    
+    def to_dict(self):
+        """重写 to_dict，确保 levels 返回 list"""
+        result = super().to_dict()
+        # 将 _levels 的 key 改为 levels，并解析为 JSON
+        if '_levels' in result:
+            import json
+            result['levels'] = json.loads(result.pop('_levels')) if isinstance(result.get('_levels'), str) else result.pop('_levels')
+        return result
 
 
 class NumberingRule(Base, ToDictMixin):
@@ -89,7 +115,7 @@ class Document(Base, ToDictMixin):
     
     # 分类信息
     template_id = Column(Integer, index=True)  # 关联 class_templates.id，无外键约束
-    class_path = Column(Text)  # 分类路径：{"年份": "2025", "部门": "研发部", ...}
+    _class_path = Column("class_path", Text)  # 分类路径：{"年份": "2025", "部门": "研发部", ...}
     class_code = Column(String(100), unique=True, index=True)  # 唯一分类编号
     
     # 内容信息
@@ -97,8 +123,8 @@ class Document(Base, ToDictMixin):
     summary = Column(Text)  # 文档摘要
     
     # 抽取信息
-    extracted_data = Column(Text)  # 结构化抽取字段
-    document_metadata = Column(Text)  # 元信息（作者、创建时间等）
+    _extracted_data = Column("extracted_data", Text)  # 结构化抽取字段
+    _doc_metadata = Column("document_metadata", Text)  # 元信息（作者、创建时间等）
     
     # 状态信息
     status = Column(String(20), default="pending")  # pending, processing, completed, failed
@@ -108,6 +134,76 @@ class Document(Base, ToDictMixin):
     uploader_id = Column(Integer, index=True)  # 关联 users.id，无外键约束
     upload_time = Column(Integer, default=lambda: int(time.time()), index=True)
     processed_time = Column(Integer)
+    
+    @property
+    def class_path(self):
+        """自动将 JSON 字符串转为 dict"""
+        import json
+        if self._class_path is not None:
+            return json.loads(self._class_path) if isinstance(self._class_path, str) else self._class_path
+        return None
+    
+    @class_path.setter
+    def class_path(self, value):
+        """自动将 dict 转为 JSON 字符串"""
+        import json
+        if value is None:
+            self._class_path = None
+        elif isinstance(value, (dict, list)):
+            self._class_path = json.dumps(value, ensure_ascii=False)
+        else:
+            self._class_path = value
+    
+    @property
+    def extracted_data(self):
+        """自动将 JSON 字符串转为 dict"""
+        import json
+        if self._extracted_data is not None:
+            return json.loads(self._extracted_data) if isinstance(self._extracted_data, str) else self._extracted_data
+        return None
+    
+    @extracted_data.setter
+    def extracted_data(self, value):
+        """自动将 dict 转为 JSON 字符串"""
+        import json
+        if value is None:
+            self._extracted_data = None
+        elif isinstance(value, (dict, list)):
+            self._extracted_data = json.dumps(value, ensure_ascii=False)
+        else:
+            self._extracted_data = value
+    
+    @property
+    def doc_metadata(self):
+        """自动将 JSON 字符串转为 dict"""
+        import json
+        if self._doc_metadata is not None:
+            return json.loads(self._doc_metadata) if isinstance(self._doc_metadata, str) else self._doc_metadata
+        return {}
+    
+    @doc_metadata.setter
+    def doc_metadata(self, value):
+        """自动将 dict 转为 JSON 字符串"""
+        import json
+        if value is None:
+            self._doc_metadata = None
+        elif isinstance(value, (dict, list)):
+            self._doc_metadata = json.dumps(value, ensure_ascii=False)
+        else:
+            self._doc_metadata = value
+    
+    def to_dict(self):
+        """重写 to_dict，确保 JSON 字段返回 dict"""
+        result = super().to_dict()
+        # 将私有字段改为公开字段，并解析为 JSON
+        import json
+        if '_class_path' in result:
+            result['class_path'] = json.loads(result.pop('_class_path')) if result.get('_class_path') else None
+        if '_extracted_data' in result:
+            result['extracted_data'] = json.loads(result.pop('_extracted_data')) if result.get('_extracted_data') else None
+        if '_doc_metadata' in result:
+            result['metadata'] = json.loads(result.pop('_doc_metadata')) if result.get('_doc_metadata') else {}
+        return result
 
 
 class ExtractionConfig(Base, ToDictMixin):
@@ -117,7 +213,7 @@ class ExtractionConfig(Base, ToDictMixin):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False, index=True)
     doc_type = Column(String(50), nullable=False)  # 简历、报告、合同等
-    extract_fields = Column(Text, nullable=False)  # 抽取字段配置
+    _extract_fields = Column("extract_fields", Text, nullable=False)  # 抽取字段配置
     """
     示例：[
         {"name": "姓名", "type": "text", "method": "regex", "pattern": "姓名[:：]\\s*(\\S+)"},
@@ -128,6 +224,32 @@ class ExtractionConfig(Base, ToDictMixin):
     is_active = Column(Boolean, default=True)
     created_at = Column(Integer, default=lambda: int(time.time()))
     updated_at = Column(Integer, default=lambda: int(time.time()))
+    
+    @property
+    def extract_fields(self):
+        """自动将 JSON 字符串转为 list"""
+        import json
+        if isinstance(self._extract_fields, str):
+            return json.loads(self._extract_fields)
+        return self._extract_fields
+    
+    @extract_fields.setter
+    def extract_fields(self, value):
+        """自动将 list 转为 JSON 字符串"""
+        import json
+        if isinstance(value, (list, dict)):
+            self._extract_fields = json.dumps(value, ensure_ascii=False)
+        else:
+            self._extract_fields = value
+    
+    def to_dict(self):
+        """重写 to_dict，确保 extract_fields 返回 list"""
+        result = super().to_dict()
+        # 将 _extract_fields 的 key 改为 extract_fields，并解析为 JSON
+        if '_extract_fields' in result:
+            import json
+            result['extract_fields'] = json.loads(result.pop('_extract_fields')) if isinstance(result.get('_extract_fields'), str) else result.pop('_extract_fields')
+        return result
 
 
 class DocumentExtractionMapping(Base, ToDictMixin):

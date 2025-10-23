@@ -43,6 +43,9 @@ instance.interceptors.response.use(
                     break;
                 case 403:
                     message.error('权限不足');
+                    localStorage.removeItem('access_token');
+                    localStorage.removeItem('refresh_token');
+                    window.location.href = '/login';
                     break;
                 case 404:
                     message.error('请求的资源不存在');

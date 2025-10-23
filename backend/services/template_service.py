@@ -1,10 +1,10 @@
+import json
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
-from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from models.database_models import ClassTemplate, NumberingRule
 from schemas.api_schemas import ClassTemplateCreate, ClassTemplateUpdate
-from datetime import datetime
+import time
 
 
 class TemplateService:
@@ -20,7 +20,7 @@ class TemplateService:
         template = ClassTemplate(
             name=template_data.name,
             description=template_data.description,
-            levels=[level.model_dump() for level in template_data.levels],
+            levels=[level.model_dump() for level in template_data.levels],  # 直接传入 list，setter 会自动转为 JSON 字符串
             version=template_data.version,
             creator_id=creator_id,
         )
@@ -76,14 +76,15 @@ class TemplateService:
         
         update_data = template_data.model_dump(exclude_unset=True)
         
-        # 处理 levels 字段
-        if "levels" in update_data and update_data["levels"]:
+        # 处理 levels 字段：直接传入 list，setter 会自动转为 JSON 字符串
+        if "levels" in update_data and template_data.levels:
             update_data["levels"] = [level.model_dump() for level in template_data.levels]
         
         for field, value in update_data.items():
             setattr(template, field, value)
         
-        template.updated_at = datetime.utcnow()
+        # 使用 setattr 避免类型检查错误
+        setattr(template, 'updated_at', int(time.time()))
         
         await db.commit()
         await db.refresh(template)
@@ -96,19 +97,7 @@ class TemplateService:
         if not template:
             return False
         
-        template.is_active = False
+        # 使用 setattr 避免类型检查错误
+        setattr(template, 'is_active', False)
         await db.commit()
         return True
-    
-    @staticmethod
-    async def get_template_with_rules(
-        db: AsyncSession,
-        template_id: int
-    ) -> Optional[ClassTemplate]:
-        """获取模板及其编号规则"""
-        result = await db.execute(
-            select(ClassTemplate)
-            .options(selectinload(ClassTemplate.numbering_rules))
-            .where(ClassTemplate.id == template_id)
-        )
-        return result.scalar_one_or_none()

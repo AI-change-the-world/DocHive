@@ -5,8 +5,8 @@ from models.database_models import Document
 from schemas.api_schemas import DocumentCreate, DocumentUpdate
 from utils.storage import storage_client
 from utils.parser import DocumentParser
-from datetime import datetime
 import uuid
+import time
 from pathlib import Path
 
 
@@ -38,7 +38,8 @@ class DocumentService:
         file_extension = Path(filename).suffix
         
         # 生成唯一对象名
-        object_name = f"{datetime.utcnow().strftime('%Y/%m/%d')}/{uuid.uuid4()}{file_extension}"
+        import datetime
+        object_name = f"{datetime.datetime.utcnow().strftime('%Y/%m/%d')}/{uuid.uuid4()}{file_extension}"
         
         # 读取文件数据
         file_bytes = file_data.read()
@@ -59,7 +60,7 @@ class DocumentService:
             file_type=file_extension.lstrip("."),
             file_size=len(file_bytes),
             template_id=document_data.template_id,
-            metadata=document_data.metadata or {},
+            doc_metadata=document_data.metadata or {},
             status="pending",
             uploader_id=user_id,
         )
@@ -106,9 +107,12 @@ class DocumentService:
             # 更新文档
             document.content_text = content_text
             document.summary = summary
-            document.metadata.update(metadata)
+            # 合并 doc_metadata
+            current_metadata = document.doc_metadata or {}
+            current_metadata.update(metadata)
+            document.doc_metadata = current_metadata
             document.status = "completed"
-            document.processed_time = datetime.utcnow()
+            setattr(document, 'processed_time', int(time.time()))
             
             await db.commit()
             

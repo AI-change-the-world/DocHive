@@ -1,3 +1,4 @@
+import traceback
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
@@ -30,13 +31,20 @@ async def create_template(
     - **description**: 模板描述（可选）
     - **version**: 版本号（默认1.0）
     """
-    template = await TemplateService.create_template(db, template_data, current_user.id)
-    
-    return ResponseBase(
-        code=201,
-        message="模板创建成功",
-        data=ClassTemplateResponse.model_validate(template),
-    )
+    try:
+        template = await TemplateService.create_template(db, template_data, current_user.id)
+        
+        return ResponseBase(
+            code=201,
+            message="模板创建成功",
+            data=ClassTemplateResponse.model_validate(template),
+        )
+    except ValueError as e:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
 
 @router.get("/{template_id}", response_model=ResponseBase)

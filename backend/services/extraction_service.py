@@ -59,10 +59,9 @@ class ExtractionEngine:
                 extracted_data[field_name] = None
         
         # 更新文档抽取数据
-        if document.extracted_data:
-            document.extracted_data.update(extracted_data)
-        else:
-            document.extracted_data = extracted_data
+        current_data = document.extracted_data or {}
+        current_data.update(extracted_data)
+        document.extracted_data = current_data
         
         await db.commit()
         
