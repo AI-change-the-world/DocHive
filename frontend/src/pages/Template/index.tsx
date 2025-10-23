@@ -193,6 +193,11 @@ const TemplatePage: React.FC = () => {
                     onCancel={() => setModalVisible(false)}
                     width={800}
                     footer={null}
+                    bodyStyle={{
+                        maxHeight: 'calc(100vh - 200px)', // 限制最大高度
+                        overflowY: 'auto', // 内部滚动
+                        paddingRight: 8 // 防止滚动条覆盖内容
+                    }}
                 >
                     <Form
                         form={form}
