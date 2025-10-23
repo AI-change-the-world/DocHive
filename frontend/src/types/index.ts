@@ -61,6 +61,12 @@ export interface TemplateLevel {
     name: string;
     code?: string;
     description?: string;
+    // AI智能提取配置（统一使用大模型）
+    extraction_prompt?: string;  // AI提取的Prompt（包含编码规则说明）
+    placeholder_example?: string;  // 示例值
+    // 业务属性配置
+    business_keywords_prompt?: string;  // 业务关键词识别Prompt，用于智能检索匹配
+    is_doc_type?: boolean;  // 是否为文档类型字段（用于最终分类）
 }
 
 export interface ClassTemplate {

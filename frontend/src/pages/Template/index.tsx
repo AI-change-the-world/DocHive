@@ -191,7 +191,7 @@ const TemplatePage: React.FC = () => {
                     title={editingTemplate ? '编辑模板' : '创建模板'}
                     open={modalVisible}
                     onCancel={() => setModalVisible(false)}
-                    width={800}
+                    width={'calc(100vw - 200px)'}
                     footer={null}
                     bodyStyle={{
                         maxHeight: 'calc(100vh - 200px)', // 限制最大高度

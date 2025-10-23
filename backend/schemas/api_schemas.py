@@ -88,6 +88,14 @@ class TemplateLevelSchema(BaseModel):
     name: str = Field(..., min_length=1, max_length=50, description="层级名称")
     code: Optional[str] = Field(None, max_length=20, description="层级代码")
     description: Optional[str] = None
+    
+    # AI智能提取配置（统一使用大模型）
+    extraction_prompt: Optional[str] = Field(None, description="AI提取的Prompt（包含编码规则说明）")
+    placeholder_example: Optional[str] = Field(None, description="示例值")
+    
+    # 业务属性配置
+    business_keywords_prompt: Optional[str] = Field(None, description="业务关键词识别Prompt，用于智能检索匹配")
+    is_doc_type: Optional[bool] = Field(False, description="是否为文档类型字段")
 
 
 class ClassTemplateCreate(BaseModel):
