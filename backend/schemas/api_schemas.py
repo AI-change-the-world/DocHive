@@ -3,6 +3,14 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 
+#  ============= SSE统一格式 =============
+class SSEEvent(BaseModel):
+    """SSE事件"""
+    event: str = Field(..., description="事件名称")
+    data: Optional[Any]  = Field(None, description="事件数据")
+    id: Optional[str] = Field(None, description="事件ID")
+    done: Optional[bool] = Field(False, description="是否完成")
+
 
 # ============= 通用模式 =============
 class UserRole(str, Enum):

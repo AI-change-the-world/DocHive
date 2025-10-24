@@ -17,6 +17,7 @@ import {
     EditOutlined,
     DeleteOutlined,
     EyeOutlined,
+    RobotOutlined,
 } from '@ant-design/icons';
 import { templateService } from '../../services/template';
 import type { ClassTemplate, TemplateLevel } from '../../types';

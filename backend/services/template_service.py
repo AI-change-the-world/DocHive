@@ -2,7 +2,7 @@ import json
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from typing import List, Optional, Dict, Any
-from models.database_models import ClassTemplate, NumberingRule, DocumentType
+from models.database_models import ClassTemplate, ClassTemplateConfigs, NumberingRule, DocumentType
 from schemas.api_schemas import ClassTemplateCreate, ClassTemplateUpdate, DocumentTypeCreate
 import time
 from utils.llm_client import llm_client
@@ -76,7 +76,7 @@ class TemplateService:
         template_id: int,
         template_data: ClassTemplateUpdate
     ) -> Optional[ClassTemplate]:
-        """更新模板"""
+        """更新模板， 每次更新，需要把configs也都置为inactive"""
         template = await TemplateService.get_template(db, template_id)
         if not template:
             return None
@@ -92,12 +92,28 @@ class TemplateService:
         
         # 使用 setattr 避免类型检查错误
         setattr(template, 'updated_at', int(time.time()))
+
+        # 将所有相关的ClassTemplateConfigs设置为inactive
+        await db.execute(
+            select(ClassTemplateConfigs).where(
+                and_(
+                    ClassTemplateConfigs.template_id == template_id,
+                    ClassTemplateConfigs.is_active == True
+                )
+            )
+        )
         
         await db.commit()
         await db.refresh(template)
-        
+
         # 自动处理文档类型层级（更新时重新解析）
-        await TemplateService._process_doc_type_level(db, template)
+        # 如果解析过一次，就不再解析了，可以手动添加类型，不然太浪费时间
+        # 而且也是避免文档类别错漏出现问题
+        doc_types = await db.execute(
+            select(DocumentType).where(DocumentType.template_id == template_id)
+        )
+        if not doc_types.scalars().all():
+            await TemplateService._process_doc_type_level(db, template)
         
         return template
     

@@ -1,18 +1,202 @@
-from sqlalchemy.orm import Session
+import json
 from sqlalchemy import select
-from typing import Optional, BinaryIO
-from models.database_models import Document
-from schemas.api_schemas import DocumentCreate, DocumentUpdate
+from typing import Any, AsyncGenerator, Optional, BinaryIO
+from models.database_models import ClassTemplateConfigs, Document, ClassTemplate, DocumentType
+from schemas.api_schemas import DocumentCreate, DocumentUpdate, SSEEvent
 from utils.storage import storage_client
 from utils.parser import DocumentParser
 import uuid
 import time
 from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
+from utils.llm_client import llm_client
+from loguru import logger
+
+
+CODE_EXTRACTION_PROMPT = """
+你是一个文本分析助理，用于从文档中提取业务编码信息。请仔细阅读以下业务编码配置：
+
+JSON 配置：
+{{JSON_CONFIG}}
+
+说明：
+1. level 表示编码层级，1 表示一级编码，2 表示二级编码。
+2. name 是编码字段名称，description 是对该字段的简短描述。
+3. code 是编码标识。
+4. extraction_prompt（如果有）提供了可能值或匹配提示。
+5. 如果 extraction_prompt 为 null，请根据文本内容直接提取对应值。
+
+请你生成一个优化后的提取编码的指令模板（prompt），要求：
+- 能明确告诉模型要提取哪些字段。
+- 对每个字段提供提取规则或提示。
+- 输出格式为 JSON 列表，示例：
+[
+  {"code":"YEAR", "value":"2025", "level":1},
+  {"code":"REGION", "value":"JS", "level":2}
+]
+- 遇到无法提取的字段可以返回 null。
+- 不要添加多余解释，直接生成可以直接用于调用模型的 prompt。
+
+"""
+
+TYPE_CLASSIFICATION_PROMPT = """
+你是一个政府公文智能分类助手，请根据文档内容判断其所属的文档类型。
+
+以下是文档类型定义表（type_code、type_name、description）：
+
+{{type_code}}
+
+请阅读以下文档内容，判断该文档最符合的类型，并输出结果。
+
+要求：
+1. 只能选择一个最合适的类型。
+2. 输出格式为 JSON：
+{
+  "type_code": "XXX",
+  "type_name": "XXX",
+  "reason": "简要说明判断依据"
+}
+
+示例输入：
+《关于印发〈市科技创新发展规划（2025-2030）〉的通知》
+
+示例输出：
+{
+  "type_code": "GH",
+  "type_name": "规划方案",
+  "reason": "文中包含“发展规划”，属于计划类文件"
+}
+
+现在请判断以下文档的类型：
+
+{{doc}}
+"""
+
+
 
 
 class DocumentService:
     """文档服务层"""
+
+
+    @staticmethod
+    async def _analyze_file(doc:str, template_id: int, db :AsyncSession) -> AsyncGenerator[SSEEvent, Any]:
+        """分析文件，提取关键信息
+        """
+
+        event = SSEEvent(event="process document content")
+
+        template = await db.execute(
+            select(ClassTemplate).where(ClassTemplate.id == template_id)
+        )
+
+        if not template.scalar_one_or_none():
+            event.done = True
+            event.data = "[error] 模板不存在"
+            yield event
+            return
+        
+        doc_types = await db.execute(
+            select(DocumentType).where(DocumentType.template_id == template_id)
+        )
+
+        if not doc_types.scalars().all():
+            event.done = True
+            event.data = "[error] 文档类型不存在"
+            yield event
+            return
+        
+        template_json_list : list = template.scalar_one_or_none().levels
+        # 获取编码规则
+        # 首先是定义一个Map，存储编码中的映射关联，比如事件，地区编码...
+        # 去掉分类的编码，这个层级是单独处理的
+
+        ### 查找有没有可用的config
+        class_template_config = await db.execute(
+            select(ClassTemplateConfigs).where(
+                ClassTemplateConfigs.template_id == template_id,
+                ClassTemplateConfigs.config_name == "code_extraction_prompt"
+            )
+        )
+        type_level = -1
+        new_list = []
+        for i in template_json_list:
+            if i.get("is_doc_type", default=False):
+                type_level = i.get("level", -1)
+                continue
+            new_list.append(i)
+        if class_template_config.scalar_one_or_none():
+            code_prompt = class_template_config.scalar_one_or_none().config_value
+            event.data = "[info] 使用自定义的编码提取提示"
+            yield event
+        else:
+            event.data = "[info] 重新构造编码提取提示"
+            yield event
+            code_prompt = ""
+
+            
+            prompt = CODE_EXTRACTION_PROMPT.replace("{{JSON_CONFIG}}", json.dumps(new_list, ensure_ascii=False))
+            code_prompt = await llm_client.chat_completion(prompt)
+
+            # 把这个存下来，后续使用
+            class_template_config = ClassTemplateConfigs(
+                template_id=template_id,
+                config_name="code_extraction_prompt",
+                config_value=code_prompt
+            )
+
+            db.add(class_template_config)
+            await db.commit()
+
+        code_json:list = await llm_client.extract_json_response(code_prompt + "\n\n以下为文档内容，请帮我提取：" + doc)
+
+        logger.info("👓️ 编码结果： {}".format(code_json))
+        event.data = "[info] 提取编码结果： {}".format(code_json)
+        yield event
+
+        # 根据分类结果，获取文档类型
+        ### 构造分类prompt
+        type_list = []
+        for i in doc_types.scalars().all():
+            type_list.append({
+                "type_code": i.type_code,
+                "type_name": i.type_name,
+                "description": i.description
+            })
+
+        type_prompt = TYPE_CLASSIFICATION_PROMPT.replace("{{type_code}}", json.dumps(type_list, ensure_ascii=False)).replace("{{doc}}", doc)
+        type_json = await llm_client.extract_json_response(type_prompt)
+        logger.info("🩱 文档类型： {}".format(type_json))
+        event.data = "[info] 文档类型： {}".format(type_json)
+        yield event
+
+        type_json_into_code_json = {
+            "code": "TYPE",
+            "value": type_json.get("type_code", "UNKNOWN"),
+            "level": type_level
+        }
+
+        code_json.append(type_json_into_code_json)
+        sorted_code_json = sorted(code_json, key=lambda x: x.get("level", 0))
+
+        file_code_id_prefix = ""
+        for i in sorted_code_json:
+            file_code_id_prefix += i.get("value", "")
+            file_code_id_prefix += "-"
+
+        logger.info("✅ 编码结果： {}".format(file_code_id_prefix))
+        event.data = "[info] 编码结果： {}".format(file_code_id_prefix)
+        yield event
+
+        # 查询这个template下，这个类别下有多少文件
+        # TODO 优化，会有并发的问题，考虑暂时不用数值，用一个UUID
+        final_code_id = file_code_id_prefix + str(uuid.uuid4())
+
+
+        # TODO 更新数据库
+
+
+
     
     @staticmethod
     async def upload_document(
@@ -71,6 +255,7 @@ class DocumentService:
         await db.refresh(document)
         
         # 异步解析文档（实际应该使用 Celery 任务队列）
+        # REPLACE: 流式接口更好
         try:
             await DocumentService.parse_document(db, document.id, file_bytes, file_extension)
         except Exception as e:

@@ -89,6 +89,22 @@ class ClassTemplate(Base, ToDictMixin):
         return result
 
 
+class ClassTemplateConfigs(Base, ToDictMixin):
+    """分类模板配置表"""
+    __tablename__ = "class_template_configs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    template_id = Column(Integer, nullable=False, index=True)  # 关联 class_templates.id，无外键约束
+    config_name = Column(String(100), nullable=False)  # 如：year, dept_code, type_
+    config_value = Column(Text, nullable=False)
+
+    created_at = Column(Integer, default=lambda: int(time.time()))
+    updated_at = Column(Integer, default=lambda: int(time.time()))
+    is_active = Column(Boolean, default=True)
+
+
+
+
 class NumberingRule(Base, ToDictMixin):
     """编号规则表"""
     __tablename__ = "numbering_rules"

@@ -37,6 +37,12 @@ async def upload_document(
     - **template_id**: 关联的分类模板ID（可选）
     - **metadata**: 额外的元数据信息（JSON字符串，可选）
     """
+    if not template_id:
+        return ResponseBase(
+            code=400,
+            message="请选择分类模板",
+        )
+
     # 验证文件类型
     file_extension = file.filename.split(".")[-1].lower() if "." in file.filename else ""
     if file_extension not in settings.allowed_extensions_list:
