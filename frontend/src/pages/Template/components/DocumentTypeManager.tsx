@@ -37,17 +37,14 @@ const DocumentTypeManager: React.FC<DocumentTypeManagerProps> = ({ template, onC
             console.log('API Response:', response);
             console.log('Response data:', response.data);
 
-            // 处理响应数据：response.data 可能直接是数组，也可能是 {code, data} 结构
+            // request 拦截器已返回 response.data，直接访问 response.code 和 response.data
+            const responseData: any = response;
             let types: DocumentType[] = [];
-            if (Array.isArray(response.data)) {
-                // 直接是数组
-                types = response.data;
-            } else if (response.data.code === 200 && response.data.data) {
-                // 标准响应结构
-                types = response.data.data;
-            } else if (response.data.data) {
-                // 只有 data 字段
-                types = response.data.data;
+            if (responseData.code === 200 && responseData.data) {
+                types = responseData.data;
+            } else if (Array.isArray(responseData.data)) {
+                // 兼容直接返回数组的情况
+                types = responseData.data;
             }
 
             console.log('Setting document types:', types);

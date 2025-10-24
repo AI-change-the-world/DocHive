@@ -25,8 +25,9 @@ const FieldConfigDrawer: React.FC<FieldConfigDrawerProps> = ({ visible, docTypeI
         setLoading(true);
         try {
             const response = await getFields(docTypeId);
-            if (response.data.code === 200) {
-                setFields(response.data.data || []);
+            // request 已经返回 response.data，所以直接访问 response.code
+            if (response.code === 200) {
+                setFields(response.data || []);
             }
         } catch (error) {
             console.log("error : " + error);
@@ -148,6 +149,7 @@ const FieldConfigDrawer: React.FC<FieldConfigDrawerProps> = ({ visible, docTypeI
             width={1200}
             open={visible}
             onCancel={onClose}
+            maskClosable={false}
             footer={[
                 <Button key="add" icon={<PlusOutlined />} onClick={handleAdd}>
                     添加字段

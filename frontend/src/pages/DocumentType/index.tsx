@@ -28,9 +28,9 @@ const DocumentTypeManager: React.FC<DocumentTypeManagerProps> = ({ templateId, t
     const loadDocumentTypes = async () => {
         setLoading(true);
         try {
-            const response = await getDocumentTypesByTemplate(templateId);
-            if (response.data.code === 200) {
-                setDocumentTypes(response.data.data || []);
+            const response: any = await getDocumentTypesByTemplate(templateId);
+            if (response.code === 200) {
+                setDocumentTypes(response.data || []);
             }
         } catch (error) {
             message.error('加载文档类型失败');

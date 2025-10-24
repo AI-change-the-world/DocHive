@@ -28,9 +28,9 @@ const FieldConfigDrawer: React.FC<FieldConfigDrawerProps> = ({ visible, docTypeI
     const loadFields = async () => {
         setLoading(true);
         try {
-            const response = await getFields(docTypeId);
-            if (response.data.code === 200) {
-                setFields(response.data.data || []);
+            const response: any = await getFields(docTypeId);
+            if (response.code === 200) {
+                setFields(response.data || []);
             }
         } catch (error) {
             message.error('加载字段失败');

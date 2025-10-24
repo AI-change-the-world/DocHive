@@ -1,4 +1,4 @@
-import request from '../utils/request';
+import { request } from '../utils/request';
 import type { ApiResponse } from '../types';
 import type { DocumentType, DocumentTypeCreate, DocumentTypeUpdate, DocumentTypeField } from '../types';
 
