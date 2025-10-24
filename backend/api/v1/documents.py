@@ -13,6 +13,7 @@ from services.document_service import DocumentService
 from api.deps import get_current_user
 from models.database_models import User
 from config import get_settings
+from sqlalchemy.ext.asyncio import AsyncSession
 import json
 
 router = APIRouter(prefix="/documents", tags=["文档上传与管理"])

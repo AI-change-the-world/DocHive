@@ -4,8 +4,7 @@
 """
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from starlette.concurrency import run_in_threadpool
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db, get_current_user
 from models.database_models import User, DocumentType, DocumentTypeField
@@ -25,9 +24,9 @@ router = APIRouter()
 
 
 @router.post("/", response_model=ResponseBase, status_code=status.HTTP_201_CREATED)
-def create_document_type(
+async def create_document_type(
     doc_type_data: DocumentTypeCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -39,7 +38,7 @@ def create_document_type(
     - **fields**: 字段配置列表（可选）
     """
     try:
-        doc_type = DocumentTypeService.create_document_type(db, doc_type_data)
+        doc_type = await DocumentTypeService.create_document_type(db, doc_type_data)
         return ResponseBase(
             code=201,
             message="文档类型创建成功",
@@ -52,10 +51,10 @@ def create_document_type(
 
 
 @router.get("/template/{template_id}", response_model=ResponseBase)
-def get_document_types_by_template(
+async def get_document_types_by_template(
     template_id: int,
     include_inactive: bool = False,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -64,7 +63,7 @@ def get_document_types_by_template(
     - **template_id**: 模板ID
     - **include_inactive**: 是否包含已停用的类型
     """
-    doc_types = DocumentTypeService.get_document_types_by_template(
+    doc_types = await DocumentTypeService.get_document_types_by_template(
         db, template_id, include_inactive
     )
     
@@ -83,21 +82,21 @@ def get_document_types_by_template(
 
 
 @router.get("/{doc_type_id}", response_model=ResponseBase)
-def get_document_type(
+async def get_document_type(
     doc_type_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
     获取文档类型详情（含字段配置）
     """
-    doc_type = DocumentTypeService.get_document_type(db, doc_type_id)
+    doc_type = await DocumentTypeService.get_document_type(db, doc_type_id)
     
     if not doc_type:
         raise HTTPException(status_code=404, detail="文档类型不存在")
     
     # 获取字段配置
-    fields = DocumentTypeService.get_fields(db, doc_type_id)
+    fields = await DocumentTypeService.get_fields(db, doc_type_id)
     
     result = doc_type.to_dict()
     result['fields'] = [f.to_dict() for f in fields]
@@ -106,16 +105,16 @@ def get_document_type(
 
 
 @router.put("/{doc_type_id}", response_model=ResponseBase)
-def update_document_type(
+async def update_document_type(
     doc_type_id: int,
     update_data: DocumentTypeUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
     更新文档类型基本信息
     """
-    doc_type = DocumentTypeService.update_document_type(db, doc_type_id, update_data)
+    doc_type = await DocumentTypeService.update_document_type(db, doc_type_id, update_data)
     
     if not doc_type:
         raise HTTPException(status_code=404, detail="文档类型不存在")
@@ -127,15 +126,15 @@ def update_document_type(
 
 
 @router.delete("/{doc_type_id}", response_model=ResponseBase)
-def delete_document_type(
+async def delete_document_type(
     doc_type_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
     删除文档类型（软删除）
     """
-    success = DocumentTypeService.delete_document_type(db, doc_type_id)
+    success = await DocumentTypeService.delete_document_type(db, doc_type_id)
     
     if not success:
         raise HTTPException(status_code=404, detail="文档类型不存在")
@@ -146,10 +145,10 @@ def delete_document_type(
 # ==================== 字段管理接口 ====================
 
 @router.post("/{doc_type_id}/fields", response_model=ResponseBase, status_code=status.HTTP_201_CREATED)
-def add_field(
+async def add_field(
     doc_type_id: int,
     field_data: DocumentTypeFieldCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -159,7 +158,7 @@ def add_field(
     field_data.doc_type_id = doc_type_id
     
     try:
-        field = DocumentTypeService.add_field(db, field_data)
+        field = await DocumentTypeService.add_field(db, field_data)
         return ResponseBase(
             code=201,
             message="字段添加成功",
@@ -172,15 +171,15 @@ def add_field(
 
 
 @router.get("/{doc_type_id}/fields", response_model=ResponseBase)
-def get_fields(
+async def get_fields(
     doc_type_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
     获取文档类型的所有字段
     """
-    fields = DocumentTypeService.get_fields(db, doc_type_id)
+    fields = await DocumentTypeService.get_fields(db, doc_type_id)
     return ResponseBase(
         message="获取成功",
         data=[f.to_dict() for f in fields]
@@ -188,16 +187,16 @@ def get_fields(
 
 
 @router.put("/fields/{field_id}", response_model=ResponseBase)
-def update_field(
+async def update_field(
     field_id: int,
     update_data: DocumentTypeFieldUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
     更新字段配置
     """
-    field = DocumentTypeService.update_field(db, field_id, update_data)
+    field = await DocumentTypeService.update_field(db, field_id, update_data)
     
     if not field:
         raise HTTPException(status_code=404, detail="字段不存在")
@@ -209,15 +208,15 @@ def update_field(
 
 
 @router.delete("/fields/{field_id}", response_model=ResponseBase)
-def delete_field(
+async def delete_field(
     field_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
     删除字段
     """
-    success = DocumentTypeService.delete_field(db, field_id)
+    success = await DocumentTypeService.delete_field(db, field_id)
     
     if not success:
         raise HTTPException(status_code=404, detail="字段不存在")
@@ -226,10 +225,10 @@ def delete_field(
 
 
 @router.put("/{doc_type_id}/fields/batch", response_model=ResponseBase)
-def batch_update_fields(
+async def batch_update_fields(
     doc_type_id: int,
     fields: List[DocumentTypeFieldSchema],
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -237,7 +236,7 @@ def batch_update_fields(
     会删除现有所有字段并重新创建
     """
     try:
-        updated_fields = DocumentTypeService.batch_update_fields(db, doc_type_id, fields)
+        updated_fields = await DocumentTypeService.batch_update_fields(db, doc_type_id, fields)
         return ResponseBase(
             message="批量更新成功",
             data=[f.to_dict() for f in updated_fields]
@@ -247,16 +246,16 @@ def batch_update_fields(
 
 
 @router.get("/{doc_type_id}/extraction-config", response_model=ResponseBase)
-def get_extraction_config(
+async def get_extraction_config(
     doc_type_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
     获取文档类型的完整提取配置
     用于大模型提取时的配置引用
     """
-    config = DocumentTypeService.get_extraction_config(db, doc_type_id)
+    config = await DocumentTypeService.get_extraction_config(db, doc_type_id)
     
     if not config:
         raise HTTPException(status_code=404, detail="文档类型不存在")

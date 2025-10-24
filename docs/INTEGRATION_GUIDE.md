@@ -135,24 +135,35 @@ print(document.extracted_data)    # {"author": "张三", "task_count": 5}
 
 ### 1. 文档类型管理界面
 
-#### 访问路径
-```
-/document-types?templateId=1
-```
+#### 访问方式
+**作为模板的子功能，通过抽屉展示**
 
-#### 主要功能
-- 查看模板的所有文档类型
-- 创建新的文档类型
-- 编辑类型信息
-- 配置提取字段
+```tsx
+// 在模板列表中点击"查看类别"按钮
+<Button onClick={() => handleViewDocumentTypes(template)}>
+    查看类别
+</Button>
+
+// 打开抽屉显示文档类型管理
+<Drawer title={`文档类型管理 - ${template.name}`}>
+    <DocumentTypeManager template={template} />
+</Drawer>
+```
 
 #### 组件结构
 ```
-pages/DocumentType/
-  ├── index.tsx                    # 主页面
+pages/Template/
+  ├── index.tsx                    # 模板管理主页面
   └── components/
-      └── FieldConfigDrawer.tsx   # 字段配置抽屉
+      ├── TemplateDesigner.tsx     # 层级设计器
+      ├── DocumentTypeManager.tsx  # 文档类型管理（抽屉内容）
+      └── FieldConfigDrawer.tsx    # 字段配置抽屉
 ```
+
+**设计原则**：
+- ✅ 文档类型从属于模板
+- ✅ 在模板页面中通过抽屉管理
+- ✅ 保持上下文，无需跳转页面
 
 ### 2. 在模板管理中的集成
 

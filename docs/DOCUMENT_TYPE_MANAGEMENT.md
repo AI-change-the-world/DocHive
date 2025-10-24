@@ -11,40 +11,40 @@
 #### 1. DocumentType（文档类型表）
 存储文档类型的基本信息
 
-| 字段              | 类型        | 说明                     |
-| ----------------- | ----------- | ------------------------ |
-| id                | Integer     | 主键                     |
-| template_id       | Integer     | 所属模板ID               |
-| type_code         | String(50)  | 类型编码（如：DEV_DOC）  |
-| type_name         | String(100) | 类型名称（如：开发文档） |
-| description       | Text        | 类型描述                 |
-| extraction_prompt | Text        | 整体提取Prompt           |
-| is_active         | Boolean     | 是否启用                 |
-| created_at        | Integer     | 创建时间戳               |
-| updated_at        | Integer     | 更新时间戳               |
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | Integer | 主键 |
+| template_id | Integer | 所属模板ID |
+| type_code | String(50) | 类型编码（如：DEV_DOC） |
+| type_name | String(100) | 类型名称（如：开发文档） |
+| description | Text | 类型描述 |
+| extraction_prompt | Text | 整体提取Prompt |
+| is_active | Boolean | 是否启用 |
+| created_at | Integer | 创建时间戳 |
+| updated_at | Integer | 更新时间戳 |
 
 #### 2. DocumentTypeField（文档类型字段表）
 存储每个文档类型的结构化字段配置
 
-| 字段                | 类型        | 说明                                       |
-| ------------------- | ----------- | ------------------------------------------ |
-| id                  | Integer     | 主键                                       |
-| doc_type_id         | Integer     | 所属文档类型ID                             |
-| field_name          | String(100) | 字段名称（如：编制人）                     |
-| field_code          | String(50)  | 字段编码（如：author）                     |
-| field_type          | String(20)  | 字段类型（text/number/array/date/boolean） |
-| extraction_prompt   | Text        | 字段提取Prompt（统一使用大模型）           |
-| is_required         | Boolean     | 是否必填                                   |
-| display_order       | Integer     | 显示顺序                                   |
-| placeholder_example | String(200) | 示例值                                     |
-| created_at          | Integer     | 创建时间戳                                 |
-| updated_at          | Integer     | 更新时间戳                                 |
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | Integer | 主键 |
+| doc_type_id | Integer | 所属文档类型ID |
+| field_name | String(100) | 字段名称（如：编制人） |
+| field_code | String(50) | 字段编码（如：author） |
+| field_type | String(20) | 字段类型（text/number/array/date/boolean） |
+| extraction_prompt | Text | 字段提取Prompt（统一使用大模型） |
+| is_required | Boolean | 是否必填 |
+| display_order | Integer | 显示顺序 |
+| placeholder_example | String(200) | 示例值 |
+| created_at | Integer | 创建时间戳 |
+| updated_at | Integer | 更新时间戳 |
 
 #### 3. Document 扩展
 在文档表中新增字段：
 
-| 字段        | 类型    | 说明             |
-| ----------- | ------- | ---------------- |
+| 字段 | 类型 | 说明 |
+|------|------|------|
 | doc_type_id | Integer | 关联的文档类型ID |
 
 ## 🔄 业务流程

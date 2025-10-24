@@ -14,6 +14,7 @@ from schemas.api_schemas import (
 from services.extraction_service import ExtractionEngine
 from api.deps import get_current_user
 from models.database_models import User, ExtractionConfig
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/extraction", tags=["信息抽取"])
 

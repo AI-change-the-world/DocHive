@@ -5,6 +5,7 @@ from typing import List, Optional
 from models.database_models import ClassTemplate, NumberingRule
 from schemas.api_schemas import ClassTemplateCreate, ClassTemplateUpdate
 import time
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class TemplateService:

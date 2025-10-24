@@ -9,6 +9,7 @@ from schemas.api_schemas import (
 from services.numbering_service import NumberingService
 from api.deps import get_current_user
 from models.database_models import User
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/numbering", tags=["编号与索引"])
 

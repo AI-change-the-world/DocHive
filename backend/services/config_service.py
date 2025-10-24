@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 from typing import List, Optional
 from models.database_models import SystemConfig
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class ConfigService:

@@ -12,6 +12,7 @@ from schemas.api_schemas import (
 from services.auth_service import AuthService
 from api.deps import get_current_user
 from models.database_models import User
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/auth", tags=["认证与授权"])
 

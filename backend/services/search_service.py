@@ -5,6 +5,7 @@ from models.database_models import Document
 from services.document_service import DocumentService
 from utils.search_engine import search_client
 from datetime import datetime
+from sqlalchemy.ext.asyncio import AsyncSession
 
 RETERIEVAL_ROUTER_PROMPT = """
 你是一个智能检索路由器，请根据用户的查询内容分析应当使用哪种检索方式。

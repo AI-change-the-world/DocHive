@@ -8,6 +8,7 @@ from utils.parser import DocumentParser
 import uuid
 import time
 from pathlib import Path
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class DocumentService:

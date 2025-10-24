@@ -1,10 +1,10 @@
-from sqlalchemy.orm import Session
 from sqlalchemy import select
 from typing import Optional
 from models.database_models import User, UserRole
 from utils.security import verify_password, get_password_hash, create_access_token, create_refresh_token
 from schemas.api_schemas import UserCreate
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 class AuthService:
     """认证服务"""
@@ -31,12 +31,12 @@ class AuthService:
     
     @staticmethod
     async def create_user(
-        db: Session,
+        db: AsyncSession,
         user_data: UserCreate,
     ) -> User:
         """创建用户"""
         # 检查用户名是否存在
-        result = db.execute(
+        result = await db.execute(
             select(User).where(User.username == user_data.username)
         )
         if result.scalar_one_or_none():

@@ -13,6 +13,7 @@ from schemas.api_schemas import (
 from services.template_service import TemplateService
 from api.deps import get_current_user
 from models.database_models import User
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/templates", tags=["分类模板管理"])
 

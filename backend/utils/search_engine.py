@@ -14,17 +14,17 @@ class BaseSearchEngine(ABC):
     """搜索引擎基类"""
     
     @abstractmethod
-    def ensure_index(self):
+    async def ensure_index(self):
         """确保索引/表存在"""
         pass
     
     @abstractmethod
-    def index_document(self, document_data: Dict[str, Any]) -> bool:
+    async def index_document(self, document_data: Dict[str, Any]) -> bool:
         """索引文档"""
         pass
     
     @abstractmethod
-    def search_documents(
+    async def search_documents(
         self,
         keyword: Optional[str] = None,
         class_path: Optional[Dict[str, str]] = None,
@@ -39,11 +39,11 @@ class BaseSearchEngine(ABC):
         pass
     
     @abstractmethod
-    def delete_document(self, document_id: int) -> bool:
+    async def delete_document(self, document_id: int) -> bool:
         """删除文档索引"""
         pass
     
-    def close(self):
+    async def close(self):
         """关闭连接（可选）"""
         pass
 
@@ -342,16 +342,16 @@ class DatabaseEngine(BaseSearchEngine):
             return 'sqlite'
         return 'unknown'
     
-    def ensure_index(self):
+    async def ensure_index(self):
         """创建全文索引"""
         from database import engine
         from sqlalchemy import text
         
-        with engine.begin() as conn:
+        async with engine.begin() as conn:
             try:
                 if self.db_type == 'postgresql':
                     # PostgreSQL 使用 GIN 索引 + to_tsvector
-                    conn.execute(text("""
+                    await conn.execute(text("""
                         CREATE INDEX IF NOT EXISTS idx_documents_fulltext 
                         ON documents USING GIN (
                             to_tsvector('simple', title || ' ' || COALESCE(content_text, ''))
@@ -359,29 +359,29 @@ class DatabaseEngine(BaseSearchEngine):
                     """))
                 elif self.db_type == 'mysql':
                     # MySQL 使用 FULLTEXT 索引
-                    conn.execute(text("""
+                    await conn.execute(text("""
                         ALTER TABLE documents 
                         ADD FULLTEXT INDEX idx_documents_fulltext (title, content_text)
                     """))
                 elif self.db_type == 'sqlite':
                     # SQLite 使用 FTS5 虚拟表
-                    conn.execute(text("""
+                    await conn.execute(text("""
                         CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts 
                         USING fts5(document_id, title, content_text, content='documents', content_rowid='id')
                     """))
                     # 创建触发器保持同步
-                    conn.execute(text("""
+                    await conn.execute(text("""
                         CREATE TRIGGER IF NOT EXISTS documents_ai AFTER INSERT ON documents BEGIN
                             INSERT INTO documents_fts(rowid, document_id, title, content_text)
                             VALUES (new.id, new.id, new.title, new.content_text);
                         END
                     """))
-                    conn.execute(text("""
+                    await conn.execute(text("""
                         CREATE TRIGGER IF NOT EXISTS documents_ad AFTER DELETE ON documents BEGIN
                             DELETE FROM documents_fts WHERE rowid = old.id;
                         END
                     """))
-                    conn.execute(text("""
+                    await conn.execute(text("""
                         CREATE TRIGGER IF NOT EXISTS documents_au AFTER UPDATE ON documents BEGIN
                             DELETE FROM documents_fts WHERE rowid = old.id;
                             INSERT INTO documents_fts(rowid, document_id, title, content_text)
@@ -391,11 +391,11 @@ class DatabaseEngine(BaseSearchEngine):
             except Exception as e:
                 print(f"创建全文索引失败: {e}")
     
-    def index_document(self, document_data: Dict[str, Any]) -> bool:
+    async def index_document(self, document_data: Dict[str, Any]) -> bool:
         """数据库自动索引，无需额外操作"""
         return True
     
-    def search_documents(
+    async def search_documents(
         self,
         keyword: Optional[str] = None,
         class_path: Optional[Dict[str, str]] = None,
@@ -407,11 +407,11 @@ class DatabaseEngine(BaseSearchEngine):
         page_size: int = 20,
     ) -> Dict[str, Any]:
         """使用数据库原生全文检索"""
-        from database import SessionLocal
+        from database import AsyncSessionLocal
         from sqlalchemy import select, func, or_, and_, text
         from models.database_models import Document
         
-        with SessionLocal() as session:
+        async with AsyncSessionLocal() as session:
             # 构建基础查询
             query = select(Document)
             count_query = select(func.count(Document.id))
@@ -470,14 +470,14 @@ class DatabaseEngine(BaseSearchEngine):
                 count_query = count_query.where(and_(*conditions))
             
             # 查询总数
-            total_result = session.execute(count_query)
+            total_result = await session.execute(count_query)
             total = total_result.scalar()
             
             # 分页查询
             offset = (page - 1) * page_size
             query = query.order_by(Document.upload_time.desc()).offset(offset).limit(page_size)
             
-            result = session.execute(query)
+            result = await session.execute(query)
             documents = result.scalars().all()
             
             results = [
@@ -493,7 +493,7 @@ class DatabaseEngine(BaseSearchEngine):
             
             return {"results": results, "total": total, "page": page, "page_size": page_size}
     
-    def delete_document(self, document_id: int) -> bool:
+    async def delete_document(self, document_id: int) -> bool:
         """数据库自动删除索引"""
         return True
 

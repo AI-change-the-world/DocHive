@@ -11,6 +11,7 @@ from schemas.api_schemas import (
 from services.search_service import SearchService
 from api.deps import get_current_user
 from models.database_models import User
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/search", tags=["文档检索"])
 

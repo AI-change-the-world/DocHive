@@ -3,7 +3,6 @@
 负责文档类型的 CRUD 操作和字段配置管理
 """
 from typing import List, Optional, Dict, Any
-from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from models.database_models import DocumentType, DocumentTypeField
 from schemas.api_schemas import (
@@ -13,13 +12,14 @@ from schemas.api_schemas import (
     DocumentTypeFieldUpdate,
     DocumentTypeFieldSchema
 )
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class DocumentTypeService:
     """文档类型服务类"""
     
     @staticmethod
-    def create_document_type(db: Session, doc_type_data: DocumentTypeCreate) -> DocumentType:
+    async def create_document_type(db: AsyncSession, doc_type_data: DocumentTypeCreate) -> DocumentType:
         """
         创建文档类型
         
@@ -31,7 +31,7 @@ class DocumentTypeService:
             创建的文档类型对象
         """
         # 检查同一模板下是否已存在相同编码
-        existing = db.query(DocumentType).filter(
+        existing = await db.query(DocumentType).filter(
             and_(
                 DocumentType.template_id == doc_type_data.template_id,
                 DocumentType.type_code == doc_type_data.type_code
@@ -50,7 +50,7 @@ class DocumentTypeService:
             extraction_prompt=doc_type_data.extraction_prompt,
         )
         db.add(db_doc_type)
-        db.flush()  # 获取 ID
+        await db.flush()  # 获取 ID
         
         # 创建关联字段
         if doc_type_data.fields:
@@ -67,18 +67,18 @@ class DocumentTypeService:
                 )
                 db.add(db_field)
         
-        db.commit()
-        db.refresh(db_doc_type)
+        await db.commit()
+        await db.refresh(db_doc_type)
         return db_doc_type
     
     @staticmethod
-    def get_document_type(db: Session, doc_type_id: int) -> Optional[DocumentType]:
+    async def get_document_type(db: AsyncSession, doc_type_id: int) -> Optional[DocumentType]:
         """获取文档类型详情"""
-        return db.query(DocumentType).filter(DocumentType.id == doc_type_id).first()
+        return await db.query(DocumentType).filter(DocumentType.id == doc_type_id).first()
     
     @staticmethod
-    def get_document_types_by_template(
-        db: Session, 
+    async def get_document_types_by_template(
+        db: AsyncSession, 
         template_id: int,
         include_inactive: bool = False
     ) -> List[DocumentType]:
@@ -93,21 +93,21 @@ class DocumentTypeService:
         Returns:
             文档类型列表
         """
-        query = db.query(DocumentType).filter(DocumentType.template_id == template_id)
+        query = await db.query(DocumentType).filter(DocumentType.template_id == template_id)
         
         if not include_inactive:
             query = query.filter(DocumentType.is_active == True)
         
-        return query.order_by(DocumentType.created_at.desc()).all()
+        return await query.order_by(DocumentType.created_at.desc()).all()
     
     @staticmethod
-    def get_document_type_by_code(
-        db: Session,
+    async def get_document_type_by_code(
+        db: AsyncSession,
         template_id: int,
         type_code: str
     ) -> Optional[DocumentType]:
         """根据编码获取文档类型"""
-        return db.query(DocumentType).filter(
+        return await db.query(DocumentType).filter(
             and_(
                 DocumentType.template_id == template_id,
                 DocumentType.type_code == type_code,
@@ -116,8 +116,8 @@ class DocumentTypeService:
         ).first()
     
     @staticmethod
-    def update_document_type(
-        db: Session,
+    async def update_document_type(
+        db: AsyncSession,
         doc_type_id: int,
         update_data: DocumentTypeUpdate
     ) -> Optional[DocumentType]:
@@ -132,7 +132,7 @@ class DocumentTypeService:
         Returns:
             更新后的文档类型对象
         """
-        db_doc_type = db.query(DocumentType).filter(DocumentType.id == doc_type_id).first()
+        db_doc_type = await db.query(DocumentType).filter(DocumentType.id == doc_type_id).first()
         
         if not db_doc_type:
             return None
@@ -142,12 +142,12 @@ class DocumentTypeService:
         for field, value in update_dict.items():
             setattr(db_doc_type, field, value)
         
-        db.commit()
-        db.refresh(db_doc_type)
+        await db.commit()
+        await db.refresh(db_doc_type)
         return db_doc_type
     
     @staticmethod
-    def delete_document_type(db: Session, doc_type_id: int) -> bool:
+    async def delete_document_type(db: AsyncSession, doc_type_id: int) -> bool:
         """
         删除文档类型（软删除）
         
@@ -158,19 +158,19 @@ class DocumentTypeService:
         Returns:
             是否删除成功
         """
-        db_doc_type = db.query(DocumentType).filter(DocumentType.id == doc_type_id).first()
+        db_doc_type = await db.query(DocumentType).filter(DocumentType.id == doc_type_id).first()
         
         if not db_doc_type:
             return False
         
         db_doc_type.is_active = False
-        db.commit()
+        await db.commit()
         return True
     
     # ==================== 字段管理 ====================
     
     @staticmethod
-    def add_field(db: Session, field_data: DocumentTypeFieldCreate) -> DocumentTypeField:
+    async def add_field(db: AsyncSession, field_data: DocumentTypeFieldCreate) -> DocumentTypeField:
         """
         为文档类型添加字段
         
@@ -182,7 +182,7 @@ class DocumentTypeService:
             创建的字段对象
         """
         # 检查字段编码是否已存在
-        existing = db.query(DocumentTypeField).filter(
+        existing = await db.query(DocumentTypeField).filter(
             and_(
                 DocumentTypeField.doc_type_id == field_data.doc_type_id,
                 DocumentTypeField.field_code == field_data.field_code
@@ -204,25 +204,25 @@ class DocumentTypeService:
         )
         
         db.add(db_field)
-        db.commit()
-        db.refresh(db_field)
+        await db.commit()
+        await db.refresh(db_field)
         return db_field
     
     @staticmethod
-    def get_fields(db: Session, doc_type_id: int) -> List[DocumentTypeField]:
+    async def get_fields(db: AsyncSession, doc_type_id: int) -> List[DocumentTypeField]:
         """获取文档类型的所有字段"""
-        return db.query(DocumentTypeField).filter(
+        return await db.query(DocumentTypeField).filter(
             DocumentTypeField.doc_type_id == doc_type_id
         ).order_by(DocumentTypeField.display_order, DocumentTypeField.id).all()
     
     @staticmethod
-    def update_field(
-        db: Session,
+    async def update_field(
+        db: AsyncSession,
         field_id: int,
         update_data: DocumentTypeFieldUpdate
     ) -> Optional[DocumentTypeField]:
         """更新字段配置"""
-        db_field = db.query(DocumentTypeField).filter(DocumentTypeField.id == field_id).first()
+        db_field = await db.query(DocumentTypeField).filter(DocumentTypeField.id == field_id).first()
         
         if not db_field:
             return None
@@ -231,25 +231,25 @@ class DocumentTypeService:
         for field, value in update_dict.items():
             setattr(db_field, field, value)
         
-        db.commit()
-        db.refresh(db_field)
+        await db.commit()
+        await db.refresh(db_field)
         return db_field
     
     @staticmethod
-    def delete_field(db: Session, field_id: int) -> bool:
+    async def delete_field(db: AsyncSession, field_id: int) -> bool:
         """删除字段"""
-        db_field = db.query(DocumentTypeField).filter(DocumentTypeField.id == field_id).first()
+        db_field = await db.query(DocumentTypeField).filter(DocumentTypeField.id == field_id).first()
         
         if not db_field:
             return False
         
-        db.delete(db_field)
-        db.commit()
+        await db.delete(db_field)
+        await db.commit()
         return True
     
     @staticmethod
-    def batch_update_fields(
-        db: Session,
+    async def batch_update_fields(
+        db: AsyncSession,
         doc_type_id: int,
         fields: List[DocumentTypeFieldSchema]
     ) -> List[DocumentTypeField]:
@@ -265,7 +265,7 @@ class DocumentTypeService:
             更新后的字段列表
         """
         # 删除现有字段
-        db.query(DocumentTypeField).filter(
+        await db.query(DocumentTypeField).filter(
             DocumentTypeField.doc_type_id == doc_type_id
         ).delete()
         
@@ -285,16 +285,16 @@ class DocumentTypeService:
             db.add(db_field)
             new_fields.append(db_field)
         
-        db.commit()
+        await db.commit()
         
         # 刷新对象
         for field in new_fields:
-            db.refresh(field)
+            await db.refresh(field)
         
         return new_fields
     
     @staticmethod
-    def get_extraction_config(db: Session, doc_type_id: int) -> Dict[str, Any]:
+    async def get_extraction_config(db: AsyncSession, doc_type_id: int) -> Dict[str, Any]:
         """
         获取文档类型的完整提取配置
         用于大模型提取时的配置引用
@@ -308,7 +308,7 @@ class DocumentTypeService:
                 ]
             }
         """
-        doc_type = db.query(DocumentType).filter(DocumentType.id == doc_type_id).first()
+        doc_type = await db.query(DocumentType).filter(DocumentType.id == doc_type_id).first()
         if not doc_type:
             return {}
         

@@ -5,6 +5,7 @@ from services.template_service import TemplateService
 from services.document_service import DocumentService
 from services.document_type_service import DocumentTypeService
 from utils.llm_client import llm_client
+from sqlalchemy.ext.asyncio import AsyncSession
 import json
 
 

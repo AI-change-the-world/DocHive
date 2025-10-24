@@ -10,6 +10,7 @@ from schemas.api_schemas import (
 from services.classification_service import ClassificationEngine
 from api.deps import get_current_user
 from models.database_models import User
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/classification", tags=["智能分类"])
 
