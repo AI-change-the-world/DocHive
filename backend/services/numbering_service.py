@@ -1,4 +1,4 @@
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import select, update
 from typing import Dict, Optional
 from models.database_models import NumberingRule, Document, ClassTemplate

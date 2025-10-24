@@ -220,6 +220,50 @@ export interface SystemConfigCreate {
     is_public?: boolean;
 }
 
+// 文档类型相关类型
+export interface DocumentTypeField {
+    id?: number;
+    doc_type_id?: number;
+    field_name: string;
+    field_code: string;
+    field_type: 'text' | 'number' | 'array' | 'date' | 'boolean';
+    extraction_prompt?: string;
+    is_required: boolean;
+    display_order: number;
+    placeholder_example?: string;
+    created_at?: string;
+    updated_at?: string;
+}
+
+export interface DocumentType {
+    id: number;
+    template_id: number;
+    type_code: string;
+    type_name: string;
+    description?: string;
+    extraction_prompt?: string;
+    is_active: boolean;
+    created_at: string;
+    updated_at: string;
+    fields?: DocumentTypeField[];
+}
+
+export interface DocumentTypeCreate {
+    template_id: number;
+    type_code: string;
+    type_name: string;
+    description?: string;
+    extraction_prompt?: string;
+    fields?: Omit<DocumentTypeField, 'id' | 'doc_type_id' | 'created_at' | 'updated_at'>[];
+}
+
+export interface DocumentTypeUpdate {
+    type_name?: string;
+    description?: string;
+    extraction_prompt?: string;
+    is_active?: boolean;
+}
+
 // 统计信息类型
 export interface DocumentStatistics {
     total_documents: number;

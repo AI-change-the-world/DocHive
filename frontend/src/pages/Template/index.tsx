@@ -10,6 +10,7 @@ import {
     Popconfirm,
     Tag,
     Card,
+    Drawer,
 } from 'antd';
 import {
     PlusOutlined,
@@ -20,6 +21,7 @@ import {
 import { templateService } from '../../services/template';
 import type { ClassTemplate, TemplateLevel } from '../../types';
 import TemplateDesigner from './components/TemplateDesigner';
+import DocumentTypeManager from './components/DocumentTypeManager';
 
 const TemplatePage: React.FC = () => {
     const [templates, setTemplates] = useState<ClassTemplate[]>([]);
@@ -29,6 +31,10 @@ const TemplatePage: React.FC = () => {
     const [total, setTotal] = useState(0);
     const [pagination, setPagination] = useState({ page: 1, page_size: 10 });
     const [form] = Form.useForm();
+
+    // 文档类型管理抽屉
+    const [docTypeDrawerVisible, setDocTypeDrawerVisible] = useState(false);
+    const [selectedTemplate, setSelectedTemplate] = useState<ClassTemplate | null>(null);
 
     useEffect(() => {
         fetchTemplates();
@@ -85,6 +91,11 @@ const TemplatePage: React.FC = () => {
         }
     };
 
+    const handleViewDocumentTypes = (template: ClassTemplate) => {
+        setSelectedTemplate(template);
+        setDocTypeDrawerVisible(true);
+    };
+
     const columns = [
         {
             title: 'ID',
@@ -132,9 +143,9 @@ const TemplatePage: React.FC = () => {
                     <Button
                         type="link"
                         icon={<EyeOutlined />}
-                        onClick={() => handleEdit(record)}
+                        onClick={() => handleViewDocumentTypes(record)}
                     >
-                        查看
+                        查看类别
                     </Button>
                     <Button
                         type="link"
@@ -247,6 +258,22 @@ const TemplatePage: React.FC = () => {
                         </Form.Item>
                     </Form>
                 </Modal>
+
+                {/* 文档类型管理抽屉 */}
+                <Drawer
+                    title={`文档类型管理 - ${selectedTemplate?.name || ''}`}
+                    width={1000}
+                    open={docTypeDrawerVisible}
+                    onClose={() => setDocTypeDrawerVisible(false)}
+                    destroyOnClose
+                >
+                    {selectedTemplate && (
+                        <DocumentTypeManager
+                            template={selectedTemplate}
+                            onClose={() => setDocTypeDrawerVisible(false)}
+                        />
+                    )}
+                </Drawer>
             </Card>
         </div>
     );

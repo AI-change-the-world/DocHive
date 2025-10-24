@@ -1,8 +1,9 @@
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from typing import Dict, Optional, Any
-from models.database_models import Document, ClassTemplate
+from models.database_models import Document, ClassTemplate, DocumentType
 from services.template_service import TemplateService
 from services.document_service import DocumentService
+from services.document_type_service import DocumentTypeService
 from utils.llm_client import llm_client
 import json
 
@@ -60,9 +61,15 @@ class ClassificationEngine:
             document.title,
         )
         
+        # 识别文档类型（从 is_doc_type=True 的层级）
+        doc_type_id = await ClassificationEngine._identify_document_type(
+            db, template_id, template.levels, class_path
+        )
+        
         # 更新文档分类信息
         document.class_path = class_path
         document.template_id = template_id
+        document.doc_type_id = doc_type_id
         
         await db.commit()
         await db.refresh(document)
@@ -161,6 +168,68 @@ class ClassificationEngine:
         except Exception as e:
             # 分类失败时返回默认值
             return {level['name']: "未分类" for level in template_levels}
+    
+    @staticmethod
+    async def _identify_document_type(
+        db: AsyncSession,
+        template_id: int,
+        template_levels: list,
+        class_path: Dict[str, str]
+    ) -> Optional[int]:
+        """
+        识别文档类型
+        
+        从模板中找到 is_doc_type=True 的层级，根据 class_path 中对应的值，
+        查找或创建 DocumentType。
+        
+        Args:
+            db: 数据库会话
+            template_id: 模板ID
+            template_levels: 模板层级定义
+            class_path: 分类路径
+            
+        Returns:
+            文档类型ID，如果不存在则返回None
+        """
+        # 找到 is_doc_type=True 的层级
+        doc_type_level = None
+        for level in template_levels:
+            if level.get('is_doc_type'):
+                doc_type_level = level
+                break
+        
+        if not doc_type_level:
+            return None
+        
+        # 从 class_path 中获取类型名称
+        level_name = doc_type_level['name']
+        type_name = class_path.get(level_name)
+        
+        if not type_name or type_name == "未分类":
+            return None
+        
+        # 生成 type_code（类型名转拼音大写）
+        from pypinyin import lazy_pinyin
+        type_code = '_'.join(lazy_pinyin(type_name)).upper()
+        
+        # 查找或创建 DocumentType
+        doc_type = DocumentTypeService.get_document_type_by_code(
+            db, template_id, type_code
+        )
+        
+        if not doc_type:
+            # 自动创建
+            from schemas.api_schemas import DocumentTypeCreate
+            doc_type_data = DocumentTypeCreate(
+                template_id=template_id,
+                type_code=type_code,
+                type_name=type_name,
+                description=f"自动创建的文档类型：{type_name}",
+                extraction_prompt=doc_type_level.get('extraction_prompt'),
+            )
+            doc_type = DocumentTypeService.create_document_type(db, doc_type_data)
+        
+        return doc_type.id
     
     @staticmethod
     async def batch_classify_documents(

@@ -1,4 +1,4 @@
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import select
 from typing import Optional
 from models.database_models import User, UserRole
@@ -31,12 +31,12 @@ class AuthService:
     
     @staticmethod
     async def create_user(
-        db: AsyncSession,
+        db: Session,
         user_data: UserCreate,
     ) -> User:
         """创建用户"""
         # 检查用户名是否存在
-        result = await db.execute(
+        result = db.execute(
             select(User).where(User.username == user_data.username)
         )
         if result.scalar_one_or_none():

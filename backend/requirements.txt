@@ -7,10 +7,6 @@ pydantic-settings==2.11.0
 
 # 数据库相关
 sqlalchemy==2.0.44
-# alembic==1.17.0
-# asyncpg==0.30.0
-# psycopg2-binary==2.9.11
-aiosqlite==0.21.0  # SQLite 异步驱动
 
 # 文件处理
 python-multipart==0.0.20

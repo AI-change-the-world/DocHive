@@ -261,6 +261,91 @@ class ExtractionResponse(BaseModel):
     failed_fields: List[str]
 
 
+# ============= 文档类型相关 =============
+class DocumentTypeFieldSchema(BaseModel):
+    """文档类型字段定义"""
+    field_name: str = Field(..., min_length=1, max_length=100, description="字段名称")
+    field_code: str = Field(..., min_length=1, max_length=50, description="字段编码")
+    field_type: str = Field("text", description="字段类型:text, number, array, date, boolean")
+    extraction_prompt: Optional[str] = Field(None, description="AI提取Prompt（统一使用大模型）")
+    is_required: bool = Field(False, description="是否必填")
+    display_order: int = Field(0, description="显示顺序")
+    placeholder_example: Optional[str] = Field(None, description="示例值")
+
+
+class DocumentTypeCreate(BaseModel):
+    """创建文档类型"""
+    template_id: int = Field(..., description="所属模板ID")
+    type_code: str = Field(..., min_length=1, max_length=50, description="类型编码")
+    type_name: str = Field(..., min_length=1, max_length=100, description="类型名称")
+    description: Optional[str] = None
+    extraction_prompt: Optional[str] = Field(None, description="AI提取Prompt")
+    fields: Optional[List[DocumentTypeFieldSchema]] = Field(default=[], description="字段配置列表")
+
+
+class DocumentTypeUpdate(BaseModel):
+    """更新文档类型"""
+    type_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    description: Optional[str] = None
+    extraction_prompt: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class DocumentTypeFieldResponse(BaseModel):
+    """文档类型字段响应"""
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    doc_type_id: int
+    field_name: str
+    field_code: str
+    field_type: str
+    extraction_prompt: Optional[str]
+    is_required: bool
+    display_order: int
+    placeholder_example: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class DocumentTypeResponse(BaseModel):
+    """文档类型响应"""
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    template_id: int
+    type_code: str
+    type_name: str
+    description: Optional[str]
+    extraction_prompt: Optional[str]
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    fields: Optional[List[DocumentTypeFieldResponse]] = None
+
+
+class DocumentTypeFieldCreate(BaseModel):
+    """创建文档类型字段"""
+    doc_type_id: int = Field(..., description="文档类型ID")
+    field_name: str = Field(..., min_length=1, max_length=100)
+    field_code: str = Field(..., min_length=1, max_length=50)
+    field_type: str = Field("text")
+    extraction_prompt: Optional[str] = None
+    is_required: bool = False
+    display_order: int = 0
+    placeholder_example: Optional[str] = None
+
+
+class DocumentTypeFieldUpdate(BaseModel):
+    """更新文档类型字段"""
+    field_name: Optional[str] = None
+    field_type: Optional[str] = None
+    extraction_prompt: Optional[str] = None
+    is_required: Optional[bool] = None
+    display_order: Optional[int] = None
+    placeholder_example: Optional[str] = None
+
+
 # ============= 系统配置相关 =============
 class SystemConfigCreate(BaseModel):
     config_key: str = Field(..., max_length=100)

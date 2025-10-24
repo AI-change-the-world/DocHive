@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 DocHive 后端服务启动中...")
     
     # 初始化数据库
-    await init_db()
+    init_db()
     logger.info("✅ 数据库初始化完成")
     
     # 初始化搜索引擎索引

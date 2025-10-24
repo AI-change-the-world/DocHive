@@ -1,6 +1,6 @@
 import traceback
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from database import get_db
 from schemas.api_schemas import (
     LoginRequest,
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/auth", tags=["认证与授权"])
 @router.post("/register", response_model=ResponseBase, status_code=status.HTTP_201_CREATED)
 async def register(
     user_data: UserCreate,
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
 ):
     """
     用户注册

@@ -115,6 +115,7 @@ class Document(Base, ToDictMixin):
     
     # 分类信息
     template_id = Column(Integer, index=True)  # 关联 class_templates.id，无外键约束
+    doc_type_id = Column(Integer, index=True)  # 关联 document_types.id，文档类型
     _class_path = Column("class_path", Text)  # 分类路径：{"年份": "2025", "部门": "研发部", ...}
     class_code = Column(String(100), unique=True, index=True)  # 唯一分类编号
     
@@ -276,6 +277,38 @@ class OperationLog(Base, ToDictMixin):
     created_at = Column(Integer, default=lambda: int(time.time()), index=True)
 
 
+class DocumentType(Base, ToDictMixin):
+    """文档类型表（由模板中 is_doc_type=True 的层级定义）"""
+    __tablename__ = "document_types"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    template_id = Column(Integer, nullable=False, index=True)  # 关联 class_templates.id
+    type_code = Column(String(50), nullable=False, index=True)  # 类型编码，如：DEV_DOC、DESIGN_DOC
+    type_name = Column(String(100), nullable=False)  # 类型名称，如：开发文档、设计文档
+    description = Column(Text)  # 类型描述
+    extraction_prompt = Column(Text)  # AI提取Prompt（从模板层级配置同步）
+    is_active = Column(Boolean, default=True)
+    created_at = Column(Integer, default=lambda: int(time.time()))
+    updated_at = Column(Integer, default=lambda: int(time.time()))
+
+
+class DocumentTypeField(Base, ToDictMixin):
+    """文档类型字段配置表（定义每个文档类型需要提取的结构化字段）"""
+    __tablename__ = "document_type_fields"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    doc_type_id = Column(Integer, nullable=False, index=True)  # 关联 document_types.id
+    field_name = Column(String(100), nullable=False)  # 字段名称，如：编制人、任务数量
+    field_code = Column(String(50), nullable=False)  # 字段编码，如：author、task_count
+    field_type = Column(String(20), default='text')  # 字段类型：text, number, array, date, boolean
+    extraction_prompt = Column(Text)  # AI提取Prompt（统一使用大模型提取）
+    is_required = Column(Boolean, default=False)  # 是否必填
+    display_order = Column(Integer, default=0)  # 显示顺序
+    placeholder_example = Column(String(200))  # 示例值
+    created_at = Column(Integer, default=lambda: int(time.time()))
+    updated_at = Column(Integer, default=lambda: int(time.time()))
+
+
 class SystemConfig(Base, ToDictMixin):
     """系统配置表"""
     __tablename__ = "system_configs"
@@ -292,4 +325,6 @@ class SystemConfig(Base, ToDictMixin):
 event.listen(User, 'before_update', update_timestamp_before_update)
 event.listen(ClassTemplate, 'before_update', update_timestamp_before_update)
 event.listen(ExtractionConfig, 'before_update', update_timestamp_before_update)
+event.listen(DocumentType, 'before_update', update_timestamp_before_update)
+event.listen(DocumentTypeField, 'before_update', update_timestamp_before_update)
 event.listen(SystemConfig, 'before_update', update_timestamp_before_update)

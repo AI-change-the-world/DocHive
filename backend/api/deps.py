@@ -1,7 +1,6 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy.orm import Session
 from typing import Optional
 from database import get_db
 from models.database_models import User, UserRole
@@ -10,9 +9,9 @@ from utils.security import decode_token
 security = HTTPBearer()
 
 
-async def get_current_user(
+def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
 ) -> User:
     """获取当前登录用户"""
     token = credentials.credentials
@@ -32,8 +31,7 @@ async def get_current_user(
             detail="无效的认证凭据",
         )
     
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
+    user = db.query(User).filter(User.id == user_id).first()
     
     if user is None:
         raise HTTPException(
@@ -50,7 +48,7 @@ async def get_current_user(
     return user
 
 
-async def get_current_active_user(
+def get_current_active_user(
     current_user: User = Depends(get_current_user),
 ) -> User:
     """获取当前活跃用户"""
@@ -61,7 +59,7 @@ async def get_current_active_user(
 
 def require_role(required_role: UserRole):
     """角色权限依赖"""
-    async def role_checker(current_user: User = Depends(get_current_user)) -> User:
+    def role_checker(current_user: User = Depends(get_current_user)) -> User:
         role_hierarchy = {
             UserRole.ADMIN: 3,
             UserRole.REVIEWER: 2,
