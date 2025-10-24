@@ -150,12 +150,14 @@ class TemplateService:
     
     @staticmethod
     async def _parse_doc_types_from_prompt(extraction_prompt: str) -> List[Dict[str, Any]]:
-        """使用大模型解析 extraction_prompt，提取文档类型列表"""
+        """使用大模型解析 extraction_prompt，提取文档类型列表（不包含字段，字段由用户在前端手动配置）"""
         system_prompt = """你是一个文档分类专家。用户会提供一个用于文档类型分类的prompt。
 请分析这个prompt，识别出其中定义的所有文档类型，并为每个类型提取以下信息：
 1. type_code: 类型编码（简短英文或拼音，如 dev_doc, design_doc）
 2. type_name: 类型名称（中文，如 开发文档、设计文档）
 3. description: 类型描述（简要说明）
+
+注意：只需要识别文档类型本身，不需要识别字段信息。
 
 请以JSON格式返回，格式如下：
 {
@@ -202,16 +204,14 @@ class TemplateService:
             existing.type_name = type_data.get('type_name', existing.type_name)
             existing.description = type_data.get('description', existing.description)
         else:
-            # 创建新记录
+            # 创建新记录（不创建字段，字段由用户在前端手动配置）
             new_doc_type = DocumentType(
                 template_id=template_id,
                 type_code=type_code,
                 type_name=type_data.get('type_name', ''),
                 description=type_data.get('description', ''),
-                extraction_prompt=f"识别为 {type_data.get('type_name')} 类型的文档",
                 is_active=True
             )
             db.add(new_doc_type)
-            await db.flush()
         
         await db.commit()

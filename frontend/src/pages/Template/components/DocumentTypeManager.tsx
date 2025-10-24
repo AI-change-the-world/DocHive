@@ -33,10 +33,26 @@ const DocumentTypeManager: React.FC<DocumentTypeManagerProps> = ({ template, onC
         setLoading(true);
         try {
             const response = await getDocumentTypesByTemplate(template.id);
-            if (response.data.code === 200) {
-                setDocumentTypes(response.data.data || []);
+            console.log('API Response:', response);
+            console.log('Response data:', response.data);
+
+            // 处理响应数据：response.data 可能直接是数组，也可能是 {code, data} 结构
+            let types: DocumentType[] = [];
+            if (Array.isArray(response.data)) {
+                // 直接是数组
+                types = response.data;
+            } else if (response.data.code === 200 && response.data.data) {
+                // 标准响应结构
+                types = response.data.data;
+            } else if (response.data.data) {
+                // 只有 data 字段
+                types = response.data.data;
             }
+
+            console.log('Setting document types:', types);
+            setDocumentTypes(types);
         } catch (error) {
+            console.error('Load error:', error);
             message.error('加载文档类型失败');
         } finally {
             setLoading(false);
@@ -101,6 +117,11 @@ const DocumentTypeManager: React.FC<DocumentTypeManagerProps> = ({ template, onC
 
     // 检查模板是否有 is_doc_type 层级
     const hasDocTypeLevel = template.levels?.some(level => level.is_doc_type);
+
+    console.log('Template:', template);
+    console.log('Template levels:', template.levels);
+    console.log('Has doc type level:', hasDocTypeLevel);
+    console.log('Document types state:', documentTypes);
 
     if (!hasDocTypeLevel) {
         return (

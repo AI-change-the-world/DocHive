@@ -236,7 +236,7 @@ class DocumentTypeService:
         result = await db.execute(
             select(DocumentTypeField)
             .where(DocumentTypeField.doc_type_id == doc_type_id)
-            .order_by(DocumentTypeField.display_order, DocumentTypeField.id)
+            .order_by(DocumentTypeField.id)
         )
         return list(result.scalars().all())
     
