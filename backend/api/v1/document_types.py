@@ -71,7 +71,7 @@ async def get_document_types_by_template(
     result = []
     for dt in doc_types:
         dt_dict = dt.to_dict()
-        fields = DocumentTypeService.get_fields(db, dt.id)
+        fields = await DocumentTypeService.get_fields(db, int(dt.id))  # type: ignore
         dt_dict['fields'] = [f.to_dict() for f in fields]
         result.append(dt_dict)
     

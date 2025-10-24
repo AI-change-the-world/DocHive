@@ -31,6 +31,7 @@ const TemplatePage: React.FC = () => {
     const [total, setTotal] = useState(0);
     const [pagination, setPagination] = useState({ page: 1, page_size: 10 });
     const [form] = Form.useForm();
+    const [submitLoading, setSubmitLoading] = useState(false);
 
     // 文档类型管理抽屉
     const [docTypeDrawerVisible, setDocTypeDrawerVisible] = useState(false);
@@ -77,6 +78,7 @@ const TemplatePage: React.FC = () => {
 
     const handleSubmit = async (values: any) => {
         try {
+            setSubmitLoading(true);
             if (editingTemplate) {
                 await templateService.updateTemplate(editingTemplate.id, values);
                 message.success('更新成功');
@@ -88,6 +90,8 @@ const TemplatePage: React.FC = () => {
             fetchTemplates();
         } catch (error) {
             message.error('操作失败');
+        } finally {
+            setSubmitLoading(false);
         }
     };
 
@@ -248,7 +252,7 @@ const TemplatePage: React.FC = () => {
 
                         <Form.Item>
                             <Space>
-                                <Button type="primary" htmlType="submit">
+                                <Button type="primary" htmlType="submit" loading={submitLoading}>
                                     提交
                                 </Button>
                                 <Button onClick={() => setModalVisible(false)}>

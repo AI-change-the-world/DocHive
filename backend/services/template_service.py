@@ -1,11 +1,12 @@
 import json
-from sqlalchemy.orm import Session
-from sqlalchemy import select, and_
-from typing import List, Optional
-from models.database_models import ClassTemplate, NumberingRule
-from schemas.api_schemas import ClassTemplateCreate, ClassTemplateUpdate
-import time
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_
+from typing import List, Optional, Dict, Any
+from models.database_models import ClassTemplate, NumberingRule, DocumentType
+from schemas.api_schemas import ClassTemplateCreate, ClassTemplateUpdate, DocumentTypeCreate
+import time
+from utils.llm_client import llm_client
+from loguru import logger
 
 
 class TemplateService:
@@ -29,13 +30,17 @@ class TemplateService:
         db.add(template)
         await db.commit()
         await db.refresh(template)
+        
+        # 自动处理文档类型层级
+        await TemplateService._process_doc_type_level(db, template)
+        
         return template
     
     @staticmethod
     async def get_template(db: AsyncSession, template_id: int) -> Optional[ClassTemplate]:
         """获取单个模板"""
         result = await db.execute(
-            select(ClassTemplate).where(ClassTemplate.id == template_id)
+            select(ClassTemplate).filter(ClassTemplate.id == template_id)
         )
         return result.scalar_one_or_none()
     
@@ -48,21 +53,22 @@ class TemplateService:
     ) -> tuple[List[ClassTemplate], int]:
         """获取模板列表"""
         query = select(ClassTemplate)
-        count_query = select(ClassTemplate)
         
         if is_active is not None:
-            query = query.where(ClassTemplate.is_active == is_active)
-            count_query = count_query.where(ClassTemplate.is_active == is_active)
+            query = query.filter(ClassTemplate.is_active == is_active)
         
+        # 获取总数
+        count_result = await db.execute(
+            select(ClassTemplate).filter(*query.whereclause.clauses) if query.whereclause is not None else select(ClassTemplate)
+        )
+        total = len(count_result.all())
+        
+        # 获取分页数据
         query = query.order_by(ClassTemplate.created_at.desc()).offset(skip).limit(limit)
-        
         result = await db.execute(query)
-        templates = result.scalars().all()
+        templates = list(result.scalars().all())
         
-        count_result = await db.execute(count_query)
-        total = len(count_result.scalars().all())
-        
-        return list(templates), total
+        return templates, total
     
     @staticmethod
     async def update_template(
@@ -89,6 +95,10 @@ class TemplateService:
         
         await db.commit()
         await db.refresh(template)
+        
+        # 自动处理文档类型层级（更新时重新解析）
+        await TemplateService._process_doc_type_level(db, template)
+        
         return template
     
     @staticmethod
@@ -102,3 +112,106 @@ class TemplateService:
         setattr(template, 'is_active', False)
         await db.commit()
         return True
+    
+    @staticmethod
+    async def _process_doc_type_level(db: AsyncSession, template: ClassTemplate) -> None:
+        """处理模板中的文档类型层级，自动创建/更新 DocumentType"""
+        # 获取 levels 列表（通过 property getter 自动从JSON转换）
+        levels_list = template.levels if isinstance(template.levels, list) else []
+        
+        # 查找 is_doc_type 层级
+        doc_type_level: Optional[Dict[str, Any]] = None
+        for level in levels_list:
+            if isinstance(level, dict) and level.get('is_doc_type'):
+                doc_type_level = level
+                break
+        
+        if doc_type_level is None:
+            # 没有文档类型层级，跳过
+            return
+        
+        extraction_prompt = doc_type_level.get('extraction_prompt')
+        if not extraction_prompt:
+            # 没有配置提取 prompt，跳过
+            return
+        
+        try:
+            # 使用大模型解析 prompt，识别文档类型
+            doc_types_data = await TemplateService._parse_doc_types_from_prompt(extraction_prompt)
+            
+            # 为每个识别出的文档类型创建/更新记录
+            # template.id 是 Column 类型，需要通过属性访问获取实际值
+            for type_data in doc_types_data:
+                await TemplateService._create_or_update_doc_type(db, template.id, type_data)  # type: ignore
+        
+        except Exception as e:
+            print(f"警告：文档类型自动创建失败: {str(e)}")
+            # 不中断模板创建流程
+    
+    @staticmethod
+    async def _parse_doc_types_from_prompt(extraction_prompt: str) -> List[Dict[str, Any]]:
+        """使用大模型解析 extraction_prompt，提取文档类型列表"""
+        system_prompt = """你是一个文档分类专家。用户会提供一个用于文档类型分类的prompt。
+请分析这个prompt，识别出其中定义的所有文档类型，并为每个类型提取以下信息：
+1. type_code: 类型编码（简短英文或拼音，如 dev_doc, design_doc）
+2. type_name: 类型名称（中文，如 开发文档、设计文档）
+3. description: 类型描述（简要说明）
+
+请以JSON格式返回，格式如下：
+{
+  "document_types": [
+    {
+      "type_code": "dev_doc",
+      "type_name": "开发文档",
+      "description": "软件开发过程文档"
+    }
+  ]
+}"""
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"请分析以下文档类型分类prompt：\n\n{extraction_prompt}"}
+        ]
+        
+        result = await llm_client.extract_json_response(messages)
+        logger.info(f"文档类型自动创建结果：{result}")
+        return result.get('document_types', [])
+    
+    @staticmethod
+    async def _create_or_update_doc_type(
+        db: AsyncSession,
+        template_id: int,
+        type_data: Dict[str, Any]
+    ) -> None:
+        """创建或更新文档类型"""
+        type_code = type_data.get('type_code')
+        if not type_code:
+            return
+        
+        # 检查是否已存在
+        result = await db.execute(
+            select(DocumentType).filter(
+                DocumentType.template_id == template_id,
+                DocumentType.type_code == type_code
+            )
+        )
+        existing = result.scalar_one_or_none()
+        
+        if existing:
+            # 更新现有记录
+            existing.type_name = type_data.get('type_name', existing.type_name)
+            existing.description = type_data.get('description', existing.description)
+        else:
+            # 创建新记录
+            new_doc_type = DocumentType(
+                template_id=template_id,
+                type_code=type_code,
+                type_name=type_data.get('type_name', ''),
+                description=type_data.get('description', ''),
+                extraction_prompt=f"识别为 {type_data.get('type_name')} 类型的文档",
+                is_active=True
+            )
+            db.add(new_doc_type)
+            await db.flush()
+        
+        await db.commit()

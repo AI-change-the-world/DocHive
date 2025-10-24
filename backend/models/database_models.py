@@ -286,7 +286,6 @@ class DocumentType(Base, ToDictMixin):
     type_code = Column(String(50), nullable=False, index=True)  # 类型编码，如：DEV_DOC、DESIGN_DOC
     type_name = Column(String(100), nullable=False)  # 类型名称，如：开发文档、设计文档
     description = Column(Text)  # 类型描述
-    extraction_prompt = Column(Text)  # AI提取Prompt（从模板层级配置同步）
     is_active = Column(Boolean, default=True)
     created_at = Column(Integer, default=lambda: int(time.time()))
     updated_at = Column(Integer, default=lambda: int(time.time()))
@@ -301,10 +300,6 @@ class DocumentTypeField(Base, ToDictMixin):
     field_name = Column(String(100), nullable=False)  # 字段名称，如：编制人、任务数量
     field_code = Column(String(50), nullable=False)  # 字段编码，如：author、task_count
     field_type = Column(String(20), default='text')  # 字段类型：text, number, array, date, boolean
-    extraction_prompt = Column(Text)  # AI提取Prompt（统一使用大模型提取）
-    is_required = Column(Boolean, default=False)  # 是否必填
-    display_order = Column(Integer, default=0)  # 显示顺序
-    placeholder_example = Column(String(200))  # 示例值
     created_at = Column(Integer, default=lambda: int(time.time()))
     updated_at = Column(Integer, default=lambda: int(time.time()))
 
