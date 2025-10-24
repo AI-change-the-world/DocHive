@@ -220,17 +220,6 @@ const DocumentTypeManager: React.FC<DocumentTypeManagerProps> = ({ templateId, t
                     <Form.Item name="description" label="描述">
                         <TextArea rows={3} placeholder="描述此文档类型的用途" />
                     </Form.Item>
-
-                    <Form.Item
-                        name="extraction_prompt"
-                        label="AI提取Prompt"
-                        extra="描述如何识别和处理此类型的文档"
-                    >
-                        <TextArea
-                            rows={4}
-                            placeholder="例：这是软件开发相关文档，请提取关键的开发信息，包括编制人、任务列表、完成时间等"
-                        />
-                    </Form.Item>
                 </Form>
             </Modal>
 

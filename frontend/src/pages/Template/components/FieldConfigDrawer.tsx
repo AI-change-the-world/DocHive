@@ -29,6 +29,7 @@ const FieldConfigDrawer: React.FC<FieldConfigDrawerProps> = ({ visible, docTypeI
                 setFields(response.data.data || []);
             }
         } catch (error) {
+            console.log("error : " + error);
             message.error('加载字段失败');
         } finally {
             setLoading(false);
@@ -88,6 +89,7 @@ const FieldConfigDrawer: React.FC<FieldConfigDrawerProps> = ({ visible, docTypeI
             await batchUpdateFields(docTypeId, fieldsData);
             message.success('保存成功');
             // loadFields();
+            setFields([]);
             onClose();
         } catch (error: any) {
             message.error(error.response?.data?.detail || '保存失败');

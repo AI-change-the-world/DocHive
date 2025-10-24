@@ -66,36 +66,13 @@ const FieldConfigDrawer: React.FC<FieldConfigDrawerProps> = ({ visible, docTypeI
         }
     };
 
-    const handleMoveUp = async (index: number) => {
-        if (index === 0) return;
-        const newFields = [...fields];
-        [newFields[index - 1], newFields[index]] = [newFields[index], newFields[index - 1]];
-        newFields.forEach((field, i) => {
-            field.display_order = i;
-        });
-        await saveFieldsOrder(newFields);
-    };
-
-    const handleMoveDown = async (index: number) => {
-        if (index === fields.length - 1) return;
-        const newFields = [...fields];
-        [newFields[index], newFields[index + 1]] = [newFields[index + 1], newFields[index]];
-        newFields.forEach((field, i) => {
-            field.display_order = i;
-        });
-        await saveFieldsOrder(newFields);
-    };
 
     const saveFieldsOrder = async (newFields: DocumentTypeField[]) => {
         try {
             const fieldsData = newFields.map(f => ({
                 field_name: f.field_name,
-                field_code: f.field_code,
+                description: f.description,
                 field_type: f.field_type,
-                extraction_prompt: f.extraction_prompt,
-                is_required: f.is_required,
-                display_order: f.display_order,
-                placeholder_example: f.placeholder_example,
             }));
             await batchUpdateFields(docTypeId, fieldsData);
             setFields(newFields);
@@ -164,40 +141,7 @@ const FieldConfigDrawer: React.FC<FieldConfigDrawerProps> = ({ visible, docTypeI
             dataIndex: 'is_required',
             width: 60,
             render: (required: boolean) => (required ? '是' : '否'),
-        },
-        {
-            title: '操作',
-            width: 200,
-            render: (_: any, record: DocumentTypeField, index: number) => (
-                <Space size="small">
-                    <Button
-                        size="small"
-                        icon={<ArrowUpOutlined />}
-                        onClick={() => handleMoveUp(index)}
-                        disabled={index === 0}
-                    />
-                    <Button
-                        size="small"
-                        icon={<ArrowDownOutlined />}
-                        onClick={() => handleMoveDown(index)}
-                        disabled={index === fields.length - 1}
-                    />
-                    <Button
-                        size="small"
-                        icon={<EditOutlined />}
-                        onClick={() => handleEdit(record)}
-                    />
-                    <Popconfirm
-                        title="确定删除此字段吗？"
-                        onConfirm={() => record.id && handleDelete(record.id)}
-                        okText="确定"
-                        cancelText="取消"
-                    >
-                        <Button size="small" danger icon={<DeleteOutlined />} />
-                    </Popconfirm>
-                </Space>
-            ),
-        },
+        }
     ];
 
     return (
