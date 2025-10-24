@@ -225,14 +225,8 @@ export interface DocumentTypeField {
     id?: number;
     doc_type_id?: number;
     field_name: string;
-    field_code: string;
     field_type: 'text' | 'number' | 'array' | 'date' | 'boolean';
-    extraction_prompt?: string;
-    is_required: boolean;
-    display_order: number;
-    placeholder_example?: string;
-    created_at?: string;
-    updated_at?: string;
+    description?: string;
 }
 
 export interface DocumentType {

@@ -153,12 +153,12 @@ const FieldConfigDrawer: React.FC<FieldConfigDrawerProps> = ({ visible, docTypeI
                 return <span style={{ color: info.color }}>{info.text}</span>;
             },
         },
-        {
-            title: 'AI提取Prompt',
-            dataIndex: 'extraction_prompt',
-            ellipsis: true,
-            render: (text: string) => text || <span style={{ color: '#ccc' }}>未配置</span>,
-        },
+        // {
+        //     title: 'AI提取Prompt',
+        //     dataIndex: 'extraction_prompt',
+        //     ellipsis: true,
+        //     render: (text: string) => text || <span style={{ color: '#ccc' }}>未配置</span>,
+        // },
         {
             title: '必填',
             dataIndex: 'is_required',
@@ -268,7 +268,7 @@ const FieldConfigDrawer: React.FC<FieldConfigDrawerProps> = ({ visible, docTypeI
                         </Select>
                     </Form.Item>
 
-                    <Form.Item
+                    {/* <Form.Item
                         name="extraction_prompt"
                         label="AI提取Prompt"
                         rules={[{ required: true, message: '请配置AI提取Prompt' }]}
@@ -278,7 +278,7 @@ const FieldConfigDrawer: React.FC<FieldConfigDrawerProps> = ({ visible, docTypeI
                             rows={4}
                             placeholder="例：提取文档中的编制人姓名，通常在文档开头或结尾处"
                         />
-                    </Form.Item>
+                    </Form.Item> */}
 
                     <Form.Item
                         name="is_required"

@@ -298,7 +298,7 @@ class DocumentTypeField(Base, ToDictMixin):
     id = Column(Integer, primary_key=True, index=True)
     doc_type_id = Column(Integer, nullable=False, index=True)  # 关联 document_types.id
     field_name = Column(String(100), nullable=False)  # 字段名称，如：编制人、任务数量
-    field_code = Column(String(50), nullable=False)  # 字段编码，如：author、task_count
+    description = Column(String(255), nullable=False)  # 字段编码，如：author、task_count
     field_type = Column(String(20), default='text')  # 字段类型：text, number, array, date, boolean
     created_at = Column(Integer, default=lambda: int(time.time()))
     updated_at = Column(Integer, default=lambda: int(time.time()))

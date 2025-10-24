@@ -23,6 +23,7 @@ const DocumentTypeManager: React.FC<DocumentTypeManagerProps> = ({ template, onC
     const [editingType, setEditingType] = useState<DocumentType | null>(null);
     const [fieldDrawerVisible, setFieldDrawerVisible] = useState(false);
     const [currentTypeId, setCurrentTypeId] = useState<number | null>(null);
+    const [currentTypeName, setCurrentTypeName] = useState<string>('');
     const [form] = Form.useForm();
 
     useEffect(() => {
@@ -86,8 +87,9 @@ const DocumentTypeManager: React.FC<DocumentTypeManagerProps> = ({ template, onC
         }
     };
 
-    const handleConfigFields = (typeId: number) => {
-        setCurrentTypeId(typeId);
+    const handleConfigFields = (record: DocumentType) => {
+        setCurrentTypeId(record.id);
+        setCurrentTypeName(record.type_name);
         setFieldDrawerVisible(true);
     };
 
@@ -184,7 +186,7 @@ const DocumentTypeManager: React.FC<DocumentTypeManagerProps> = ({ template, onC
                     <Button
                         size="small"
                         icon={<SettingOutlined />}
-                        onClick={() => handleConfigFields(record.id)}
+                        onClick={() => handleConfigFields(record)}
                     >
                         配置字段
                     </Button>
@@ -281,11 +283,12 @@ const DocumentTypeManager: React.FC<DocumentTypeManagerProps> = ({ template, onC
                 </Form>
             </Modal>
 
-            {/* 字段配置抽屉 */}
+            {/* 字段配置弹窗 */}
             {currentTypeId && (
                 <FieldConfigDrawer
                     visible={fieldDrawerVisible}
                     docTypeId={currentTypeId}
+                    docTypeName={currentTypeName}
                     onClose={() => {
                         setFieldDrawerVisible(false);
                         loadDocumentTypes(); // 刷新数据以更新字段数量

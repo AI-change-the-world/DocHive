@@ -265,12 +265,8 @@ class ExtractionResponse(BaseModel):
 class DocumentTypeFieldSchema(BaseModel):
     """文档类型字段定义"""
     field_name: str = Field(..., min_length=1, max_length=100, description="字段名称")
-    field_code: str = Field(..., min_length=1, max_length=50, description="字段编码")
+    description: str = Field(..., description="字段描述")
     field_type: str = Field("text", description="字段类型:text, number, array, date, boolean")
-    extraction_prompt: Optional[str] = Field(None, description="AI提取Prompt（统一使用大模型）")
-    is_required: bool = Field(False, description="是否必填")
-    display_order: int = Field(0, description="显示顺序")
-    placeholder_example: Optional[str] = Field(None, description="示例值")
 
 
 class DocumentTypeCreate(BaseModel):

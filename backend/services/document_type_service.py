@@ -2,6 +2,7 @@
 文档类型管理服务
 负责文档类型的 CRUD 操作和字段配置管理
 """
+import traceback
 from typing import List, Optional, Dict, Any
 from sqlalchemy import select, and_
 from models.database_models import DocumentType, DocumentTypeField
@@ -295,37 +296,37 @@ class DocumentTypeService:
         Returns:
             更新后的字段列表
         """
-        # 删除现有字段
-        result = await db.execute(
-            select(DocumentTypeField).where(DocumentTypeField.doc_type_id == doc_type_id)
-        )
-        existing_fields = result.scalars().all()
-        for field in existing_fields:
-            await db.delete(field)
-        
-        # 重新创建字段
-        new_fields = []
-        for idx, field_schema in enumerate(fields):
-            db_field = DocumentTypeField(
-                doc_type_id=doc_type_id,
-                field_name=field_schema.field_name,
-                field_code=field_schema.field_code,
-                field_type=field_schema.field_type,
-                extraction_prompt=field_schema.extraction_prompt,
-                is_required=field_schema.is_required,
-                display_order=field_schema.display_order or idx,
-                placeholder_example=field_schema.placeholder_example,
+        try:
+            # 删除现有字段
+            result = await db.execute(
+                select(DocumentTypeField).where(DocumentTypeField.doc_type_id == doc_type_id)
             )
-            db.add(db_field)
-            new_fields.append(db_field)
-        
-        await db.commit()
-        
-        # 刷新对象
-        for field in new_fields:
-            await db.refresh(field)
-        
-        return new_fields
+            existing_fields = result.scalars().all()
+            for field in existing_fields:
+                await db.delete(field)
+            
+            # 重新创建字段
+            new_fields = []
+            for idx, field_schema in enumerate(fields):
+                db_field = DocumentTypeField(
+                    doc_type_id=doc_type_id,
+                    field_name=field_schema.field_name,
+                    description=field_schema.description,
+                    field_type=field_schema.field_type,
+                )
+                db.add(db_field)
+                new_fields.append(db_field)
+            
+            await db.commit()
+            
+            # 刷新对象
+            for field in new_fields:
+                await db.refresh(field)
+            
+            return new_fields
+        except Exception as e:
+            traceback.print_exc()
+            raise e
     
     @staticmethod
     async def get_extraction_config(db: AsyncSession, doc_type_id: int) -> Dict[str, Any]:

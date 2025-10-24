@@ -1,23 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Drawer, Table, Button, Form, Input, Select, Space, message, Popconfirm, Modal, InputNumber } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, ArrowUpOutlined, ArrowDownOutlined } from '@ant-design/icons';
+import { Modal, Table, Button, Input, Select, message } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
 import type { DocumentTypeField } from '../../../types';
-import { getFields, addField, updateField, deleteField, batchUpdateFields } from '../../../services/documentType';
-
-const { TextArea } = Input;
+import { getFields, deleteField, batchUpdateFields } from '../../../services/documentType';
 
 interface FieldConfigDrawerProps {
     visible: boolean;
     docTypeId: number;
+    docTypeName?: string;
     onClose: () => void;
 }
 
-const FieldConfigDrawer: React.FC<FieldConfigDrawerProps> = ({ visible, docTypeId, onClose }) => {
+const FieldConfigDrawer: React.FC<FieldConfigDrawerProps> = ({ visible, docTypeId, docTypeName, onClose }) => {
     const [fields, setFields] = useState<DocumentTypeField[]>([]);
     const [loading, setLoading] = useState(false);
-    const [modalVisible, setModalVisible] = useState(false);
-    const [editingField, setEditingField] = useState<DocumentTypeField | null>(null);
-    const [form] = Form.useForm();
 
     useEffect(() => {
         if (visible) {
@@ -40,89 +36,63 @@ const FieldConfigDrawer: React.FC<FieldConfigDrawerProps> = ({ visible, docTypeI
     };
 
     const handleAdd = () => {
-        setEditingField(null);
-        form.resetFields();
-        form.setFieldsValue({
+        const newField: DocumentTypeField = {
+            id: Date.now(), // 临时ID
+            doc_type_id: docTypeId,
+            field_name: '',
             field_type: 'text',
-            is_required: false,
-            display_order: fields.length,
-        });
-        setModalVisible(true);
+            description: '',
+        };
+        setFields([...fields, newField]);
     };
 
-    const handleEdit = (record: DocumentTypeField) => {
-        setEditingField(record);
-        form.setFieldsValue(record);
-        setModalVisible(true);
+    const handleChange = (index: number, field: keyof DocumentTypeField, value: any) => {
+        const newFields = [...fields];
+        newFields[index] = { ...newFields[index], [field]: value };
+        setFields(newFields);
     };
 
-    const handleDelete = async (id: number) => {
-        try {
-            await deleteField(id);
-            message.success('删除成功');
-            loadFields();
-        } catch (error) {
-            message.error('删除失败');
+    const handleDelete = async (index: number) => {
+        const field = fields[index];
+        if (field.id && field.id < 1000000000000) { // 已保存的字段
+            try {
+                await deleteField(field.id);
+                message.success('删除成功');
+            } catch (error) {
+                message.error('删除失败');
+                return;
+            }
         }
+        const newFields = fields.filter((_, i) => i !== index);
+        setFields(newFields);
     };
 
-    const handleMoveUp = async (index: number) => {
-        if (index === 0) return;
-        const newFields = [...fields];
-        [newFields[index - 1], newFields[index]] = [newFields[index], newFields[index - 1]];
-        newFields.forEach((field, i) => {
-            field.display_order = i;
-        });
-        await saveFieldsOrder(newFields);
-    };
 
-    const handleMoveDown = async (index: number) => {
-        if (index === fields.length - 1) return;
-        const newFields = [...fields];
-        [newFields[index], newFields[index + 1]] = [newFields[index + 1], newFields[index]];
-        newFields.forEach((field, i) => {
-            field.display_order = i;
-        });
-        await saveFieldsOrder(newFields);
-    };
+    const handleSave = async () => {
+        // 验证必填项
+        for (let i = 0; i < fields.length; i++) {
+            const field = fields[i];
+            if (!field.field_name) {
+                message.error(`第 ${i + 1} 行：字段名称为必填项`);
+                return;
+            }
+        }
 
-    const saveFieldsOrder = async (newFields: DocumentTypeField[]) => {
         try {
-            const fieldsData = newFields.map(f => ({
+            setLoading(true);
+            const fieldsData = fields.map((f, i) => ({
                 field_name: f.field_name,
-                field_code: f.field_code,
+                description: f.description,
                 field_type: f.field_type,
-                extraction_prompt: f.extraction_prompt,
-                is_required: f.is_required,
-                display_order: f.display_order,
-                placeholder_example: f.placeholder_example,
             }));
             await batchUpdateFields(docTypeId, fieldsData);
-            setFields(newFields);
-            message.success('顺序调整成功');
-        } catch (error) {
-            message.error('调整顺序失败');
-        }
-    };
-
-    const handleSubmit = async () => {
-        try {
-            const values = await form.validateFields();
-
-            if (editingField && editingField.id) {
-                // 更新
-                await updateField(editingField.id, values);
-                message.success('更新成功');
-            } else {
-                // 创建
-                await addField(docTypeId, values);
-                message.success('添加成功');
-            }
-
-            setModalVisible(false);
-            loadFields();
+            message.success('保存成功');
+            // loadFields();
+            onClose();
         } catch (error: any) {
-            message.error(error.response?.data?.detail || '操作失败');
+            message.error(error.response?.data?.detail || '保存失败');
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -130,181 +100,74 @@ const FieldConfigDrawer: React.FC<FieldConfigDrawerProps> = ({ visible, docTypeI
         {
             title: '字段名称',
             dataIndex: 'field_name',
-            width: 120,
+            width: 150,
+            render: (text: string, record: DocumentTypeField, index: number) => (
+                <Input
+                    placeholder="如：编制人"
+                    value={text}
+                    onChange={(e) => handleChange(index, 'field_name', e.target.value)}
+                />
+            ),
         },
         {
-            title: '字段编码',
-            dataIndex: 'field_code',
-            width: 120,
+            title: '字段描述',
+            dataIndex: 'description',
+            width: 250,
+            render: (text: string, record: DocumentTypeField, index: number) => (
+                <Input
+                    placeholder="描述此字段的用途，如：文档的编制人员"
+                    value={text}
+                    onChange={(e) => handleChange(index, 'description', e.target.value)}
+                />
+            ),
         },
         {
             title: '类型',
             dataIndex: 'field_type',
-            width: 80,
-            render: (type: string) => {
-                const typeMap: Record<string, { text: string; color: string }> = {
-                    text: { text: '文本', color: 'blue' },
-                    number: { text: '数字', color: 'green' },
-                    array: { text: '数组', color: 'orange' },
-                    date: { text: '日期', color: 'purple' },
-                    boolean: { text: '布尔', color: 'cyan' },
-                };
-                const info = typeMap[type] || { text: type, color: 'default' };
-                return <span style={{ color: info.color }}>{info.text}</span>;
-            },
-        },
-        {
-            title: 'AI提取Prompt',
-            dataIndex: 'extraction_prompt',
-            ellipsis: true,
-            render: (text: string) => text || <span style={{ color: '#ccc' }}>未配置</span>,
-        },
-        {
-            title: '必填',
-            dataIndex: 'is_required',
-            width: 60,
-            render: (required: boolean) => (required ? '是' : '否'),
-        },
-        {
-            title: '操作',
-            width: 200,
-            render: (_: any, record: DocumentTypeField, index: number) => (
-                <Space size="small">
-                    <Button
-                        size="small"
-                        icon={<ArrowUpOutlined />}
-                        onClick={() => handleMoveUp(index)}
-                        disabled={index === 0}
-                    />
-                    <Button
-                        size="small"
-                        icon={<ArrowDownOutlined />}
-                        onClick={() => handleMoveDown(index)}
-                        disabled={index === fields.length - 1}
-                    />
-                    <Button
-                        size="small"
-                        icon={<EditOutlined />}
-                        onClick={() => handleEdit(record)}
-                    />
-                    <Popconfirm
-                        title="确定删除此字段吗？"
-                        onConfirm={() => record.id && handleDelete(record.id)}
-                        okText="确定"
-                        cancelText="取消"
-                    >
-                        <Button size="small" danger icon={<DeleteOutlined />} />
-                    </Popconfirm>
-                </Space>
+            width: 120,
+            render: (text: string, record: DocumentTypeField, index: number) => (
+                <Select
+                    value={text}
+                    onChange={(value) => handleChange(index, 'field_type', value)}
+                    style={{ width: '100%' }}
+                >
+                    <Select.Option value="text">文本</Select.Option>
+                    <Select.Option value="number">数字</Select.Option>
+                    <Select.Option value="date">日期</Select.Option>
+                    <Select.Option value="array">数组</Select.Option>
+                </Select>
             ),
         },
     ];
 
     return (
-        <>
-            <Drawer
-                title="字段配置"
-                width={900}
-                open={visible}
-                onClose={onClose}
-                extra={
-                    <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
-                        添加字段
-                    </Button>
-                }
-            >
-                <Table
-                    columns={columns}
-                    dataSource={fields}
-                    rowKey="id"
-                    loading={loading}
-                    pagination={false}
-                    size="small"
-                />
-            </Drawer>
-
-            {/* 添加/编辑字段弹窗 */}
-            <Modal
-                title={editingField ? '编辑字段' : '添加字段'}
-                open={modalVisible}
-                onOk={handleSubmit}
-                onCancel={() => setModalVisible(false)}
-                width={700}
-                okText="保存"
-                cancelText="取消"
-            >
-                <Form form={form} layout="vertical">
-                    <Form.Item
-                        name="field_name"
-                        label="字段名称"
-                        rules={[{ required: true, message: '请输入字段名称' }]}
-                    >
-                        <Input placeholder="如：编制人、任务数量" />
-                    </Form.Item>
-
-                    <Form.Item
-                        name="field_code"
-                        label="字段编码"
-                        rules={[
-                            { required: true, message: '请输入字段编码' },
-                            { pattern: /^[a-z_]+$/, message: '只能包含小写字母和下划线' }
-                        ]}
-                        extra="建议使用小写字母和下划线，如：author、task_count"
-                    >
-                        <Input placeholder="如：author" disabled={!!editingField} />
-                    </Form.Item>
-
-                    <Form.Item
-                        name="field_type"
-                        label="字段类型"
-                        rules={[{ required: true, message: '请选择字段类型' }]}
-                    >
-                        <Select>
-                            <Select.Option value="text">文本</Select.Option>
-                            <Select.Option value="number">数字</Select.Option>
-                            <Select.Option value="array">数组</Select.Option>
-                            <Select.Option value="date">日期</Select.Option>
-                            <Select.Option value="boolean">布尔值</Select.Option>
-                        </Select>
-                    </Form.Item>
-
-                    <Form.Item
-                        name="extraction_prompt"
-                        label="AI提取Prompt"
-                        rules={[{ required: true, message: '请配置AI提取Prompt' }]}
-                        extra="描述如何从文档中提取此字段的值"
-                    >
-                        <TextArea
-                            rows={4}
-                            placeholder="例：提取文档中的编制人姓名，通常在文档开头或结尾处"
-                        />
-                    </Form.Item>
-
-                    <Form.Item
-                        name="is_required"
-                        label="是否必填"
-                        valuePropName="checked"
-                    >
-                        <Select>
-                            <Select.Option value={true}>是</Select.Option>
-                            <Select.Option value={false}>否</Select.Option>
-                        </Select>
-                    </Form.Item>
-
-                    <Form.Item
-                        name="placeholder_example"
-                        label="示例值"
-                        extra="用于帮助用户理解此字段"
-                    >
-                        <Input placeholder="如：张三、2025-12-31" />
-                    </Form.Item>
-
-                    <Form.Item name="display_order" label="显示顺序" hidden>
-                        <InputNumber />
-                    </Form.Item>
-                </Form>
-            </Modal>
-        </>
+        <Modal
+            title={`字段配置 - ${docTypeName || ''}`}
+            width={1200}
+            open={visible}
+            onCancel={onClose}
+            footer={[
+                <Button key="add" icon={<PlusOutlined />} onClick={handleAdd}>
+                    添加字段
+                </Button>,
+                <Button key="save" type="primary" onClick={handleSave} loading={loading}>
+                    保存
+                </Button>,
+                <Button key="close" onClick={onClose}>
+                    关闭
+                </Button>
+            ]}
+            styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+        >
+            <Table
+                columns={columns}
+                dataSource={fields}
+                rowKey={(record) => record.id?.toString() || ''}
+                loading={loading}
+                pagination={false}
+                size="small"
+            />
+        </Modal>
     );
 };
 
