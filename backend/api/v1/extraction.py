@@ -27,7 +27,7 @@ async def extract_document_info(
 ):
     """
     从文档中抽取结构化信息
-    
+
     - **document_id**: 文档ID
     - **config_id**: 抽取配置ID
     """
@@ -35,12 +35,12 @@ async def extract_document_info(
         result = await ExtractionEngine.extract_document_info(
             db, request.document_id, request.config_id
         )
-        
+
         return ResponseBase(
             message="信息抽取成功",
             data=result,
         )
-    
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -63,7 +63,7 @@ async def list_extraction_configs(
 ):
     """
     获取抽取配置列表
-    
+
     - **page**: 页码
     - **page_size**: 每页数量
     - **doc_type**: 文档类型过滤
@@ -72,7 +72,7 @@ async def list_extraction_configs(
     configs, total = await ExtractionEngine.list_extraction_configs(
         db, skip=skip, limit=page_size, doc_type=doc_type
     )
-    
+
     return ResponseBase(
         data=PaginatedResponse(
             total=total,
@@ -83,7 +83,9 @@ async def list_extraction_configs(
     )
 
 
-@router.post("/configs", response_model=ResponseBase, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/configs", response_model=ResponseBase, status_code=status.HTTP_201_CREATED
+)
 async def create_extraction_config(
     config_data: ExtractionConfigCreate,
     db: AsyncSession = Depends(get_db),
@@ -91,7 +93,7 @@ async def create_extraction_config(
 ):
     """
     创建抽取配置
-    
+
     - **name**: 配置名称
     - **doc_type**: 文档类型
     - **extract_fields**: 抽取字段列表
@@ -102,7 +104,7 @@ async def create_extraction_config(
         config_data.doc_type,
         [field.model_dump() for field in config_data.extract_fields],
     )
-    
+
     return ResponseBase(
         code=201,
         message="抽取配置创建成功",
@@ -118,11 +120,11 @@ async def get_extraction_config(
 ):
     """获取抽取配置详情"""
     config = await ExtractionEngine.get_extraction_config(db, config_id)
-    
+
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="抽取配置不存在",
         )
-    
+
     return ResponseBase(data=ExtractionConfigResponse.model_validate(config))

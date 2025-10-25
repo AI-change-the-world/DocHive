@@ -24,7 +24,7 @@ async def search_documents(
 ):
     """
     多维度文档检索
-    
+
     支持以下检索方式：
     - **keyword**: 全文搜索关键词
     - **template_id**: 按模板过滤
@@ -46,7 +46,7 @@ async def search_documents(
             page=search_request.page,
             page_size=search_request.page_size,
         )
-        
+
         return ResponseBase(
             data=PaginatedResponse(
                 total=result["total"],
@@ -55,7 +55,7 @@ async def search_documents(
                 items=[DocumentResponse.model_validate(d) for d in result["documents"]],
             )
         )
-    
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -71,17 +71,17 @@ async def get_statistics(
 ):
     """
     获取文档统计信息
-    
+
     - **template_id**: 按模板统计（可选）
     """
     try:
         stats = await SearchService.get_statistics(db, template_id)
-        
+
         return ResponseBase(
             message="统计信息获取成功",
             data=stats,
         )
-    
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -97,20 +97,20 @@ async def index_document(
 ):
     """将文档索引到搜索引擎"""
     from services.document_service import DocumentService
-    
+
     document = await DocumentService.get_document(db, document_id)
     if not document:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="文档不存在",
         )
-    
+
     success = await SearchService.index_document_to_es(document)
-    
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="索引失败",
         )
-    
+
     return ResponseBase(message="文档索引成功")

@@ -8,7 +8,7 @@ from models.database_models import (
     DocumentExtractionMapping,
     OperationLog,
     SystemConfig,
-    ClassTemplateConfigs
+    ClassTemplateConfigs,
 )
 
 __all__ = [
@@ -21,5 +21,5 @@ __all__ = [
     "DocumentExtractionMapping",
     "OperationLog",
     "SystemConfig",
-    "ClassTemplateConfigs"
+    "ClassTemplateConfigs",
 ]

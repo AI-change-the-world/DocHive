@@ -9,7 +9,7 @@ settings = get_settings()
 
 class StorageClient:
     """对象存储客户端 (OpenDAL)"""
-    
+
     def __init__(self):
         # 根据配置类型初始化 OpenDAL Operator
         if settings.STORAGE_TYPE == "s3":
@@ -33,7 +33,7 @@ class StorageClient:
             self.operator = opendal.Operator("memory")
         else:
             raise ValueError(f"Unsupported storage type: {settings.STORAGE_TYPE}")
-    
+
     async def upload_file(
         self,
         file_data: BinaryIO,
@@ -42,12 +42,12 @@ class StorageClient:
     ) -> str:
         """
         上传文件
-        
+
         Args:
             file_data: 文件数据流
             object_name: 对象名称（路径）
             content_type: 文件类型
-        
+
         Returns:
             文件存储路径
         """
@@ -55,25 +55,25 @@ class StorageClient:
             # 读取文件内容
             content = file_data.read()
             if isinstance(content, str):
-                content = content.encode('utf-8')
-            
+                content = content.encode("utf-8")
+
             # 使用 OpenDAL 写入文件
             self.operator.write(object_name, content)
-            
+
             return f"{settings.STORAGE_BUCKET}/{object_name}"
         except Exception as e:
             raise Exception(f"文件上传失败: {str(e)}")
-    
+
     async def download_file(self, object_name: str) -> bytes:
         """下载文件"""
         try:
             data = self.operator.read(object_name)
             if isinstance(data, str):
-                data = data.encode('utf-8')
+                data = data.encode("utf-8")
             return data
         except Exception as e:
             raise Exception(f"文件下载失败: {str(e)}")
-    
+
     async def delete_file(self, object_name: str) -> bool:
         """删除文件"""
         try:
@@ -81,17 +81,17 @@ class StorageClient:
             return True
         except Exception:
             return False
-    
+
     def get_presigned_url(self, object_name: str, expires: int = 3600) -> str:
         """
         获取预签名 URL
-        
+
         注意: OpenDAL 当前版本不直接支持 presigned URL,
         这里返回一个直接下载链接，实际上需要通过 API 端点提供下载
         """
         # 这里返回一个 API 路径，实际的下载需要通过后端 API
         return f"/api/v1/documents/download/{object_name}"
-    
+
     def exists(self, object_name: str) -> bool:
         """检查文件是否存在"""
         try:

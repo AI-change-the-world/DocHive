@@ -20,23 +20,23 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时
     logger.info("🚀 DocHive 后端服务启动中...")
-    
+
     # 初始化数据库
     await init_db()
     logger.info("✅ 数据库初始化完成")
-    
+
     # 初始化搜索引擎索引
     try:
         await search_client.ensure_index()
         logger.info("✅ 搜索引擎索引初始化完成")
     except Exception as e:
         logger.warning(f"⚠️ 搜索引擎初始化失败: {e}")
-    
+
     yield
-    
+
     # 关闭时
     logger.info("🛑 DocHive 后端服务关闭中...")
-    
+
     # 关闭搜索引擎连接
     try:
         await search_client.close()
@@ -71,7 +71,7 @@ app.add_middleware(
 async def global_exception_handler(request: Request, exc: Exception):
     """全局异常处理器"""
     logger.error(f"全局异常: {exc}", exc_info=True)
-    
+
     return JSONResponse(
         status_code=500,
         content={
@@ -110,7 +110,7 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     uvicorn.run(
         "main:app",
         host="0.0.0.0",

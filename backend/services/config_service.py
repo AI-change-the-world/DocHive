@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 class ConfigService:
     """系统配置服务"""
-    
+
     @staticmethod
     async def get_config(
         db: AsyncSession,
@@ -18,7 +18,7 @@ class ConfigService:
             select(SystemConfig).where(SystemConfig.config_key == config_key)
         )
         return result.scalar_one_or_none()
-    
+
     @staticmethod
     async def list_configs(
         db: AsyncSession,
@@ -26,13 +26,13 @@ class ConfigService:
     ) -> List[SystemConfig]:
         """获取配置列表"""
         query = select(SystemConfig)
-        
+
         if is_public is not None:
             query = query.where(SystemConfig.is_public == is_public)
-        
+
         result = await db.execute(query)
         return list(result.scalars().all())
-    
+
     @staticmethod
     async def set_config(
         db: AsyncSession,
@@ -43,7 +43,7 @@ class ConfigService:
     ) -> SystemConfig:
         """设置配置"""
         config = await ConfigService.get_config(db, config_key)
-        
+
         if config:
             # 更新现有配置
             config.config_value = config_value
@@ -59,12 +59,12 @@ class ConfigService:
                 is_public=is_public,
             )
             db.add(config)
-        
+
         await db.commit()
         await db.refresh(config)
-        
+
         return config
-    
+
     @staticmethod
     async def delete_config(
         db: AsyncSession,
@@ -72,11 +72,11 @@ class ConfigService:
     ) -> bool:
         """删除配置"""
         config = await ConfigService.get_config(db, config_key)
-        
+
         if not config:
             return False
-        
+
         await db.delete(config)
         await db.commit()
-        
+
         return True

@@ -3,11 +3,13 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 
+
 #  ============= SSE统一格式 =============
 class SSEEvent(BaseModel):
     """SSE事件"""
+
     event: str = Field(..., description="事件名称")
-    data: Optional[Any]  = Field(None, description="事件数据")
+    data: Optional[Any] = Field(None, description="事件数据")
     id: Optional[str] = Field(None, description="事件ID")
     done: Optional[bool] = Field(False, description="是否完成")
 
@@ -21,6 +23,7 @@ class UserRole(str, Enum):
 
 class ResponseBase(BaseModel):
     """API 响应基础模式"""
+
     code: int = 200
     message: str = "success"
     data: Optional[Any] = None
@@ -28,12 +31,14 @@ class ResponseBase(BaseModel):
 
 class PaginationParams(BaseModel):
     """分页参数"""
+
     page: int = Field(1, ge=1, description="页码")
     page_size: int = Field(20, ge=1, le=100, description="每页数量")
 
 
 class PaginatedResponse(BaseModel):
     """分页响应"""
+
     total: int
     page: int
     page_size: int
@@ -59,7 +64,7 @@ class UserUpdate(BaseModel):
 
 class UserInDB(UserBase):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     role: UserRole
     is_active: bool
@@ -69,6 +74,7 @@ class UserInDB(UserBase):
 
 class UserResponse(UserInDB):
     """用户响应模式（不包含密码）"""
+
     pass
 
 
@@ -92,17 +98,22 @@ class LoginRequest(BaseModel):
 # ============= 分类模板相关 =============
 class TemplateLevelSchema(BaseModel):
     """模板层级定义"""
+
     level: int = Field(..., ge=1, description="层级序号")
     name: str = Field(..., min_length=1, max_length=50, description="层级名称")
     code: Optional[str] = Field(None, max_length=20, description="层级代码")
     description: Optional[str] = None
-    
+
     # AI智能提取配置（统一使用大模型）
-    extraction_prompt: Optional[str] = Field(None, description="AI提取的Prompt（包含编码规则说明）")
+    extraction_prompt: Optional[str] = Field(
+        None, description="AI提取的Prompt（包含编码规则说明）"
+    )
     placeholder_example: Optional[str] = Field(None, description="示例值")
-    
+
     # 业务属性配置
-    business_keywords_prompt: Optional[str] = Field(None, description="业务关键词识别Prompt，用于智能检索匹配")
+    business_keywords_prompt: Optional[str] = Field(
+        None, description="业务关键词识别Prompt，用于智能检索匹配"
+    )
     is_doc_type: Optional[bool] = Field(False, description="是否为文档类型字段")
 
 
@@ -123,7 +134,7 @@ class ClassTemplateUpdate(BaseModel):
 
 class ClassTemplateResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     name: str
     description: Optional[str]
@@ -138,14 +149,16 @@ class ClassTemplateResponse(BaseModel):
 # ============= 编号规则相关 =============
 class NumberingRuleCreate(BaseModel):
     template_id: int
-    rule_format: str = Field(..., description="编号格式，如：{year}-{dept_code}-{type_code}-{seq:04d}")
+    rule_format: str = Field(
+        ..., description="编号格式，如：{year}-{dept_code}-{type_code}-{seq:04d}"
+    )
     separator: str = Field("-", max_length=10)
     auto_increment: bool = True
 
 
 class NumberingRuleResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     template_id: int
     rule_format: str
@@ -171,7 +184,7 @@ class DocumentUpdate(BaseModel):
 
 class DocumentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     title: str
     original_filename: str
@@ -192,6 +205,7 @@ class DocumentResponse(BaseModel):
 
 class DocumentSearchRequest(BaseModel):
     """文档检索请求"""
+
     keyword: Optional[str] = Field(None, description="全文搜索关键词")
     template_id: Optional[int] = None
     class_path: Optional[Dict[str, str]] = Field(None, description="分类路径过滤")
@@ -206,6 +220,7 @@ class DocumentSearchRequest(BaseModel):
 # ============= 信息抽取相关 =============
 class ExtractionFieldSchema(BaseModel):
     """抽取字段定义"""
+
     name: str = Field(..., description="字段名称")
     type: str = Field(..., description="字段类型：text, number, array, date")
     method: str = Field(..., description="抽取方法：regex, llm, rule")
@@ -228,7 +243,7 @@ class ExtractionConfigUpdate(BaseModel):
 
 class ExtractionConfigResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     name: str
     doc_type: str
@@ -241,6 +256,7 @@ class ExtractionConfigResponse(BaseModel):
 # ============= 分类相关 =============
 class ClassificationRequest(BaseModel):
     """文档分类请求"""
+
     document_id: int
     template_id: int
     force_reclassify: bool = Field(False, description="强制重新分类")
@@ -248,6 +264,7 @@ class ClassificationRequest(BaseModel):
 
 class ClassificationResponse(BaseModel):
     """分类结果"""
+
     document_id: int
     class_path: Dict[str, str]
     class_code: str
@@ -257,12 +274,14 @@ class ClassificationResponse(BaseModel):
 # ============= 抽取相关 =============
 class ExtractionRequest(BaseModel):
     """信息抽取请求"""
+
     document_id: int
     config_id: int
 
 
 class ExtractionResponse(BaseModel):
     """抽取结果"""
+
     document_id: int
     extracted_data: Dict[str, Any]
     success_fields: List[str]
@@ -272,23 +291,30 @@ class ExtractionResponse(BaseModel):
 # ============= 文档类型相关 =============
 class DocumentTypeFieldSchema(BaseModel):
     """文档类型字段定义"""
+
     field_name: str = Field(..., min_length=1, max_length=100, description="字段名称")
     description: str = Field(..., description="字段描述")
-    field_type: str = Field("text", description="字段类型:text, number, array, date, boolean")
+    field_type: str = Field(
+        "text", description="字段类型:text, number, array, date, boolean"
+    )
 
 
 class DocumentTypeCreate(BaseModel):
     """创建文档类型"""
+
     template_id: int = Field(..., description="所属模板ID")
     type_code: str = Field(..., min_length=1, max_length=50, description="类型编码")
     type_name: str = Field(..., min_length=1, max_length=100, description="类型名称")
     description: Optional[str] = None
     extraction_prompt: Optional[str] = Field(None, description="AI提取Prompt")
-    fields: Optional[List[DocumentTypeFieldSchema]] = Field(default=[], description="字段配置列表")
+    fields: Optional[List[DocumentTypeFieldSchema]] = Field(
+        default=[], description="字段配置列表"
+    )
 
 
 class DocumentTypeUpdate(BaseModel):
     """更新文档类型"""
+
     type_name: Optional[str] = Field(None, min_length=1, max_length=100)
     description: Optional[str] = None
     extraction_prompt: Optional[str] = None
@@ -297,8 +323,9 @@ class DocumentTypeUpdate(BaseModel):
 
 class DocumentTypeFieldResponse(BaseModel):
     """文档类型字段响应"""
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     doc_type_id: int
     field_name: str
@@ -314,8 +341,9 @@ class DocumentTypeFieldResponse(BaseModel):
 
 class DocumentTypeResponse(BaseModel):
     """文档类型响应"""
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     template_id: int
     type_code: str
@@ -330,6 +358,7 @@ class DocumentTypeResponse(BaseModel):
 
 class DocumentTypeFieldCreate(BaseModel):
     """创建文档类型字段"""
+
     doc_type_id: int = Field(..., description="文档类型ID")
     field_name: str = Field(..., min_length=1, max_length=100)
     field_code: str = Field(..., min_length=1, max_length=50)
@@ -342,6 +371,7 @@ class DocumentTypeFieldCreate(BaseModel):
 
 class DocumentTypeFieldUpdate(BaseModel):
     """更新文档类型字段"""
+
     field_name: Optional[str] = None
     field_type: Optional[str] = None
     extraction_prompt: Optional[str] = None
@@ -366,7 +396,7 @@ class SystemConfigUpdate(BaseModel):
 
 class SystemConfigResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     config_key: str
     config_value: Dict[str, Any]

@@ -23,7 +23,7 @@ async def classify_document(
 ):
     """
     对单个文档进行智能分类
-    
+
     - **document_id**: 文档ID
     - **template_id**: 分类模板ID
     - **force_reclassify**: 是否强制重新分类
@@ -35,12 +35,12 @@ async def classify_document(
             request.template_id,
             request.force_reclassify,
         )
-        
+
         return ResponseBase(
             message="文档分类成功",
             data=result,
         )
-    
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -62,7 +62,7 @@ async def batch_classify_documents(
 ):
     """
     批量分类文档
-    
+
     - **document_ids**: 文档ID列表
     - **template_id**: 分类模板ID
     """
@@ -70,14 +70,20 @@ async def batch_classify_documents(
         results = await ClassificationEngine.batch_classify_documents(
             db, document_ids, template_id
         )
-        
-        success_count = sum(1 for r in results if r.get("status") in ["success", "already_classified"])
-        
+
+        success_count = sum(
+            1 for r in results if r.get("status") in ["success", "already_classified"]
+        )
+
         return ResponseBase(
             message=f"批量分类完成，成功: {success_count}/{len(results)}",
-            data={"results": results, "success_count": success_count, "total": len(results)},
+            data={
+                "results": results,
+                "success_count": success_count,
+                "total": len(results),
+            },
         )
-    
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

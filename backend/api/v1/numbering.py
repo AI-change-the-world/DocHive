@@ -22,17 +22,17 @@ async def generate_document_number(
 ):
     """
     为文档生成唯一编号
-    
+
     - **document_id**: 文档ID
     """
     try:
         doc_number = await NumberingService.generate_document_number(db, document_id)
-        
+
         return ResponseBase(
             message="编号生成成功",
             data={"document_id": document_id, "class_code": doc_number},
         )
-    
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -53,7 +53,7 @@ async def create_numbering_rule(
 ):
     """
     创建编号规则
-    
+
     - **template_id**: 分类模板ID
     - **rule_format**: 编号格式（如：{year}-{dept_code}-{type_code}-{seq:04d}）
     - **separator**: 分隔符
@@ -66,7 +66,7 @@ async def create_numbering_rule(
         rule_data.separator,
         rule_data.auto_increment,
     )
-    
+
     return ResponseBase(
         code=201,
         message="编号规则创建成功",
@@ -82,13 +82,13 @@ async def get_template_numbering_rule(
 ):
     """获取模板的编号规则"""
     rule = await NumberingService.get_numbering_rule(db, template_id)
-    
+
     if not rule:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="该模板尚未配置编号规则",
         )
-    
+
     return ResponseBase(data=NumberingRuleResponse.model_validate(rule))
 
 
@@ -101,11 +101,11 @@ async def reset_sequence(
 ):
     """重置编号规则的序列号"""
     success = await NumberingService.reset_sequence(db, rule_id, new_sequence)
-    
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="编号规则不存在",
         )
-    
+
     return ResponseBase(message=f"序列号已重置为 {new_sequence}")

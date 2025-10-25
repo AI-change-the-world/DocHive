@@ -23,4 +23,6 @@ api_v1_router.include_router(extraction.router)
 api_v1_router.include_router(numbering.router)
 api_v1_router.include_router(search.router)
 api_v1_router.include_router(config.router)
-api_v1_router.include_router(document_types.router, prefix="/document-types", tags=["document-types"])
+api_v1_router.include_router(
+    document_types.router, prefix="/document-types", tags=["document-types"]
+)

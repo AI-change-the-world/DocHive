@@ -24,15 +24,15 @@ async def list_configs(
 ):
     """
     获取系统配置列表
-    
+
     - **is_public**: 是否只显示公开配置
     """
     # 非管理员只能看公开配置
     if current_user.role != "admin" and (is_public is None or not is_public):
         is_public = True
-    
+
     configs = await ConfigService.list_configs(db, is_public)
-    
+
     return ResponseBase(
         data=[SystemConfigResponse.model_validate(c) for c in configs],
     )
@@ -46,20 +46,20 @@ async def get_config(
 ):
     """获取指定配置"""
     config = await ConfigService.get_config(db, config_key)
-    
+
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="配置不存在",
         )
-    
+
     # 非管理员不能访问私有配置
     if not config.is_public and current_user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无权访问此配置",
         )
-    
+
     return ResponseBase(data=SystemConfigResponse.model_validate(config))
 
 
@@ -77,7 +77,7 @@ async def create_config(
         config_data.description,
         config_data.is_public,
     )
-    
+
     return ResponseBase(
         code=201,
         message="配置创建成功",
@@ -94,15 +94,15 @@ async def update_config(
 ):
     """更新系统配置（需要管理员权限）"""
     config = await ConfigService.get_config(db, config_key)
-    
+
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="配置不存在",
         )
-    
+
     update_data = config_data.model_dump(exclude_unset=True)
-    
+
     config = await ConfigService.set_config(
         db,
         config_key,
@@ -110,7 +110,7 @@ async def update_config(
         update_data.get("description", config.description),
         update_data.get("is_public", config.is_public),
     )
-    
+
     return ResponseBase(
         message="配置更新成功",
         data=SystemConfigResponse.model_validate(config),
@@ -125,11 +125,11 @@ async def delete_config(
 ):
     """删除系统配置（需要管理员权限）"""
     success = await ConfigService.delete_config(db, config_key)
-    
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="配置不存在",
         )
-    
+
     return ResponseBase(message="配置删除成功")

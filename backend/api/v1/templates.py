@@ -26,15 +26,17 @@ async def create_template(
 ):
     """
     创建分类模板
-    
+
     - **name**: 模板名称
     - **levels**: 层级定义列表
     - **description**: 模板描述（可选）
     - **version**: 版本号（默认1.0）
     """
     try:
-        template = await TemplateService.create_template(db, template_data, current_user.id)
-        
+        template = await TemplateService.create_template(
+            db, template_data, current_user.id
+        )
+
         return ResponseBase(
             code=201,
             message="模板创建成功",
@@ -56,13 +58,13 @@ async def get_template(
 ):
     """获取指定模板详情"""
     template = await TemplateService.get_template(db, template_id)
-    
+
     if not template:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="模板不存在",
         )
-    
+
     return ResponseBase(
         data=ClassTemplateResponse.model_validate(template),
     )
@@ -78,7 +80,7 @@ async def list_templates(
 ):
     """
     获取模板列表
-    
+
     - **page**: 页码（从1开始）
     - **page_size**: 每页数量（1-100）
     - **is_active**: 是否激活（可选）
@@ -87,7 +89,7 @@ async def list_templates(
     templates, total = await TemplateService.list_templates(
         db, skip=skip, limit=page_size, is_active=is_active
     )
-    
+
     return ResponseBase(
         data=PaginatedResponse(
             total=total,
@@ -107,13 +109,13 @@ async def update_template(
 ):
     """更新模板信息"""
     template = await TemplateService.update_template(db, template_id, template_data)
-    
+
     if not template:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="模板不存在",
         )
-    
+
     return ResponseBase(
         message="模板更新成功",
         data=ClassTemplateResponse.model_validate(template),
@@ -128,11 +130,11 @@ async def delete_template(
 ):
     """删除模板（软删除）"""
     success = await TemplateService.delete_template(db, template_id)
-    
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="模板不存在",
         )
-    
+
     return ResponseBase(message="模板删除成功")

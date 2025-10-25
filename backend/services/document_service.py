@@ -1,7 +1,12 @@
 import json
 from sqlalchemy import select
 from typing import Any, AsyncGenerator, Optional, BinaryIO
-from models.database_models import ClassTemplateConfigs, Document, ClassTemplate, DocumentType
+from models.database_models import (
+    ClassTemplateConfigs,
+    Document,
+    ClassTemplate,
+    DocumentType,
+)
 from schemas.api_schemas import DocumentCreate, DocumentUpdate, SSEEvent
 from utils.storage import storage_client
 from utils.parser import DocumentParser
@@ -11,6 +16,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.llm_client import llm_client
 from loguru import logger
+from typing_extensions import deprecated
 
 
 CODE_EXTRACTION_PROMPT = """
@@ -73,18 +79,50 @@ TYPE_CLASSIFICATION_PROMPT = """
 """
 
 
-
-
 class DocumentService:
     """文档服务层"""
 
-
     @staticmethod
-    async def _analyze_file(doc:str, template_id: int, db :AsyncSession) -> AsyncGenerator[SSEEvent, Any]:
-        """分析文件，提取关键信息
+    async def upload_file_stream(
+        db: AsyncSession,
+        file_data: BinaryIO,
+        filename: str,
+        document_data: DocumentCreate,
+        user_id: int,
+    ) -> AsyncGenerator[SSEEvent, Any]:
+        """
+        上传并解析文档, 流式
+
+        Args:
+            db: 数据库会话
+            file_data: 文件数据流
+            filename: 原始文件名
+            document_data: 文档创建数据
+            user_id: 上传用户ID
+
         """
 
         event = SSEEvent(event="process document content")
+
+        file_extension = Path(filename).suffix
+        object_name = f"{uuid.uuid4()}{file_extension}"
+
+        # 读取文件数据
+        file_bytes = file_data.read()
+        file_data.seek(0)
+
+        # 上传到对象存储
+        file_path = await storage_client.upload_file(
+            file_data,
+            object_name,
+            content_type=DocumentService._get_content_type(file_extension),
+        )
+        event.data = "[info] 上传文件成功"
+        yield event
+
+        doc = await DocumentParser.parse_file(file_data, file_extension)
+
+        template_id = document_data.template_id
 
         template = await db.execute(
             select(ClassTemplate).where(ClassTemplate.id == template_id)
@@ -95,7 +133,7 @@ class DocumentService:
             event.data = "[error] 模板不存在"
             yield event
             return
-        
+
         doc_types = await db.execute(
             select(DocumentType).where(DocumentType.template_id == template_id)
         )
@@ -105,8 +143,8 @@ class DocumentService:
             event.data = "[error] 文档类型不存在"
             yield event
             return
-        
-        template_json_list : list = template.scalar_one_or_none().levels
+
+        template_json_list: list = template.scalar_one_or_none().levels
         # 获取编码规则
         # 首先是定义一个Map，存储编码中的映射关联，比如事件，地区编码...
         # 去掉分类的编码，这个层级是单独处理的
@@ -115,7 +153,7 @@ class DocumentService:
         class_template_config = await db.execute(
             select(ClassTemplateConfigs).where(
                 ClassTemplateConfigs.template_id == template_id,
-                ClassTemplateConfigs.config_name == "code_extraction_prompt"
+                ClassTemplateConfigs.config_name == "code_extraction_prompt",
             )
         )
         type_level = -1
@@ -134,21 +172,24 @@ class DocumentService:
             yield event
             code_prompt = ""
 
-            
-            prompt = CODE_EXTRACTION_PROMPT.replace("{{JSON_CONFIG}}", json.dumps(new_list, ensure_ascii=False))
+            prompt = CODE_EXTRACTION_PROMPT.replace(
+                "{{JSON_CONFIG}}", json.dumps(new_list, ensure_ascii=False)
+            )
             code_prompt = await llm_client.chat_completion(prompt)
 
             # 把这个存下来，后续使用
             class_template_config = ClassTemplateConfigs(
                 template_id=template_id,
                 config_name="code_extraction_prompt",
-                config_value=code_prompt
+                config_value=code_prompt,
             )
 
             db.add(class_template_config)
             await db.commit()
 
-        code_json:list = await llm_client.extract_json_response(code_prompt + "\n\n以下为文档内容，请帮我提取：" + doc)
+        code_json: list = await llm_client.extract_json_response(
+            code_prompt + "\n\n以下为文档内容，请帮我提取：" + doc
+        )
 
         logger.info("👓️ 编码结果： {}".format(code_json))
         event.data = "[info] 提取编码结果： {}".format(code_json)
@@ -158,13 +199,17 @@ class DocumentService:
         ### 构造分类prompt
         type_list = []
         for i in doc_types.scalars().all():
-            type_list.append({
-                "type_code": i.type_code,
-                "type_name": i.type_name,
-                "description": i.description
-            })
+            type_list.append(
+                {
+                    "type_code": i.type_code,
+                    "type_name": i.type_name,
+                    "description": i.description,
+                }
+            )
 
-        type_prompt = TYPE_CLASSIFICATION_PROMPT.replace("{{type_code}}", json.dumps(type_list, ensure_ascii=False)).replace("{{doc}}", doc)
+        type_prompt = TYPE_CLASSIFICATION_PROMPT.replace(
+            "{{type_code}}", json.dumps(type_list, ensure_ascii=False)
+        ).replace("{{doc}}", doc)
         type_json = await llm_client.extract_json_response(type_prompt)
         logger.info("🩱 文档类型： {}".format(type_json))
         event.data = "[info] 文档类型： {}".format(type_json)
@@ -173,7 +218,7 @@ class DocumentService:
         type_json_into_code_json = {
             "code": "TYPE",
             "value": type_json.get("type_code", "UNKNOWN"),
-            "level": type_level
+            "level": type_level,
         }
 
         code_json.append(type_json_into_code_json)
@@ -192,12 +237,21 @@ class DocumentService:
         # TODO 优化，会有并发的问题，考虑暂时不用数值，用一个UUID
         final_code_id = file_code_id_prefix + str(uuid.uuid4())
 
+        document = Document(
+            title=document_data.title,
+            original_filename=filename,
+            file_path=file_path,
+            class_code=final_code_id,
+            file_type=file_extension.lstrip("."),
+            file_size=len(file_bytes),
+            template_id=document_data.template_id,
+            doc_metadata=document_data.metadata or {},
+            status="pending",
+            uploader_id=user_id,
+            content_text=doc,
+        )
 
-        # TODO 更新数据库
-
-
-
-    
+    @deprecated(message="使用upload_file_stream代替")
     @staticmethod
     async def upload_document(
         db: AsyncSession,
@@ -208,35 +262,36 @@ class DocumentService:
     ) -> Document:
         """
         上传并解析文档
-        
+
         Args:
             db: 数据库会话
             file_data: 文件数据流
             filename: 原始文件名
             document_data: 文档创建数据
             user_id: 上传用户ID
-        
+
         Returns:
             创建的文档记录
         """
         # 获取文件扩展名
         file_extension = Path(filename).suffix
-        
+
         # 生成唯一对象名
         import datetime
+
         object_name = f"{datetime.datetime.utcnow().strftime('%Y/%m/%d')}/{uuid.uuid4()}{file_extension}"
-        
+
         # 读取文件数据
         file_bytes = file_data.read()
         file_data.seek(0)
-        
+
         # 上传到对象存储
         file_path = await storage_client.upload_file(
             file_data,
             object_name,
             content_type=DocumentService._get_content_type(file_extension),
         )
-        
+
         # 创建文档记录
         document = Document(
             title=document_data.title,
@@ -249,22 +304,25 @@ class DocumentService:
             status="pending",
             uploader_id=user_id,
         )
-        
+
         db.add(document)
         await db.commit()
         await db.refresh(document)
-        
+
         # 异步解析文档（实际应该使用 Celery 任务队列）
         # REPLACE: 流式接口更好
         try:
-            await DocumentService.parse_document(db, document.id, file_bytes, file_extension)
+            await DocumentService.parse_document(
+                db, document.id, file_bytes, file_extension
+            )
         except Exception as e:
             document.status = "failed"
             document.error_message = str(e)
             await db.commit()
-        
+
         return document
-    
+
+    @deprecated(message="已弃用")
     @staticmethod
     async def parse_document(
         db: AsyncSession,
@@ -276,20 +334,20 @@ class DocumentService:
         document = await DocumentService.get_document(db, document_id)
         if not document:
             return
-        
+
         try:
             document.status = "processing"
             await db.commit()
-            
+
             # 解析文本内容
             content_text = await DocumentParser.parse_file(file_data, file_extension)
-            
+
             # 提取元信息
             metadata = DocumentParser.extract_metadata(file_data, file_extension)
-            
+
             # 生成摘要（这里简化处理，实际应该调用 LLM）
             summary = content_text[:500] if len(content_text) > 500 else content_text
-            
+
             # 更新文档
             document.content_text = content_text
             document.summary = summary
@@ -298,24 +356,22 @@ class DocumentService:
             current_metadata.update(metadata)
             document.doc_metadata = current_metadata
             document.status = "completed"
-            setattr(document, 'processed_time', int(time.time()))
-            
+            setattr(document, "processed_time", int(time.time()))
+
             await db.commit()
-            
+
         except Exception as e:
             document.status = "failed"
             document.error_message = str(e)
             await db.commit()
             raise
-    
+
     @staticmethod
     async def get_document(db: AsyncSession, document_id: int) -> Optional[Document]:
         """获取文档"""
-        result = await db.execute(
-            select(Document).where(Document.id == document_id)
-        )
+        result = await db.execute(select(Document).where(Document.id == document_id))
         return result.scalar_one_or_none()
-    
+
     @staticmethod
     async def list_documents(
         db: AsyncSession,
@@ -328,29 +384,29 @@ class DocumentService:
         """获取文档列表"""
         query = select(Document)
         count_query = select(Document)
-        
+
         if template_id:
             query = query.where(Document.template_id == template_id)
             count_query = count_query.where(Document.template_id == template_id)
-        
+
         if status:
             query = query.where(Document.status == status)
             count_query = count_query.where(Document.status == status)
-        
+
         if user_id:
             query = query.where(Document.uploader_id == user_id)
             count_query = count_query.where(Document.uploader_id == user_id)
-        
+
         query = query.order_by(Document.upload_time.desc()).offset(skip).limit(limit)
-        
+
         result = await db.execute(query)
         documents = result.scalars().all()
-        
+
         count_result = await db.execute(count_query)
         total = len(count_result.scalars().all())
-        
+
         return list(documents), total
-    
+
     @staticmethod
     async def update_document(
         db: AsyncSession,
@@ -361,44 +417,52 @@ class DocumentService:
         document = await DocumentService.get_document(db, document_id)
         if not document:
             return None
-        
+
         update_data = document_data.model_dump(exclude_unset=True)
-        
+
         for field, value in update_data.items():
             setattr(document, field, value)
-        
+
         await db.commit()
         await db.refresh(document)
         return document
-    
+
     @staticmethod
     async def delete_document(db: AsyncSession, document_id: int) -> bool:
         """删除文档"""
         document = await DocumentService.get_document(db, document_id)
         if not document:
             return False
-        
+
         # 从对象存储删除文件
-        object_name = document.file_path.split("/", 1)[1] if "/" in document.file_path else document.file_path
+        object_name = (
+            document.file_path.split("/", 1)[1]
+            if "/" in document.file_path
+            else document.file_path
+        )
         await storage_client.delete_file(object_name)
-        
+
         # 从数据库删除
         await db.delete(document)
         await db.commit()
         return True
-    
+
     @staticmethod
     async def get_download_url(db: AsyncSession, document_id: int) -> Optional[str]:
         """获取文档下载链接"""
         document = await DocumentService.get_document(db, document_id)
         if not document:
             return None
-        
+
         # 提取对象名
-        object_name = document.file_path.split("/", 1)[1] if "/" in document.file_path else document.file_path
-        
+        object_name = (
+            document.file_path.split("/", 1)[1]
+            if "/" in document.file_path
+            else document.file_path
+        )
+
         return storage_client.get_presigned_url(object_name)
-    
+
     @staticmethod
     def _get_content_type(file_extension: str) -> str:
         """获取文件 MIME 类型"""
