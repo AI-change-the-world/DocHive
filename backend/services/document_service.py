@@ -6,6 +6,7 @@ from models.database_models import (
     Document,
     ClassTemplate,
     DocumentType,
+    DocumentTypeField,
 )
 from schemas.api_schemas import DocumentCreate, DocumentUpdate, SSEEvent
 from utils.storage import storage_client
@@ -17,6 +18,39 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from utils.llm_client import llm_client
 from loguru import logger
 from typing_extensions import deprecated
+
+EXTRACT_FIELES_PROMPT = """
+你是一名信息抽取专家。请从以下文档中提取指定字段的信息，并以 JSON 格式输出。
+
+【字段定义】
+{{field_definitions}}
+
+每个字段包含以下信息：
+- field_name：字段名（作为 JSON 的键）
+- description：字段含义或提取说明
+- field_type：字段类型（可为 text / date / array）
+
+【输出要求】
+1. 输出一个完整 JSON，键名与 field_name 对应。
+2. 如果某个字段无法确定内容，请返回 null。
+3. 各字段处理规范：
+   - text：提取文中对应的文字内容。
+   - date：识别并转换为 YYYY-MM-DD 格式。
+   - array：提取多个相关项，以字符串数组形式返回。
+4. 不要生成多余解释或说明，只输出 JSON。
+
+【示例输出】
+```json
+{
+  "标题": "关于推进数字政务建设的若干意见",
+  "发文单位": "国务院办公厅",
+  "发文字号": "国办发〔2023〕12号",
+  "发布日期": "2023-05-12"
+}
+
+【待提取文档内容】
+{{document_content}}
+"""
 
 
 CODE_EXTRACTION_PROMPT = """
@@ -111,12 +145,14 @@ class DocumentService:
         file_bytes = file_data.read()
         file_data.seek(0)
 
-        # 上传到对象存储
-        file_path = await storage_client.upload_file(
-            file_data,
-            object_name,
-            content_type=DocumentService._get_content_type(file_extension),
-        )
+        # 上传到对象存储 
+        # TODO 暂时没有S3服务，所以不实际上传
+        # file_path = await storage_client.upload_file(
+        #     file_data,
+        #     object_name,
+        #     content_type=DocumentService._get_content_type(file_extension),
+        # )
+        file_path = f"{object_name}"
         event.data = "[info] 上传文件成功"
         yield event
 
@@ -224,6 +260,14 @@ class DocumentService:
         code_json.append(type_json_into_code_json)
         sorted_code_json = sorted(code_json, key=lambda x: x.get("level", 0))
 
+        # 根据 type_code 获取 type_id
+        doc_type_id = await db.execute(
+            select(DocumentType).where(
+                DocumentType.type_code == type_json.get("type_code", "UNKNOWN"),
+                DocumentType.template_id == template_id,
+            )
+        )
+
         file_code_id_prefix = ""
         for i in sorted_code_json:
             file_code_id_prefix += i.get("value", "")
@@ -237,6 +281,35 @@ class DocumentService:
         # TODO 优化，会有并发的问题，考虑暂时不用数值，用一个UUID
         final_code_id = file_code_id_prefix + str(uuid.uuid4())
 
+        # 提取相关doc_type_fields
+        doc_type_fields = await db.execute(
+            select(DocumentTypeField).where(
+                DocumentTypeField.doc_type_id == doc_type_id
+            )
+        )
+
+        _extracted_data = {}
+
+        if not doc_type_fields.scalars().all():
+            event.data = "[info] 文档类型字段不存在,不提取内容"
+            yield event
+
+        else:
+            yield event
+            event.data = "[info] 文档类型字段存在，开始提取内容"
+            _fields = [i.to_dict() for i in doc_type_fields.scalars().all()]
+
+            field_definitions = "\n".join(
+                [
+                    f"{i+1}. {f['field_name']}（{f['field_type']}）：{f['description']}"
+                    for i, f in enumerate(_fields)
+                ]
+            )
+            prompt = EXTRACT_FIELES_PROMPT.replace(
+                "{{field_definitions}}", field_definitions
+            ).replace("{{document_content}}", doc)
+            _extracted_data = await llm_client.extract_json_response(prompt)
+
         document = Document(
             title=document_data.title,
             original_filename=filename,
@@ -246,12 +319,21 @@ class DocumentService:
             file_size=len(file_bytes),
             template_id=document_data.template_id,
             doc_metadata=document_data.metadata or {},
-            status="pending",
+            status="completed",
             uploader_id=user_id,
             content_text=doc,
+            processed_time=int(time.time()),
+            extracted_data=_extracted_data,
         )
 
-    @deprecated(message="使用upload_file_stream代替")
+        db.add(document)
+        await db.commit()
+
+        event.data = "[info] 文档创建成功"
+        event.done = True
+        yield event
+
+    @deprecated("使用upload_file_stream代替")
     @staticmethod
     async def upload_document(
         db: AsyncSession,
@@ -322,7 +404,7 @@ class DocumentService:
 
         return document
 
-    @deprecated(message="已弃用")
+    @deprecated("已弃用")
     @staticmethod
     async def parse_document(
         db: AsyncSession,

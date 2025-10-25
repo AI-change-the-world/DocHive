@@ -183,7 +183,7 @@ class Document(Base, ToDictMixin):
 
     # 审计信息
     uploader_id = Column(Integer, index=True)  # 关联 users.id，无外键约束
-    upload_time = Column(Integer, default=lambda: int(time.time()), index=True)
+    upload_time = Column(Integer, default=lambda: int(time.time()))
     processed_time = Column(Integer)
 
     @property

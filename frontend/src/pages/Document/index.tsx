@@ -294,15 +294,8 @@ const DocumentPage: React.FC = () => {
                         layout="vertical"
                         onFinish={handleUpload}
                     >
-                        <Form.Item
-                            name="title"
-                            label="文档标题"
-                            rules={[{ required: true, message: '请输入文档标题' }]}
-                        >
-                            <Input placeholder="请输入文档标题" />
-                        </Form.Item>
 
-                        <Form.Item
+                        <Form.Item required={true}
                             name="template_id"
                             label="分类模板"
                         >
