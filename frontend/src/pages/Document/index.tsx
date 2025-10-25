@@ -83,39 +83,32 @@ const DocumentPage: React.FC = () => {
             documentService.uploadDocumentSSE(
                 formData,
                 (event: SSEEvent) => {
+                    // 只负责显示消息
                     if (event.data) {
                         setUploadStatus(event.data);
                         message.info(event.data);
-
-                        if (event.done) {
-                            message.success('文档上传并处理完成');
-                            setUploadVisible(false);
-                            setUploadStatus('');
-                            form.resetFields();
-                            fetchDocuments();
-
-                            setIsUploading(false); // ✅ 上传完成后再关闭 loading
-                            return; // 确保不会继续执行 onComplete 回调
-                        }
                     }
                 },
                 (error: Error) => {
+                    // 错误处理
                     message.error('上传失败: ' + error.message);
                     setUploadStatus('上传失败');
-                    setIsUploading(false); // ✅ 出错也关闭 loading
+                    setIsUploading(false);
                 },
                 () => {
-                    // 只有在没有明确完成的情况下才调用
-                    if (uploadVisible) {
-                        setUploadStatus('处理完成');
-                        setIsUploading(false); // ✅ SSE 结束回调也可以关闭 loading
-                    }
+                    // 流结束回调，统一处理完成逻辑
+                    message.success('文档上传并处理完成');
+                    setUploadVisible(false);
+                    setUploadStatus('');
+                    form.resetFields();
+                    fetchDocuments();
+                    setIsUploading(false);
                 }
             );
         } catch (error) {
             message.error('上传失败');
             setUploadStatus('上传失败');
-            setIsUploading(false); // ✅ 异常关闭 loading
+            setIsUploading(false);
         }
     };
 

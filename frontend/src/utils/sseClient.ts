@@ -1,14 +1,19 @@
-import { message } from 'antd';
-
 export interface SSEEvent {
     event?: string;
     data: string;
+    id?: string | null;
     done?: boolean;
+}
+
+export interface SSERequestOptions {
+    method?: 'POST';
+    body?: FormData;
+    signal?: AbortSignal;
 }
 
 export class SSEClient {
     private url: string;
-    private formData: FormData;
+    private options: SSERequestOptions;
     private onMessage: (event: SSEEvent) => void;
     private onError: (error: Error) => void;
     private onComplete: () => void;
@@ -21,7 +26,10 @@ export class SSEClient {
         onComplete?: () => void
     ) {
         this.url = url;
-        this.formData = formData;
+        this.options = {
+            method: 'POST',
+            body: formData,
+        };
         this.onMessage = onMessage;
         this.onError = onError || (() => { });
         this.onComplete = onComplete || (() => { });
@@ -29,59 +37,90 @@ export class SSEClient {
 
     async start() {
         try {
+            const headers: Record<string, string> = {
+                'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+            };
+
             const response = await fetch(this.url, {
-                method: 'POST',
-                body: this.formData,
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
-                },
+                method: this.options.method,
+                body: this.options.body,
+                headers,
+                signal: this.options.signal,
             });
 
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
 
-            const reader = response.body?.getReader();
-            const decoder = new TextDecoder('utf-8');
+            if (!response.body) {
+                throw new Error('SSE response has no body.');
+            }
 
-            if (reader) {
-                let result = '';
-                let isDone = false;
-                while (!isDone) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
+            await this.parseStream(response.body, this.options.signal);
+        } catch (error) {
+            if (this.options.signal?.aborted) return;
+            this.onError(error as Error);
+        }
+    }
 
-                    result += decoder.decode(value, { stream: true });
+    /**
+     * 解析 SSE 数据流
+     */
+    private async parseStream(
+        stream: ReadableStream<Uint8Array>,
+        signal?: AbortSignal
+    ) {
+        const decoder = new TextDecoder('utf-8');
+        const reader = stream.getReader();
+        let buffer = '';
 
-                    // 处理 SSE 数据
-                    const lines = result.split('\n\n');
-                    result = lines.pop() || ''; // 保留不完整的行
+        try {
+            while (true) {
+                if (signal?.aborted) break;
+
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+
+                // 按 \n\n 分割消息
+                const messages = buffer.split('\n\n');
+                buffer = messages.pop() || ''; // 留下可能不完整的消息
+
+                for (const message of messages) {
+                    const lines = message.split('\n');
 
                     for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            const data = line.slice(6);
-                            try {
-                                console.log('接收到data:', data);
-                                const event: SSEEvent = JSON.parse(data);
-                                this.onMessage(event);
+                        const trimmed = line.trim();
+                        if (!trimmed || !trimmed.startsWith('data:')) continue;
 
-                                console.log('接收到事件:', event);
+                        const dataStr = trimmed.slice(5).trim();
 
-                                // 如果是完成事件
-                                if (event.done) {
-                                    this.onComplete();
-                                    isDone = true;
-                                    break;
-                                }
-                            } catch (e) {
-                                console.log('解析事件数据失败:', e);
+                        try {
+                            const event: SSEEvent = JSON.parse(dataStr);
+                            this.onMessage(event);
+
+                            // 检测到完成标记，立即结束
+                            if (event.done === true) {
+                                this.onComplete();
+                                return; // 直接返回，结束整个解析
                             }
+                        } catch (e) {
+                            console.warn('SSE parse error:', e, dataStr);
                         }
                     }
                 }
             }
-        } catch (error) {
-            this.onError(error as Error);
+
+            // 流正常结束（无 done 标记）
+            this.onComplete();
+        } catch (err) {
+            if (!signal?.aborted) {
+                console.error('SSE stream error:', err);
+                throw err;
+            }
+        } finally {
+            reader.releaseLock();
         }
     }
 }
