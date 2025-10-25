@@ -28,7 +28,6 @@ async def search_documents(
     支持以下检索方式：
     - **keyword**: 全文搜索关键词
     - **template_id**: 按模板过滤
-    - **class_path**: 按分类路径过滤
     - **extracted_fields**: 按抽取字段过滤
     - **start_date/end_date**: 按时间范围过滤
     - **status**: 按状态过滤
@@ -38,7 +37,6 @@ async def search_documents(
             db,
             keyword=search_request.keyword,
             template_id=search_request.template_id,
-            class_path=search_request.class_path,
             extracted_fields=search_request.extracted_fields,
             start_date=search_request.start_date,
             end_date=search_request.end_date,

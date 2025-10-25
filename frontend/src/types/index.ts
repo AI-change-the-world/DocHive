@@ -105,7 +105,6 @@ export interface Document {
     file_type?: string;
     file_size?: number;
     template_id?: number;
-    class_path?: Record<string, string>;
     class_code?: string;
     summary?: string;
     extracted_data?: Record<string, any>;
@@ -125,7 +124,6 @@ export interface DocumentCreate {
 export interface DocumentSearchRequest extends PaginationParams {
     keyword?: string;
     template_id?: number;
-    class_path?: Record<string, string>;
     extracted_fields?: Record<string, any>;
     start_date?: string;
     end_date?: string;
@@ -197,7 +195,6 @@ export interface ClassificationRequest {
 
 export interface ClassificationResponse {
     document_id: number;
-    class_path: Record<string, string>;
     class_code: string;
     confidence?: number;
     status?: string;

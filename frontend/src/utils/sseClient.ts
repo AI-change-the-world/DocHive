@@ -46,7 +46,8 @@ export class SSEClient {
 
             if (reader) {
                 let result = '';
-                while (true) {
+                let isDone = false;
+                while (!isDone) {
                     const { done, value } = await reader.read();
                     if (done) break;
 
@@ -60,12 +61,16 @@ export class SSEClient {
                         if (line.startsWith('data: ')) {
                             const data = line.slice(6);
                             try {
+                                console.log('接收到data:', data);
                                 const event: SSEEvent = JSON.parse(data);
                                 this.onMessage(event);
+
+                                console.log('接收到事件:', event);
 
                                 // 如果是完成事件
                                 if (event.done) {
                                     this.onComplete();
+                                    isDone = true;
                                     break;
                                 }
                             } catch (e) {

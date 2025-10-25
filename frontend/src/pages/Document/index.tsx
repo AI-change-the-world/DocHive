@@ -95,6 +95,7 @@ const DocumentPage: React.FC = () => {
                             fetchDocuments();
 
                             setIsUploading(false); // ✅ 上传完成后再关闭 loading
+                            return; // 确保不会继续执行 onComplete 回调
                         }
                     }
                 },
@@ -104,8 +105,11 @@ const DocumentPage: React.FC = () => {
                     setIsUploading(false); // ✅ 出错也关闭 loading
                 },
                 () => {
-                    setUploadStatus('处理完成');
-                    setIsUploading(false); // ✅ SSE 结束回调也可以关闭 loading
+                    // 只有在没有明确完成的情况下才调用
+                    if (uploadVisible) {
+                        setUploadStatus('处理完成');
+                        setIsUploading(false); // ✅ SSE 结束回调也可以关闭 loading
+                    }
                 }
             );
         } catch (error) {
@@ -133,13 +137,8 @@ const DocumentPage: React.FC = () => {
         }
     };
 
-    const handleDownload = async (record: Document) => {
-        try {
-            const response = await documentService.getDownloadUrl(record.id);
-            window.open(response.data.download_url, '_blank');
-        } catch (error) {
-            message.error('获取下载链接失败');
-        }
+    const handlePreview = async (record: Document) => {
+
     };
 
     const handleDelete = async (id: number) => {
@@ -184,12 +183,12 @@ const DocumentPage: React.FC = () => {
             key: 'id',
             width: 80,
         },
-        {
-            title: '标题',
-            dataIndex: 'title',
-            key: 'title',
-            ellipsis: true,
-        },
+        // {
+        //     title: '标题',
+        //     dataIndex: 'title',
+        //     key: 'title',
+        //     ellipsis: true,
+        // },
         {
             title: '文件名',
             dataIndex: 'original_filename',
@@ -250,10 +249,10 @@ const DocumentPage: React.FC = () => {
                     <Button
                         type="link"
                         size="small"
-                        icon={<DownloadOutlined />}
-                        onClick={() => handleDownload(record)}
+                        icon={<EyeOutlined />}
+                        onClick={() => handlePreview(record)}
                     >
-                        下载
+                        预览
                     </Button>
                     <Button
                         type="link"
@@ -411,20 +410,6 @@ const DocumentPage: React.FC = () => {
                                     </div>
                                 </div>
                             </div>
-
-                            {selectedDoc.class_path && (
-                                <div>
-                                    <h4 className="font-semibold mb-2">分类信息</h4>
-                                    <div className="space-y-2">
-                                        <div><span className="text-gray-600">分类编号：</span>{selectedDoc.class_code}</div>
-                                        {Object.entries(selectedDoc.class_path).map(([key, value]) => (
-                                            <div key={key}>
-                                                <span className="text-gray-600">{key}：</span>{value}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
 
                             {selectedDoc.extracted_data && Object.keys(selectedDoc.extracted_data).length > 0 && (
                                 <div>

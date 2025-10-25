@@ -215,7 +215,6 @@
 | id           | bigint   | 文档ID   |
 | title        | varchar  | 文件标题 |
 | path         | varchar  | 文件路径 |
-| class_path   | json     | 分类路径 |
 | class_code   | varchar  | 分类编号 |
 | extract_data | json     | 抽取信息 |
 | create_time  | datetime | 上传时间 |

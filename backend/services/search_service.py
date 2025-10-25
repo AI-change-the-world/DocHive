@@ -102,7 +102,6 @@ class SearchService:
         db: AsyncSession,
         keyword: Optional[str] = None,
         template_id: Optional[int] = None,
-        class_path: Optional[Dict[str, str]] = None,
         extracted_fields: Optional[Dict[str, Any]] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
@@ -122,7 +121,6 @@ class SearchService:
         # 使用搜索引擎
         search_results = await search_client.search_documents(
             keyword=keyword,
-            class_path=class_path,
             template_id=template_id,
             start_date=start_date,
             end_date=end_date,

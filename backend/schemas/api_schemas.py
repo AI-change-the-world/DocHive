@@ -177,7 +177,6 @@ class DocumentCreate(BaseModel):
 
 class DocumentUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=255)
-    class_path: Optional[Dict[str, str]] = None
     extracted_data: Optional[Dict[str, Any]] = None
     status: Optional[str] = None
 
@@ -192,11 +191,8 @@ class DocumentResponse(BaseModel):
     file_type: Optional[str]
     file_size: Optional[int]
     template_id: Optional[int]
-    class_path: Optional[Any]
     class_code: Optional[str]
-    summary: Optional[str]
     extracted_data: Optional[Dict[str, Any]]
-    metadata: Optional[Dict[str, Any]]
     status: str
     uploader_id: int
     upload_time: datetime
@@ -208,7 +204,6 @@ class DocumentSearchRequest(BaseModel):
 
     keyword: Optional[str] = Field(None, description="全文搜索关键词")
     template_id: Optional[int] = None
-    class_path: Optional[Dict[str, str]] = Field(None, description="分类路径过滤")
     extracted_fields: Optional[Dict[str, Any]] = Field(None, description="抽取字段过滤")
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
@@ -266,7 +261,6 @@ class ClassificationResponse(BaseModel):
     """分类结果"""
 
     document_id: int
-    class_path: Dict[str, str]
     class_code: str
     confidence: Optional[float] = Field(None, description="分类置信度")
 

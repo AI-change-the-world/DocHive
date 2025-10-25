@@ -28,7 +28,6 @@ class BaseSearchEngine(ABC):
     async def search_documents(
         self,
         keyword: Optional[str] = None,
-        class_path: Optional[Dict[str, str]] = None,
         template_id: Optional[int] = None,
         file_type: Optional[str] = None,
         start_date: Optional[datetime] = None,
@@ -78,7 +77,6 @@ class ElasticsearchEngine(BaseSearchEngine):
                         "search_analyzer": "ik_smart",
                     },
                     "summary": {"type": "text", "analyzer": "ik_max_word"},
-                    "class_path": {"type": "object"},
                     "class_code": {"type": "keyword"},
                     "template_id": {"type": "integer"},
                     "extracted_data": {"type": "object"},
