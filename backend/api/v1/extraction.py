@@ -16,7 +16,7 @@ from api.deps import get_current_user
 from models.database_models import User, ExtractionConfig
 from sqlalchemy.ext.asyncio import AsyncSession
 
-router = APIRouter(prefix="/extraction", tags=["信息抽取"])
+router = APIRouter(prefix="/extraction", tags=["信息抽取"],deprecated=True)
 
 
 @router.post("/extract", response_model=ResponseBase)

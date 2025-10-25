@@ -15,14 +15,13 @@ from models.database_models import User
 from config import get_settings
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
+from sse_starlette import EventSourceResponse
 
 router = APIRouter(prefix="/documents", tags=["文档上传与管理"])
 settings = get_settings()
 
 
-@router.post(
-    "/upload", response_model=ResponseBase, status_code=status.HTTP_201_CREATED
-)
+@router.post("/upload")
 async def upload_document(
     file: UploadFile = File(..., description="上传的文档文件"),
     template_id: Optional[int] = Form(None, description="分类模板ID"),
@@ -31,7 +30,7 @@ async def upload_document(
     current_user: User = Depends(get_current_user),
 ):
     """
-    上传文档
+    上传文档（流式传输）
 
     - **file**: 文档文件（PDF, DOCX, TXT, MD, PNG, JPG等）
     - **title**: 文档标题
@@ -39,14 +38,14 @@ async def upload_document(
     - **metadata**: 额外的元数据信息（JSON字符串，可选）
     """
     if not template_id:
-        return ResponseBase(
-            code=400,
-            message="请选择分类模板",
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请选择分类模板",
         )
 
     # 验证文件类型
     file_extension = (
-        file.filename.split(".")[-1].lower() if "." in file.filename else ""
+        file.filename.split(".")[-1].lower() if file.filename and "." in file.filename else ""
     )
     if file_extension not in settings.allowed_extensions_list:
         raise HTTPException(
@@ -78,20 +77,16 @@ async def upload_document(
 
     # 创建文档数据
     document_data = DocumentCreate(
-        title=file.filename,
+        title=file.filename or "Untitled",
         template_id=template_id,
         metadata=metadata_dict,
     )
 
-    # 上传文档
-    document = await DocumentService.upload_document(
-        db, file.file, file.filename, document_data, current_user.id
-    )
-
-    return ResponseBase(
-        code=201,
-        message="文档上传成功",
-        data=DocumentResponse.model_validate(document),
+    # 使用流式上传
+    return EventSourceResponse(
+        DocumentService.upload_file_stream(
+            db, file.file, file.filename or "Untitled", document_data, getattr(current_user, 'id')
+        )
     )
 
 

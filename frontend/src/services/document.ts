@@ -1,4 +1,5 @@
 import { request } from '../utils/request';
+import { SSEClient, type SSEEvent } from '../utils/sseClient';
 import type {
     ApiResponse,
     Document,
@@ -7,7 +8,20 @@ import type {
 } from '../types';
 
 export const documentService = {
-    // 上传文档
+    // 上传文档 (SSE 流式上传)
+    uploadDocumentSSE: (
+        formData: FormData,
+        onMessage: (event: SSEEvent) => void,
+        onError?: (error: Error) => void,
+        onComplete?: () => void
+    ) => {
+        const url = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'}/documents/upload`;
+        const sseClient = new SSEClient(url, formData, onMessage, onError, onComplete);
+        sseClient.start();
+        return sseClient;
+    },
+
+    // 传统的上传文档方法（保留以供兼容性）
     uploadDocument: (formData: FormData) =>
         request.upload<ApiResponse<Document>>('/documents/upload', formData),
 

@@ -123,17 +123,9 @@ class DocumentService:
         filename: str,
         document_data: DocumentCreate,
         user_id: int,
-    ) -> AsyncGenerator[SSEEvent, Any]:
+    ) -> AsyncGenerator[str, Any]:
         """
-        上传并解析文档, 流式
-
-        Args:
-            db: 数据库会话
-            file_data: 文件数据流
-            filename: 原始文件名
-            document_data: 文档创建数据
-            user_id: 上传用户ID
-
+        上传并解析文档（流式处理）
         """
 
         event = SSEEvent(event="process document content")
@@ -141,116 +133,110 @@ class DocumentService:
         file_extension = Path(filename).suffix
         object_name = f"{uuid.uuid4()}{file_extension}"
 
-        # 读取文件数据
+        # 1️⃣ 读取文件内容（只读一次）
         file_bytes = file_data.read()
-        file_data.seek(0)
+        if hasattr(file_data, "seek"):
+            file_data.seek(0)
 
-        # 上传到对象存储 
-        # TODO 暂时没有S3服务，所以不实际上传
-        # file_path = await storage_client.upload_file(
-        #     file_data,
-        #     object_name,
-        #     content_type=DocumentService._get_content_type(file_extension),
-        # )
+        # 2️⃣ 模拟上传（此处省略实际上传）
         file_path = f"{object_name}"
         event.data = "[info] 上传文件成功"
-        yield event
+        yield event.model_dump_json(ensure_ascii=False)
 
-        doc = await DocumentParser.parse_file(file_data, file_extension)
+        # 3️⃣ 解析文本内容
+        # ⚠️ 注意这里不要再 .read()，因为流已经读过，直接用 file_bytes
+        doc = await DocumentParser.parse_file(file_bytes, file_extension)
 
+        # 4️⃣ 获取模板
         template_id = document_data.template_id
-
-        template = await db.execute(
+        result = await db.execute(
             select(ClassTemplate).where(ClassTemplate.id == template_id)
         )
+        template = result.scalar_one_or_none()
 
-        if not template.scalar_one_or_none():
+        if not template:
             event.done = True
             event.data = "[error] 模板不存在"
-            yield event
+            yield event.model_dump_json(ensure_ascii=False)
             return
 
-        doc_types = await db.execute(
+        # 5️⃣ 获取文档类型
+        doc_type_result = await db.execute(
             select(DocumentType).where(DocumentType.template_id == template_id)
         )
+        doc_types = doc_type_result.scalars().all()
 
-        if not doc_types.scalars().all():
+        if not doc_types:
             event.done = True
             event.data = "[error] 文档类型不存在"
-            yield event
+            yield event.model_dump_json(ensure_ascii=False)
             return
 
-        template_json_list: list = template.scalar_one_or_none().levels
-        # 获取编码规则
-        # 首先是定义一个Map，存储编码中的映射关联，比如事件，地区编码...
-        # 去掉分类的编码，这个层级是单独处理的
+        # 6️⃣ 获取模板的层级定义
+        template_json_list: list = template.levels or []
 
-        ### 查找有没有可用的config
-        class_template_config = await db.execute(
+        # 7️⃣ 检查并生成编码提取提示
+        class_template_config_result = await db.execute(
             select(ClassTemplateConfigs).where(
                 ClassTemplateConfigs.template_id == template_id,
                 ClassTemplateConfigs.config_name == "code_extraction_prompt",
             )
         )
+        class_template_config = class_template_config_result.scalar_one_or_none()
+
         type_level = -1
         new_list = []
         for i in template_json_list:
-            if i.get("is_doc_type", default=False):
+            if i.get("is_doc_type", False):
                 type_level = i.get("level", -1)
                 continue
             new_list.append(i)
-        if class_template_config.scalar_one_or_none():
-            code_prompt = class_template_config.scalar_one_or_none().config_value
+
+        if class_template_config:
+            code_prompt = class_template_config.config_value
             event.data = "[info] 使用自定义的编码提取提示"
-            yield event
+            yield event.model_dump_json(ensure_ascii=False)
         else:
             event.data = "[info] 重新构造编码提取提示"
-            yield event
-            code_prompt = ""
+            yield event.model_dump_json(ensure_ascii=False)
 
             prompt = CODE_EXTRACTION_PROMPT.replace(
                 "{{JSON_CONFIG}}", json.dumps(new_list, ensure_ascii=False)
             )
-            code_prompt = await llm_client.chat_completion(prompt)
+            code_prompt = llm_client.chat_completion(prompt)
 
-            # 把这个存下来，后续使用
-            class_template_config = ClassTemplateConfigs(
+            # 保存配置
+            new_config = ClassTemplateConfigs(
                 template_id=template_id,
                 config_name="code_extraction_prompt",
                 config_value=code_prompt,
             )
-
-            db.add(class_template_config)
+            db.add(new_config)
             await db.commit()
 
-        code_json: list = await llm_client.extract_json_response(
+        # 8️⃣ 提取编码结果
+        code_json: list = llm_client.extract_json_response(
             code_prompt + "\n\n以下为文档内容，请帮我提取：" + doc
         )
+        logger.info("👓️ 编码结果：" + str(code_json))
+        event.data = f"[info] 提取编码结果： {code_json}"
+        yield event.model_dump_json(ensure_ascii=False)
 
-        logger.info("👓️ 编码结果： {}".format(code_json))
-        event.data = "[info] 提取编码结果： {}".format(code_json)
-        yield event
-
-        # 根据分类结果，获取文档类型
-        ### 构造分类prompt
-        type_list = []
-        for i in doc_types.scalars().all():
-            type_list.append(
-                {
-                    "type_code": i.type_code,
-                    "type_name": i.type_name,
-                    "description": i.description,
-                }
-            )
+        # 9️⃣ 提取文档类型
+        type_list = [
+            {"type_code": i.type_code, "type_name": i.type_name, "description": i.description}
+            for i in doc_types
+        ]
 
         type_prompt = TYPE_CLASSIFICATION_PROMPT.replace(
             "{{type_code}}", json.dumps(type_list, ensure_ascii=False)
         ).replace("{{doc}}", doc)
-        type_json = await llm_client.extract_json_response(type_prompt)
-        logger.info("🩱 文档类型： {}".format(type_json))
-        event.data = "[info] 文档类型： {}".format(type_json)
-        yield event
+        type_json = llm_client.extract_json_response(type_prompt)
+        logger.info("🩱 文档类型：" + str(type_json))
+        event.data = f"[info] 文档类型： {type_json}"
+        yield event.model_dump_json(ensure_ascii=False)
 
+        # 10️⃣ 合并编码和分类结果
         type_json_into_code_json = {
             "code": "TYPE",
             "value": type_json.get("type_code", "UNKNOWN"),
@@ -260,56 +246,53 @@ class DocumentService:
         code_json.append(type_json_into_code_json)
         sorted_code_json = sorted(code_json, key=lambda x: x.get("level", 0))
 
-        # 根据 type_code 获取 type_id
-        doc_type_id = await db.execute(
+        logger.info("✅ 合并编码和分类结果： "+ json.dumps(sorted_code_json, ensure_ascii=False))
+
+        # 11️⃣ 获取对应 DocumentType
+        doc_type_result = await db.execute(
             select(DocumentType).where(
                 DocumentType.type_code == type_json.get("type_code", "UNKNOWN"),
                 DocumentType.template_id == template_id,
             )
         )
+        doc_type = doc_type_result.scalar_one_or_none()
 
-        file_code_id_prefix = ""
-        for i in sorted_code_json:
-            file_code_id_prefix += i.get("value", "")
-            file_code_id_prefix += "-"
+        # 12️⃣ 构造文件编码 TODO 有时候Sector无法正确识别，需要处理
+        file_code_id_prefix = "-".join(str(i.get("value")) if i.get("value") is not None else "UNKNOWN" for i in sorted_code_json)
+        logger.info("✅ 编码结果："+ file_code_id_prefix)
+        event.data = f"[info] 编码结果： {file_code_id_prefix}"
+        yield event.model_dump_json(ensure_ascii=False)
 
-        logger.info("✅ 编码结果： {}".format(file_code_id_prefix))
-        event.data = "[info] 编码结果： {}".format(file_code_id_prefix)
-        yield event
+        final_code_id = file_code_id_prefix + "-" + str(uuid.uuid4())
 
-        # 查询这个template下，这个类别下有多少文件
-        # TODO 优化，会有并发的问题，考虑暂时不用数值，用一个UUID
-        final_code_id = file_code_id_prefix + str(uuid.uuid4())
-
-        # 提取相关doc_type_fields
-        doc_type_fields = await db.execute(
+        # 13️⃣ 查询类型字段定义
+        doc_type_fields_result = await db.execute(
             select(DocumentTypeField).where(
-                DocumentTypeField.doc_type_id == doc_type_id
+                DocumentTypeField.doc_type_id == (doc_type.id if doc_type else None)
             )
         )
+        doc_type_fields = doc_type_fields_result.scalars().all()
 
         _extracted_data = {}
 
-        if not doc_type_fields.scalars().all():
+        if not doc_type_fields:
             event.data = "[info] 文档类型字段不存在,不提取内容"
-            yield event
-
+            yield event.model_dump_json(ensure_ascii=False)
         else:
-            yield event
             event.data = "[info] 文档类型字段存在，开始提取内容"
-            _fields = [i.to_dict() for i in doc_type_fields.scalars().all()]
+            yield event.model_dump_json(ensure_ascii=False)
 
+            _fields = [i.to_dict() for i in doc_type_fields]
             field_definitions = "\n".join(
-                [
-                    f"{i+1}. {f['field_name']}（{f['field_type']}）：{f['description']}"
-                    for i, f in enumerate(_fields)
-                ]
+                f"{i+1}. {f['field_name']}（{f['field_type']}）：{f['description']}"
+                for i, f in enumerate(_fields)
             )
             prompt = EXTRACT_FIELES_PROMPT.replace(
                 "{{field_definitions}}", field_definitions
             ).replace("{{document_content}}", doc)
-            _extracted_data = await llm_client.extract_json_response(prompt)
+            _extracted_data = llm_client.extract_json_response(prompt)
 
+        # 14️⃣ 保存文档信息
         document = Document(
             title=document_data.title,
             original_filename=filename,
@@ -322,6 +305,7 @@ class DocumentService:
             status="completed",
             uploader_id=user_id,
             content_text=doc,
+            doc_type_id=doc_type.id if doc_type else 0,
             processed_time=int(time.time()),
             extracted_data=_extracted_data,
         )
@@ -331,7 +315,8 @@ class DocumentService:
 
         event.data = "[info] 文档创建成功"
         event.done = True
-        yield event
+        yield event.model_dump_json(ensure_ascii=False)
+
 
     @deprecated("使用upload_file_stream代替")
     @staticmethod

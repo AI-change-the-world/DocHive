@@ -1,3 +1,4 @@
+import traceback
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -70,6 +71,7 @@ app.add_middleware(
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """全局异常处理器"""
+    traceback.print_exc()
     logger.error(f"全局异常: {exc}", exc_info=True)
 
     return JSONResponse(

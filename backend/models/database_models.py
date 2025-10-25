@@ -1,4 +1,5 @@
 import time
+from loguru import logger
 from sqlalchemy import (
     Column,
     Integer,
@@ -163,9 +164,6 @@ class Document(Base, ToDictMixin):
     # 分类信息
     template_id = Column(Integer, index=True)  # 关联 class_templates.id，无外键约束
     doc_type_id = Column(Integer, index=True)  # 关联 document_types.id，文档类型
-    _class_path = Column(
-        "class_path", Text
-    )  # 分类路径：{"年份": "2025", "部门": "研发部", ...}
     class_code = Column(String(100), unique=True, index=True)  # 唯一分类编号
 
     # 内容信息
@@ -183,33 +181,9 @@ class Document(Base, ToDictMixin):
 
     # 审计信息
     uploader_id = Column(Integer, index=True)  # 关联 users.id，无外键约束
-    upload_time = Column(Integer, default=lambda: int(time.time()))
+    upload_time = Column(Integer, default=lambda: int(time.time()), index=True)
     processed_time = Column(Integer)
 
-    @property
-    def class_path(self):
-        """自动将 JSON 字符串转为 dict"""
-        import json
-
-        if self._class_path is not None:
-            return (
-                json.loads(self._class_path)
-                if isinstance(self._class_path, str)
-                else self._class_path
-            )
-        return None
-
-    @class_path.setter
-    def class_path(self, value):
-        """自动将 dict 转为 JSON 字符串"""
-        import json
-
-        if value is None:
-            self._class_path = None
-        elif isinstance(value, (dict, list)):
-            self._class_path = json.dumps(value, ensure_ascii=False)
-        else:
-            self._class_path = value
 
     @property
     def extracted_data(self):
@@ -267,12 +241,6 @@ class Document(Base, ToDictMixin):
         # 将私有字段改为公开字段，并解析为 JSON
         import json
 
-        if "_class_path" in result:
-            result["class_path"] = (
-                json.loads(result.pop("_class_path"))
-                if result.get("_class_path")
-                else None
-            )
         if "_extracted_data" in result:
             result["extracted_data"] = (
                 json.loads(result.pop("_extracted_data"))

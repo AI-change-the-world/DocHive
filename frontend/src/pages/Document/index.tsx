@@ -18,10 +18,10 @@ import {
     EyeOutlined,
     DeleteOutlined,
     DownloadOutlined,
-    FileTextOutlined,
 } from '@ant-design/icons';
 import { documentService, templateService, classificationService } from '../../services';
 import type { Document, ClassTemplate } from '../../types';
+import type { SSEEvent } from '../../utils/sseClient';
 
 const DocumentPage: React.FC = () => {
     const [documents, setDocuments] = useState<Document[]>([]);
@@ -34,6 +34,8 @@ const DocumentPage: React.FC = () => {
     const [pagination, setPagination] = useState({ page: 1, page_size: 10 });
     const [filters, setFilters] = useState<any>({});
     const [form] = Form.useForm();
+    const [uploadStatus, setUploadStatus] = useState<string>('');
+    const [isUploading, setIsUploading] = useState(false);
 
     useEffect(() => {
         fetchDocuments();
@@ -66,23 +68,50 @@ const DocumentPage: React.FC = () => {
     };
 
     const handleUpload = async (values: any) => {
-        const { file, title, template_id } = values;
+        setIsUploading(true);
+        const { file, template_id } = values;
 
         const formData = new FormData();
         formData.append('file', file[0].originFileObj);
-        formData.append('title', title);
         if (template_id) {
             formData.append('template_id', template_id);
         }
 
+        setUploadStatus('上传中...');
+
         try {
-            await documentService.uploadDocument(formData);
-            message.success('上传成功');
-            setUploadVisible(false);
-            form.resetFields();
-            fetchDocuments();
+            documentService.uploadDocumentSSE(
+                formData,
+                (event: SSEEvent) => {
+                    if (event.data) {
+                        setUploadStatus(event.data);
+                        message.info(event.data);
+
+                        if (event.done) {
+                            message.success('文档上传并处理完成');
+                            setUploadVisible(false);
+                            setUploadStatus('');
+                            form.resetFields();
+                            fetchDocuments();
+
+                            setIsUploading(false); // ✅ 上传完成后再关闭 loading
+                        }
+                    }
+                },
+                (error: Error) => {
+                    message.error('上传失败: ' + error.message);
+                    setUploadStatus('上传失败');
+                    setIsUploading(false); // ✅ 出错也关闭 loading
+                },
+                () => {
+                    setUploadStatus('处理完成');
+                    setIsUploading(false); // ✅ SSE 结束回调也可以关闭 loading
+                }
+            );
         } catch (error) {
             message.error('上传失败');
+            setUploadStatus('上传失败');
+            setIsUploading(false); // ✅ 异常关闭 loading
         }
     };
 
@@ -258,6 +287,7 @@ const DocumentPage: React.FC = () => {
                             <Select.Option value="failed">失败</Select.Option>
                         </Select>
                         <Button
+
                             type="primary"
                             icon={<UploadOutlined />}
                             onClick={() => setUploadVisible(true)}
@@ -285,8 +315,12 @@ const DocumentPage: React.FC = () => {
                 {/* 上传文档模态框 */}
                 <Modal
                     title="上传文档"
+
                     open={uploadVisible}
-                    onCancel={() => setUploadVisible(false)}
+                    onCancel={() => {
+                        setUploadVisible(false);
+                        setUploadStatus('');
+                    }}
                     footer={null}
                 >
                     <Form
@@ -328,12 +362,21 @@ const DocumentPage: React.FC = () => {
                             </Upload>
                         </Form.Item>
 
+                        {uploadStatus && (
+                            <div className="mb-4">
+                                <div className="text-sm text-gray-600 mb-1">{uploadStatus}</div>
+                            </div>
+                        )}
+
                         <Form.Item>
                             <Space>
-                                <Button type="primary" htmlType="submit">
+                                <Button type="primary" htmlType="submit" loading={isUploading}>
                                     上传
                                 </Button>
-                                <Button onClick={() => setUploadVisible(false)}>
+                                <Button onClick={() => {
+                                    setUploadVisible(false);
+                                    setUploadStatus('');
+                                }}>
                                     取消
                                 </Button>
                             </Space>

@@ -192,7 +192,7 @@ class DocumentResponse(BaseModel):
     file_type: Optional[str]
     file_size: Optional[int]
     template_id: Optional[int]
-    class_path: Optional[Dict[str, str]]
+    class_path: Optional[Any]
     class_code: Optional[str]
     summary: Optional[str]
     extracted_data: Optional[Dict[str, Any]]
