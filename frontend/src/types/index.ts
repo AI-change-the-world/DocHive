@@ -288,3 +288,52 @@ export interface QAStreamEvent {
     data: any;
     done: boolean;
 }
+
+// LLM日志相关类型
+export interface LLMLog {
+    id: number;
+    provider: string;
+    model: string;
+    input_messages: Array<{ role: string; content: string }>;
+    output_content?: string;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    duration_ms?: number;
+    status: string;
+    error_message?: string;
+    user_id?: number;
+    created_at: string;
+}
+
+export interface LLMLogListRequest extends PaginationParams {
+    provider?: string;
+    model?: string;
+    status?: string;
+    user_id?: number;
+    start_date?: string;
+    end_date?: string;
+}
+
+export interface LLMLogStatistics {
+    total_calls: number;
+    total_tokens: number;
+    by_status: Record<string, number>;
+    by_provider: Record<string, { calls: number; tokens: number }>;
+    by_model: Record<string, { calls: number; tokens: number }>;
+}
+
+// 模板配置相关类型
+export interface TemplateConfig {
+    id: number;
+    template_id: number;
+    config_name: string;
+    config_value: string;
+    created_at: string;
+    updated_at: string;
+    is_active: boolean;
+}
+
+export interface TemplateConfigUpdate {
+    config_value: string;
+}

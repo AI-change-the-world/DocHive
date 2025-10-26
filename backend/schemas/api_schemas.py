@@ -424,3 +424,58 @@ class QAResponse(BaseModel):
     answer: str
     references: List[QADocumentReference] = Field(default=[], description="参考文档列表")
     thinking_process: Optional[str] = Field(None, description="AI思考过程")
+
+
+# ============= LLM日志相关 =============
+class LLMLogResponse(BaseModel):
+    """大模型调用日志响应"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    provider: str
+    model: str
+    input_messages: List[Dict[str, Any]]
+    output_content: Optional[str]
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    duration_ms: Optional[int]
+    status: str
+    error_message: Optional[str]
+    user_id: Optional[int]
+    created_at: datetime
+
+
+class LLMLogListRequest(BaseModel):
+    """查询LLM日志请求"""
+
+    page: int = Field(1, ge=1)
+    page_size: int = Field(20, ge=1, le=100)
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    status: Optional[str] = None
+    user_id: Optional[int] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+
+
+# ============= 模板配置相关 =============
+class TemplateConfigResponse(BaseModel):
+    """模板配置响应"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    template_id: int
+    config_name: str
+    config_value: str
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+
+
+class TemplateConfigUpdate(BaseModel):
+    """模板配置更新请求（仅允许更新config_value）"""
+
+    config_value: str = Field(..., min_length=1, description="配置值")

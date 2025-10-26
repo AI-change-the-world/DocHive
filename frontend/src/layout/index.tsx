@@ -1,6 +1,6 @@
 import { Layout, Menu, Typography } from 'antd';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { FileTextOutlined, FolderOpenOutlined, SearchOutlined, DashboardOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { FileTextOutlined, FolderOpenOutlined, SearchOutlined, DashboardOutlined, QuestionCircleOutlined, BarChartOutlined, SettingOutlined } from '@ant-design/icons';
 
 const { Header, Sider, Content } = Layout;
 
@@ -18,6 +18,8 @@ export default function AppLayout() {
         if (path.includes('/documents')) return 'documents';
         if (path.includes('/search')) return 'search';
         if (path.includes('/qa')) return 'qa';
+        if (path.includes('/llm-logs')) return 'llm-logs';
+        if (path.includes('/template-configs')) return 'template-configs';
         return 'dashboard'; // 默认选中项
     };
 
@@ -64,17 +66,17 @@ export default function AppLayout() {
                         className="bg-transparent border-none pt-4"
                         items={[
                             {
-                                key: 'qa',
-                                label: <span className="font-medium">智能问答</span>,
-                                onClick: () => navigate('/qa'),
-                                icon: <QuestionCircleOutlined className="text-primary-600" />,
-                                className: 'mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200'
-                            },
-                            {
                                 key: 'dashboard',
                                 label: <span className="font-medium">仪表盘</span>,
                                 onClick: () => navigate('/dashboard'),
                                 icon: <DashboardOutlined className="text-primary-600" />,
+                                className: 'mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200'
+                            },
+                            {
+                                key: 'qa',
+                                label: <span className="font-medium">智能问答</span>,
+                                onClick: () => navigate('/qa'),
+                                icon: <QuestionCircleOutlined className="text-primary-600" />,
                                 className: 'mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200'
                             },
                             {
@@ -91,14 +93,28 @@ export default function AppLayout() {
                                 icon: <FileTextOutlined className="text-primary-600" />,
                                 className: 'mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200'
                             },
+                            // {
+                            //     key: 'search',
+                            //     label: <span className="font-medium">文档检索</span>,
+                            //     onClick: () => navigate('/search'),
+                            //     icon: <SearchOutlined className="text-primary-600" />,
+                            //     className: 'mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200'
+                            // },
+
                             {
-                                key: 'search',
-                                label: <span className="font-medium">文档检索</span>,
-                                onClick: () => navigate('/search'),
-                                icon: <SearchOutlined className="text-primary-600" />,
+                                key: 'llm-logs',
+                                label: <span className="font-medium">LLM日志</span>,
+                                onClick: () => navigate('/llm-logs'),
+                                icon: <BarChartOutlined className="text-primary-600" />,
                                 className: 'mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200'
                             },
-
+                            {
+                                key: 'template-configs',
+                                label: <span className="font-medium">模板配置</span>,
+                                onClick: () => navigate('/template-configs'),
+                                icon: <SettingOutlined className="text-primary-600" />,
+                                className: 'mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200'
+                            },
                         ]}
                     />
                 </Sider>

@@ -7,6 +7,8 @@ import TemplatePage from "../pages/Template";
 import DocumentPage from "../pages/Document";
 import SearchPage from "../pages/Search";
 import QAPage from "../pages/QA";
+import LLMLogPage from "../pages/LLMLog";
+import TemplateConfigPage from "../pages/TemplateConfig";
 
 export const router = createBrowserRouter([
     {
@@ -21,8 +23,10 @@ export const router = createBrowserRouter([
             { path: '/dashboard', element: <Dashboard /> },
             { path: '/templates', element: <TemplatePage /> },
             { path: '/documents', element: <DocumentPage /> },
-            { path: '/search', element: <SearchPage /> },
+            // { path: '/search', element: <SearchPage /> },
             { path: '/qa', element: <QAPage /> },
+            { path: '/llm-logs', element: <LLMLogPage /> },
+            { path: '/template-configs', element: <TemplateConfigPage /> },
         ],
     },
     { path: '*', element: <Error /> },

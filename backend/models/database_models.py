@@ -388,9 +388,66 @@ class SystemConfig(Base, ToDictMixin):
     updated_at = Column(Integer, default=lambda: int(time.time()))
 
 
+class LLMLog(Base, ToDictMixin):
+    """大模型调用日志表"""
+
+    __tablename__ = "llm_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    provider = Column(String(50), nullable=False, index=True)  # openai, deepseek等
+    model = Column(String(100), nullable=False, index=True)  # 模型名称
+    _input_messages = Column("input_messages", Text, nullable=False)  # 输入消息（JSON）
+    output_content = Column(Text)  # 输出内容
+    prompt_tokens = Column(Integer, default=0)  # 提示词token数
+    completion_tokens = Column(Integer, default=0)  # 完成token数
+    total_tokens = Column(Integer, default=0)  # 总token数
+    duration_ms = Column(Integer)  # 调用耗时（毫秒）
+    status = Column(String(20), default="success")  # success, error
+    error_message = Column(Text)  # 错误信息
+    user_id = Column(Integer, index=True)  # 调用用户ID
+    created_at = Column(Integer, default=lambda: int(time.time()), index=True)
+
+    @property
+    def input_messages(self):
+        """自动将 JSON 字符串转为 list"""
+        import json
+
+        if self._input_messages is not None:
+            return (
+                json.loads(self._input_messages)
+                if isinstance(self._input_messages, str)
+                else self._input_messages
+            )
+        return None
+
+    @input_messages.setter
+    def input_messages(self, value):
+        """自动将 list 转为 JSON 字符串"""
+        import json
+
+        if isinstance(value, (list, dict)):
+            self._input_messages = json.dumps(value, ensure_ascii=False)
+        else:
+            self._input_messages = value
+
+    def to_dict(self):
+        """重写 to_dict，确保 input_messages 返回 list"""
+        result = super().to_dict()
+        if "_input_messages" in result:
+            import json
+
+            result["input_messages"] = (
+                json.loads(result.pop("_input_messages"))
+                if isinstance(result.get("_input_messages"), str)
+                else result.pop("_input_messages")
+            )
+        return result
+
+
 # 注册 before_update 事件监听器，自动更新 updated_at 时间戳
 event.listen(User, "before_update", update_timestamp_before_update)
 event.listen(ClassTemplate, "before_update", update_timestamp_before_update)
+event.listen(ClassTemplateConfigs, "before_update", update_timestamp_before_update)
 event.listen(ExtractionConfig, "before_update", update_timestamp_before_update)
 event.listen(DocumentType, "before_update", update_timestamp_before_update)
 event.listen(DocumentTypeField, "before_update", update_timestamp_before_update)
