@@ -261,3 +261,30 @@ export interface DocumentStatistics {
     by_status: Record<string, number>;
     by_template?: Record<number, number>;
 }
+
+// 问答相关类型
+export interface QARequest {
+    question: string;
+    template_id?: number;
+    top_k?: number;
+}
+
+export interface QADocumentReference {
+    document_id: number;
+    title: string;
+    snippet: string;
+    score?: number;
+}
+
+export interface QAResponse {
+    question: string;
+    answer: string;
+    references: QADocumentReference[];
+    thinking_process?: string;
+}
+
+export interface QAStreamEvent {
+    event: 'thinking' | 'references' | 'answer' | 'complete' | 'error';
+    data: any;
+    done: boolean;
+}

@@ -397,3 +397,30 @@ class SystemConfigResponse(BaseModel):
     description: Optional[str]
     is_public: bool
     updated_at: datetime
+
+
+# ============= 问答相关 =============
+class QARequest(BaseModel):
+    """问答请求"""
+
+    question: str = Field(..., min_length=1, max_length=1000, description="用户问题")
+    template_id: Optional[int] = Field(None, description="限定模板ID范围")
+    top_k: int = Field(5, ge=1, le=20, description="检索文档数量")
+
+
+class QADocumentReference(BaseModel):
+    """问答引用的文档片段"""
+
+    document_id: int
+    title: str
+    snippet: str = Field(..., description="引用的文档片段")
+    score: Optional[float] = Field(None, description="相关性分数")
+
+
+class QAResponse(BaseModel):
+    """问答响应"""
+
+    question: str
+    answer: str
+    references: List[QADocumentReference] = Field(default=[], description="参考文档列表")
+    thinking_process: Optional[str] = Field(None, description="AI思考过程")

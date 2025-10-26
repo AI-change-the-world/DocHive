@@ -9,6 +9,7 @@ from api.v1 import (
     search,
     config,
     document_types,
+    qa,
 )
 
 # 创建 v1 版本路由
@@ -26,3 +27,4 @@ api_v1_router.include_router(config.router)
 api_v1_router.include_router(
     document_types.router, prefix="/document-types", tags=["document-types"]
 )
+api_v1_router.include_router(qa.router)

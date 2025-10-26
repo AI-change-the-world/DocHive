@@ -1,6 +1,6 @@
 import { Layout, Menu, Typography } from 'antd';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { FileTextOutlined, FolderOpenOutlined, SearchOutlined, DashboardOutlined, SettingOutlined } from '@ant-design/icons';
+import { FileTextOutlined, FolderOpenOutlined, SearchOutlined, DashboardOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 
 const { Header, Sider, Content } = Layout;
 
@@ -17,6 +17,7 @@ export default function AppLayout() {
         if (path.includes('/templates')) return 'templates';
         if (path.includes('/documents')) return 'documents';
         if (path.includes('/search')) return 'search';
+        if (path.includes('/qa')) return 'qa';
         return 'dashboard'; // 默认选中项
     };
 
@@ -63,6 +64,13 @@ export default function AppLayout() {
                         className="bg-transparent border-none pt-4"
                         items={[
                             {
+                                key: 'qa',
+                                label: <span className="font-medium">智能问答</span>,
+                                onClick: () => navigate('/qa'),
+                                icon: <QuestionCircleOutlined className="text-primary-600" />,
+                                className: 'mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200'
+                            },
+                            {
                                 key: 'dashboard',
                                 label: <span className="font-medium">仪表盘</span>,
                                 onClick: () => navigate('/dashboard'),
@@ -90,6 +98,7 @@ export default function AppLayout() {
                                 icon: <SearchOutlined className="text-primary-600" />,
                                 className: 'mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200'
                             },
+
                         ]}
                     />
                 </Sider>
