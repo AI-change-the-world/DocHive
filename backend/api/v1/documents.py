@@ -45,7 +45,9 @@ async def upload_document(
 
     # 验证文件类型
     file_extension = (
-        file.filename.split(".")[-1].lower() if file.filename and "." in file.filename else ""
+        file.filename.split(".")[-1].lower()
+        if file.filename and "." in file.filename
+        else ""
     )
     if file_extension not in settings.allowed_extensions_list:
         raise HTTPException(
@@ -85,7 +87,11 @@ async def upload_document(
     # 使用流式上传
     return EventSourceResponse(
         DocumentService.upload_file_stream(
-            db, file.file, file.filename or "Untitled", document_data, getattr(current_user, 'id')
+            db,
+            file.file,
+            file.filename or "Untitled",
+            document_data,
+            getattr(current_user, "id"),
         )
     )
 

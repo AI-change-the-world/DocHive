@@ -117,7 +117,9 @@ class LLMClient:
                     model=model,
                     output_content=output_content,
                     prompt_tokens=response.usage.prompt_tokens if response.usage else 0,
-                    completion_tokens=response.usage.completion_tokens if response.usage else 0,
+                    completion_tokens=(
+                        response.usage.completion_tokens if response.usage else 0
+                    ),
                     total_tokens=response.usage.total_tokens if response.usage else 0,
                     duration_ms=duration_ms,
                     status="success",
@@ -128,7 +130,7 @@ class LLMClient:
 
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
-            
+
             # 记录错误日志
             if db is not None:
                 await self._log_llm_call(
@@ -144,7 +146,7 @@ class LLMClient:
                     error_message=str(e),
                     user_id=user_id,
                 )
-            
+
             raise Exception(f"LLM 调用失败: {str(e)}")
 
     async def extract_json_response(
@@ -201,7 +203,6 @@ class LLMClient:
             return json.loads(response)
         except json.JSONDecodeError as e:
             raise Exception(f"JSON 解析失败: {str(e)}, 响应内容: {response}")
-
 
 
 # 全局实例

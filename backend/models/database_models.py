@@ -184,7 +184,6 @@ class Document(Base, ToDictMixin):
     upload_time = Column(Integer, default=lambda: int(time.time()), index=True)
     processed_time = Column(Integer)
 
-
     @property
     def extracted_data(self):
         """自动将 JSON 字符串转为 dict"""

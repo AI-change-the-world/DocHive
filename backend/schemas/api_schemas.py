@@ -422,7 +422,9 @@ class QAResponse(BaseModel):
 
     question: str
     answer: str
-    references: List[QADocumentReference] = Field(default=[], description="参考文档列表")
+    references: List[QADocumentReference] = Field(
+        default=[], description="参考文档列表"
+    )
     thinking_process: Optional[str] = Field(None, description="AI思考过程")
 
 

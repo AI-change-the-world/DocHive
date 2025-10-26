@@ -69,7 +69,7 @@ class TemplateConfigService:
             更新后的配置对象或None
         """
         config = await TemplateConfigService.get_config_by_id(db, config_id)
-        
+
         if not config:
             return None
 
@@ -78,7 +78,7 @@ class TemplateConfigService:
 
         await db.commit()
         await db.refresh(config)
-        
+
         return config
 
     @staticmethod
@@ -97,22 +97,22 @@ class TemplateConfigService:
             更新后的配置列表
         """
         updated_configs = []
-        
+
         for update_item in updates:
             config_id = update_item.get("id")
             config_value = update_item.get("config_value")
-            
+
             if not config_id or config_value is None:
                 continue
-            
+
             config = await TemplateConfigService.get_config_by_id(db, config_id)
             if config:
                 config.config_value = config_value
                 updated_configs.append(config)
-        
+
         await db.commit()
-        
+
         for config in updated_configs:
             await db.refresh(config)
-        
+
         return updated_configs

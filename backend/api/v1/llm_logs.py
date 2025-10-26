@@ -37,7 +37,7 @@ async def list_llm_logs(
     try:
         # 构建查询条件
         conditions = []
-        
+
         if request.provider:
             conditions.append(LLMLog.provider == request.provider)
         if request.model:
@@ -57,17 +57,22 @@ async def list_llm_logs(
         count_query = select(func.count(LLMLog.id))
         if conditions:
             count_query = count_query.where(and_(*conditions))
-        
+
         total_result = await db.execute(count_query)
         total = total_result.scalar()
 
         # 查询日志列表
         skip = (request.page - 1) * request.page_size
-        query = select(LLMLog).offset(skip).limit(request.page_size).order_by(LLMLog.created_at.desc())
-        
+        query = (
+            select(LLMLog)
+            .offset(skip)
+            .limit(request.page_size)
+            .order_by(LLMLog.created_at.desc())
+        )
+
         if conditions:
             query = query.where(and_(*conditions))
-        
+
         result = await db.execute(query)
         logs = result.scalars().all()
 
@@ -104,7 +109,7 @@ async def get_llm_statistics(
     """
     try:
         conditions = []
-        
+
         if provider:
             conditions.append(LLMLog.provider == provider)
         if model:
@@ -116,7 +121,7 @@ async def get_llm_statistics(
         count_query = select(func.count(LLMLog.id))
         if conditions:
             count_query = count_query.where(and_(*conditions))
-        
+
         total_result = await db.execute(count_query)
         total_calls = total_result.scalar()
 
@@ -124,19 +129,18 @@ async def get_llm_statistics(
         token_query = select(func.sum(LLMLog.total_tokens))
         if conditions:
             token_query = token_query.where(and_(*conditions))
-        
+
         token_result = await db.execute(token_query)
         total_tokens = token_result.scalar() or 0
 
         # 按状态统计
         status_query = select(
-            LLMLog.status, 
-            func.count(LLMLog.id).label("count")
+            LLMLog.status, func.count(LLMLog.id).label("count")
         ).group_by(LLMLog.status)
-        
+
         if conditions:
             status_query = status_query.where(and_(*conditions))
-        
+
         status_result = await db.execute(status_query)
         by_status = {row.status: row.count for row in status_result.all()}
 
@@ -144,12 +148,12 @@ async def get_llm_statistics(
         provider_query = select(
             LLMLog.provider,
             func.count(LLMLog.id).label("count"),
-            func.sum(LLMLog.total_tokens).label("tokens")
+            func.sum(LLMLog.total_tokens).label("tokens"),
         ).group_by(LLMLog.provider)
-        
+
         if conditions:
             provider_query = provider_query.where(and_(*conditions))
-        
+
         provider_result = await db.execute(provider_query)
         by_provider = {
             row.provider: {"calls": row.count, "tokens": row.tokens or 0}
@@ -160,12 +164,12 @@ async def get_llm_statistics(
         model_query = select(
             LLMLog.model,
             func.count(LLMLog.id).label("count"),
-            func.sum(LLMLog.total_tokens).label("tokens")
+            func.sum(LLMLog.total_tokens).label("tokens"),
         ).group_by(LLMLog.model)
-        
+
         if conditions:
             model_query = model_query.where(and_(*conditions))
-        
+
         model_result = await db.execute(model_query)
         by_model = {
             row.model: {"calls": row.count, "tokens": row.tokens or 0}
@@ -180,7 +184,7 @@ async def get_llm_statistics(
                 "by_status": by_status,
                 "by_provider": by_provider,
                 "by_model": by_model,
-            }
+            },
         )
 
     except Exception as e:

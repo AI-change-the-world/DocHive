@@ -203,7 +203,7 @@ class DocumentService:
             prompt = CODE_EXTRACTION_PROMPT.replace(
                 "{{JSON_CONFIG}}", json.dumps(new_list, ensure_ascii=False)
             )
-            code_prompt = llm_client.chat_completion(prompt)
+            code_prompt = await llm_client.chat_completion(prompt, db=db)
 
             # 保存配置
             new_config = ClassTemplateConfigs(
@@ -215,8 +215,9 @@ class DocumentService:
             await db.commit()
 
         # 8️⃣ 提取编码结果
-        code_json: list = llm_client.extract_json_response(
-            code_prompt + "\n\n以下为文档内容，请帮我提取：" + doc
+        code_json: list = await llm_client.extract_json_response(
+            code_prompt + "\n\n以下为文档内容，请帮我提取：" + doc,
+            db=db,
         )
         logger.info("👓️ 编码结果：" + str(code_json))
         event.data = f"[info] 提取编码结果： {code_json}"
@@ -224,14 +225,18 @@ class DocumentService:
 
         # 9️⃣ 提取文档类型
         type_list = [
-            {"type_code": i.type_code, "type_name": i.type_name, "description": i.description}
+            {
+                "type_code": i.type_code,
+                "type_name": i.type_name,
+                "description": i.description,
+            }
             for i in doc_types
         ]
 
         type_prompt = TYPE_CLASSIFICATION_PROMPT.replace(
             "{{type_code}}", json.dumps(type_list, ensure_ascii=False)
         ).replace("{{doc}}", doc)
-        type_json = llm_client.extract_json_response(type_prompt)
+        type_json = await llm_client.extract_json_response(type_prompt, db=db)
         logger.info("🩱 文档类型：" + str(type_json))
         event.data = f"[info] 文档类型： {type_json}"
         yield event.model_dump_json(ensure_ascii=False)
@@ -246,7 +251,10 @@ class DocumentService:
         code_json.append(type_json_into_code_json)
         sorted_code_json = sorted(code_json, key=lambda x: x.get("level", 0))
 
-        logger.info("✅ 合并编码和分类结果： "+ json.dumps(sorted_code_json, ensure_ascii=False))
+        logger.info(
+            "✅ 合并编码和分类结果： "
+            + json.dumps(sorted_code_json, ensure_ascii=False)
+        )
 
         # 11️⃣ 获取对应 DocumentType
         doc_type_result = await db.execute(
@@ -258,8 +266,11 @@ class DocumentService:
         doc_type = doc_type_result.scalar_one_or_none()
 
         # 12️⃣ 构造文件编码 TODO 有时候Sector无法正确识别，需要处理
-        file_code_id_prefix = "-".join(str(i.get("value")) if i.get("value") is not None else "UNKNOWN" for i in sorted_code_json)
-        logger.info("✅ 编码结果："+ file_code_id_prefix)
+        file_code_id_prefix = "-".join(
+            str(i.get("value")) if i.get("value") is not None else "UNKNOWN"
+            for i in sorted_code_json
+        )
+        logger.info("✅ 编码结果：" + file_code_id_prefix)
         event.data = f"[info] 编码结果： {file_code_id_prefix}"
         yield event.model_dump_json(ensure_ascii=False)
 
@@ -290,7 +301,7 @@ class DocumentService:
             prompt = EXTRACT_FIELES_PROMPT.replace(
                 "{{field_definitions}}", field_definitions
             ).replace("{{document_content}}", doc)
-            _extracted_data = llm_client.extract_json_response(prompt)
+            _extracted_data = await llm_client.extract_json_response(prompt, db=db)
 
         # 14️⃣ 保存文档信息
         document = Document(
@@ -316,7 +327,6 @@ class DocumentService:
         event.data = "[info] 文档创建成功"
         event.done = True
         yield event.model_dump_json(ensure_ascii=False)
-
 
     @deprecated("使用upload_file_stream代替")
     @staticmethod

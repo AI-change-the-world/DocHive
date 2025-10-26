@@ -13,7 +13,7 @@ from api.deps import get_current_user
 from models.database_models import User
 from sqlalchemy.ext.asyncio import AsyncSession
 
-router = APIRouter(prefix="/search", tags=["文档检索"])
+router = APIRouter(prefix="/search", tags=["文档检索"], deprecated=True)
 
 
 @router.post("/", response_model=ResponseBase)

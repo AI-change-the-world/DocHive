@@ -49,18 +49,21 @@ async def ask_question_stream(
                 # 将事件转换为SSE格式
                 yield {
                     "event": event.get("event", "message"),
-                    "data": json.dumps(event, ensure_ascii=False)
+                    "data": json.dumps(event, ensure_ascii=False),
                 }
 
         except Exception as e:
             # 发送错误事件
             yield {
                 "event": "error",
-                "data": json.dumps({
-                    "event": "error",
-                    "data": {"message": f"问答失败: {str(e)}"},
-                    "done": True
-                }, ensure_ascii=False)
+                "data": json.dumps(
+                    {
+                        "event": "error",
+                        "data": {"message": f"问答失败: {str(e)}"},
+                        "done": True,
+                    },
+                    ensure_ascii=False,
+                ),
             }
 
     return EventSourceResponse(event_generator())

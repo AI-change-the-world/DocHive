@@ -13,7 +13,7 @@ from api.deps import get_current_user, require_admin
 from models.database_models import User
 from sqlalchemy.ext.asyncio import AsyncSession
 
-router = APIRouter(prefix="/config", tags=["系统配置"])
+router = APIRouter(prefix="/config", tags=["系统配置"], deprecated=True)
 
 
 @router.get("/", response_model=ResponseBase)

@@ -43,9 +43,7 @@ class QAService:
         if not document_ids:
             return []
 
-        result = await db.execute(
-            select(Document).where(Document.id.in_(document_ids))
-        )
+        result = await db.execute(select(Document).where(Document.id.in_(document_ids)))
         documents = result.scalars().all()
 
         # 组装文档信息
@@ -60,13 +58,15 @@ class QAService:
             else:
                 snippet = f"文档: {doc.title}"
 
-            retrieved_docs.append({
-                "document_id": doc.id,
-                "title": doc.title,
-                "snippet": snippet,
-                "content": doc.content_text or doc.summary or "",
-                "score": 0.8,  # 简化处理，实际应从搜索引擎获取
-            })
+            retrieved_docs.append(
+                {
+                    "document_id": doc.id,
+                    "title": doc.title,
+                    "snippet": snippet,
+                    "content": doc.content_text or doc.summary or "",
+                    "score": 0.8,  # 简化处理，实际应从搜索引擎获取
+                }
+            )
 
         return retrieved_docs
 
@@ -82,10 +82,12 @@ class QAService:
         Returns:
             构建的Prompt
         """
-        context_text = "\n\n".join([
-            f"【文档{i+1}: {doc['title']}】\n{doc['content'][:1000]}"  # 每个文档最多1000字符
-            for i, doc in enumerate(context_docs)
-        ])
+        context_text = "\n\n".join(
+            [
+                f"【文档{i+1}: {doc['title']}】\n{doc['content'][:1000]}"  # 每个文档最多1000字符
+                for i, doc in enumerate(context_docs)
+            ]
+        )
 
         prompt = f"""你是一个智能文档问答助手。请基于以下文档内容回答用户的问题。
 
@@ -130,7 +132,7 @@ class QAService:
             yield {
                 "event": "thinking",
                 "data": {"stage": "retrieving", "message": "正在检索相关文档..."},
-                "done": False
+                "done": False,
             }
 
             # 2. 检索相关文档
@@ -142,7 +144,7 @@ class QAService:
                 yield {
                     "event": "error",
                     "data": {"message": "未找到相关文档，无法回答问题。"},
-                    "done": True
+                    "done": True,
                 }
                 return
 
@@ -152,7 +154,7 @@ class QAService:
                     "document_id": doc["document_id"],
                     "title": doc["title"],
                     "snippet": doc["snippet"],
-                    "score": doc["score"]
+                    "score": doc["score"],
                 }
                 for doc in retrieved_docs
             ]
@@ -160,14 +162,17 @@ class QAService:
             yield {
                 "event": "references",
                 "data": {"references": references},
-                "done": False
+                "done": False,
             }
 
             # 4. 发送思考状态
             yield {
                 "event": "thinking",
-                "data": {"stage": "analyzing", "message": "正在分析文档内容并生成答案..."},
-                "done": False
+                "data": {
+                    "stage": "analyzing",
+                    "message": "正在分析文档内容并生成答案...",
+                },
+                "done": False,
             }
 
             # 5. 构建Prompt并调用LLM
@@ -206,22 +211,18 @@ class QAService:
                     yield {
                         "event": "answer",
                         "data": {"content": chunk.choices[0].delta.content},
-                        "done": False
+                        "done": False,
                     }
 
             # 7. 发送完成信号
-            yield {
-                "event": "complete",
-                "data": {"message": "回答完成"},
-                "done": True
-            }
+            yield {"event": "complete", "data": {"message": "回答完成"}, "done": True}
 
         except Exception as e:
             # 发送错误信息
             yield {
                 "event": "error",
                 "data": {"message": f"问答过程出错: {str(e)}"},
-                "done": True
+                "done": True,
             }
 
     @staticmethod
@@ -253,7 +254,7 @@ class QAService:
                 "question": question,
                 "answer": "未找到相关文档，无法回答问题。",
                 "references": [],
-                "thinking_process": None
+                "thinking_process": None,
             }
 
         # 构建Prompt并调用LLM
@@ -266,7 +267,7 @@ class QAService:
                 "document_id": doc["document_id"],
                 "title": doc["title"],
                 "snippet": doc["snippet"],
-                "score": doc["score"]
+                "score": doc["score"],
             }
             for doc in retrieved_docs
         ]
@@ -275,5 +276,5 @@ class QAService:
             "question": question,
             "answer": answer,
             "references": references,
-            "thinking_process": f"检索到 {len(retrieved_docs)} 个相关文档"
+            "thinking_process": f"检索到 {len(retrieved_docs)} 个相关文档",
         }
