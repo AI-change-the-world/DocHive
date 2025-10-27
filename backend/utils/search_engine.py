@@ -66,7 +66,7 @@ class ElasticsearchEngine(BaseSearchEngine):
     def __init__(self):
         from elasticsearch import AsyncElasticsearch
 
-        self.client = AsyncElasticsearch([settings.ELASTICSEARCH_URL])
+        self.client = AsyncElasticsearch([settings.ELASTICSEARCH_URL], verify_certs=False)
         self.index_name = settings.ELASTICSEARCH_INDEX
 
     async def ensure_index(self):

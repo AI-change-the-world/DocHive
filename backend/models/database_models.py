@@ -153,13 +153,12 @@ class Document(Base, ToDictMixin):
     content_text = Column(Text)  # 提取的文本内容
 
     # 抽取信息
-    _extracted_data = Column("extracted_data", Text)  # 结构化抽取字段已移除，现在使用 template_document_mappings 表存储
     _doc_metadata = Column("document_metadata", Text)  # 元信息（作者、创建时间等）
 
     # 审计信息
     uploader_id = Column(Integer, index=True)  # 关联 users.id，无外键约束
     upload_time = Column(Integer, default=lambda: int(time.time()), index=True)
-    # 注意：status, error_message, processed_time 字段已移除，现在使用 template_document_mappings 表存储
+    # 注意：status, error_message, processed_time, extracted_data 字段已移除，现在使用 template_document_mappings 表存储
 
     @property
     def doc_metadata(self):

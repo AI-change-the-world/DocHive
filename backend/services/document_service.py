@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from utils.llm_client import llm_client
 from loguru import logger
 from typing_extensions import deprecated
+from datetime import datetime
 
 EXTRACT_FIELES_PROMPT = """
 你是一名信息抽取专家。请从以下文档中提取指定字段的信息，并以 JSON 格式输出。
@@ -347,6 +348,27 @@ class DocumentService:
         db.add(mapping)
         
         await db.commit()
+
+        # 将文档索引到Elasticsearch
+        try:
+            from utils.search_engine import search_client
+            # 获取upload_time的值
+            upload_time = getattr(document, "upload_time", None)
+            
+            document_data_for_es = {
+                "document_id": document.id,
+                "title": document.title,
+                "content": doc,
+                "summary": doc[:500] if len(doc) > 500 else doc,
+                "template_id": document.template_id,
+                "file_type": document.file_type,
+                "upload_time": datetime.fromtimestamp(upload_time).isoformat() if upload_time else None,
+                "metadata": _extracted_data  # 将extracted_data存储在metadata字段中
+            }
+            await search_client.index_document(document_data_for_es)
+            logger.info(f"文档 {document.id} 已成功索引到Elasticsearch")
+        except Exception as e:
+            logger.error(f"文档 {document.id} 索引到Elasticsearch失败: {e}")
 
         event.data = "[info] 文档创建成功"
         event.done = True
