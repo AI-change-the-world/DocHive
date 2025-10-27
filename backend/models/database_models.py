@@ -131,23 +131,6 @@ class ClassTemplateConfigs(Base, ToDictMixin):
     is_active = Column(Boolean, default=True)
 
 
-class NumberingRule(Base, ToDictMixin):
-    """编号规则表"""
-
-    __tablename__ = "numbering_rules"
-
-    id = Column(Integer, primary_key=True, index=True)
-    template_id = Column(
-        Integer, nullable=False, index=True
-    )  # 关联 class_templates.id，无外键约束
-    rule_format = Column(
-        String(200), nullable=False
-    )  # 如：{year}-{dept_code}-{type_code}-{seq:04d}
-    separator = Column(String(10), default="-")
-    auto_increment = Column(Boolean, default=True)
-    current_sequence = Column(Integer, default=0)
-    created_at = Column(Integer, default=lambda: int(time.time()))
-
 
 class Document(Base, ToDictMixin):
     """文档记录表"""
@@ -308,18 +291,6 @@ class ExtractionConfig(Base, ToDictMixin):
             )
         return result
 
-
-class DocumentExtractionMapping(Base, ToDictMixin):
-    """文档-抽取配置映射表"""
-
-    __tablename__ = "document_extraction_mapping"
-
-    id = Column(Integer, primary_key=True, index=True)
-    document_id = Column(Integer, index=True)  # 关联 documents.id，无外键约束
-    extraction_config_id = Column(
-        Integer, index=True
-    )  # 关联 extraction_configs.id，无外键约束
-    created_at = Column(Integer, default=lambda: int(time.time()))
 
 
 class OperationLog(Base, ToDictMixin):

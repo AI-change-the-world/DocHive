@@ -5,7 +5,6 @@ from typing import List, Optional, Dict, Any
 from models.database_models import (
     ClassTemplate,
     ClassTemplateConfigs,
-    NumberingRule,
     DocumentType,
 )
 from schemas.api_schemas import (

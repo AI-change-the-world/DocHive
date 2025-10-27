@@ -64,25 +64,24 @@ class ElasticsearchEngine(BaseSearchEngine):
     async def create_index(self):
         index_mapping = {
             "mappings": {
+                "dynamic": "true",  # 支持动态字段
                 "properties": {
-                    "document_id": {"type": "integer"},
+                    "document_id": {"type": "keyword"},
                     "title": {
                         "type": "text",
                         "analyzer": "ik_max_word",
-                        "search_analyzer": "ik_smart",
+                        "search_analyzer": "ik_smart"
                     },
+                    "summary": {"type": "text", "analyzer": "ik_max_word"},
                     "content": {
                         "type": "text",
                         "analyzer": "ik_max_word",
-                        "search_analyzer": "ik_smart",
+                        "search_analyzer": "ik_smart"
                     },
-                    "summary": {"type": "text", "analyzer": "ik_max_word"},
-                    "class_code": {"type": "keyword"},
-                    "template_id": {"type": "integer"},
-                    "extracted_data": {"type": "object"},
+                    "template_id": {"type": "keyword"},
                     "file_type": {"type": "keyword"},
                     "upload_time": {"type": "date"},
-                    "uploader_id": {"type": "integer"},
+                    "metadata": {"type": "object", "dynamic": True},  # 动态元数据区域
                 }
             }
         }
