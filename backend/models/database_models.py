@@ -147,50 +147,19 @@ class Document(Base, ToDictMixin):
     # 分类信息
     template_id = Column(Integer, index=True)  # 关联 class_templates.id，无外键约束
     doc_type_id = Column(Integer, index=True)  # 关联 document_types.id，文档类型
-    class_code = Column(String(100), unique=True, index=True)  # 唯一分类编号
+    # 注意：class_code 字段已移除，现在使用 template_document_mappings 表存储
 
     # 内容信息
     content_text = Column(Text)  # 提取的文本内容
 
     # 抽取信息
-    _extracted_data = Column("extracted_data", Text)  # 结构化抽取字段
+    _extracted_data = Column("extracted_data", Text)  # 结构化抽取字段已移除，现在使用 template_document_mappings 表存储
     _doc_metadata = Column("document_metadata", Text)  # 元信息（作者、创建时间等）
-
-    # 状态信息
-    status = Column(
-        String(20), default="pending"
-    )  # pending, processing, completed, failed
-    error_message = Column(Text)
 
     # 审计信息
     uploader_id = Column(Integer, index=True)  # 关联 users.id，无外键约束
     upload_time = Column(Integer, default=lambda: int(time.time()), index=True)
-    processed_time = Column(Integer)
-
-    @property
-    def extracted_data(self):
-        """自动将 JSON 字符串转为 dict"""
-        import json
-
-        if self._extracted_data is not None:
-            return (
-                json.loads(self._extracted_data)
-                if isinstance(self._extracted_data, str)
-                else self._extracted_data
-            )
-        return None
-
-    @extracted_data.setter
-    def extracted_data(self, value):
-        """自动将 dict 转为 JSON 字符串"""
-        import json
-
-        if value is None:
-            self._extracted_data = None
-        elif isinstance(value, (dict, list)):
-            self._extracted_data = json.dumps(value, ensure_ascii=False)
-        else:
-            self._extracted_data = value
+    # 注意：status, error_message, processed_time 字段已移除，现在使用 template_document_mappings 表存储
 
     @property
     def doc_metadata(self):
@@ -223,12 +192,6 @@ class Document(Base, ToDictMixin):
         # 将私有字段改为公开字段，并解析为 JSON
         import json
 
-        if "_extracted_data" in result:
-            result["extracted_data"] = (
-                json.loads(result.pop("_extracted_data"))
-                if result.get("_extracted_data")
-                else None
-            )
         if "_doc_metadata" in result:
             result["metadata"] = (
                 json.loads(result.pop("_doc_metadata"))
@@ -343,6 +306,52 @@ class DocumentTypeField(Base, ToDictMixin):
     )  # 字段类型：text, number, array, date, boolean
     created_at = Column(Integer, default=lambda: int(time.time()))
     updated_at = Column(Integer, default=lambda: int(time.time()))
+
+
+class TemplateDocumentMapping(Base, ToDictMixin):
+    """模板和文档映射表"""
+
+    __tablename__ = "template_document_mappings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    template_id = Column(Integer, nullable=False, index=True)  # 关联 class_templates.id
+    document_id = Column(Integer, nullable=False, index=True)  # 关联 documents.id
+    class_code = Column(String(100), index=True)  # 分类编号
+    
+    # 状态信息
+    status = Column(String(20), default="pending")  # pending, processing, completed, failed
+    error_message = Column(Text)
+    processed_time = Column(Integer)
+    
+    # 抽取信息
+    _extracted_data = Column("extracted_data", Text)  # 结构化抽取字段
+    
+    created_at = Column(Integer, default=lambda: int(time.time()))
+    
+    @property
+    def extracted_data(self):
+        """自动将 JSON 字符串转为 dict"""
+        import json
+
+        if self._extracted_data is not None:
+            return (
+                json.loads(self._extracted_data)
+                if isinstance(self._extracted_data, str)
+                else self._extracted_data
+            )
+        return None
+
+    @extracted_data.setter
+    def extracted_data(self, value):
+        """自动将 dict 转为 JSON 字符串"""
+        import json
+
+        if value is None:
+            self._extracted_data = None
+        elif isinstance(value, (dict, list)):
+            self._extracted_data = json.dumps(value, ensure_ascii=False)
+        else:
+            self._extracted_data = value
 
 
 class SystemConfig(Base, ToDictMixin):

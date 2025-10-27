@@ -1,12 +1,13 @@
 import json
 from sqlalchemy import select
-from typing import Any, AsyncGenerator, Optional, BinaryIO
+from typing import Any, AsyncGenerator, Optional, BinaryIO, List, Dict
 from models.database_models import (
     ClassTemplateConfigs,
     Document,
     ClassTemplate,
     DocumentType,
     DocumentTypeField,
+    TemplateDocumentMapping,
 )
 from schemas.api_schemas import DocumentCreate, DocumentUpdate, SSEEvent
 from utils.storage import storage_client
@@ -40,7 +41,7 @@ EXTRACT_FIELES_PROMPT = """
 4. 不要生成多余解释或说明，只输出 JSON。
 
 【示例输出】
-```json
+```
 {
   "标题": "关于推进数字政务建设的若干意见",
   "发文单位": "国务院办公厅",
@@ -128,7 +129,7 @@ class DocumentService:
         上传并解析文档（流式处理）
         """
 
-        event = SSEEvent(event="process document content")
+        event = SSEEvent(event="process document content", data=None, id=None, done=False)
 
         file_extension = Path(filename).suffix
         object_name = f"{uuid.uuid4()}{file_extension}"
@@ -173,7 +174,7 @@ class DocumentService:
             return
 
         # 6️⃣ 获取模板的层级定义
-        template_json_list: list = template.levels or []
+        template_json_list: List[Dict[str, Any]] = getattr(template, "levels") or []
 
         # 7️⃣ 检查并生成编码提取提示
         class_template_config_result = await db.execute(
@@ -215,10 +216,20 @@ class DocumentService:
             await db.commit()
 
         # 8️⃣ 提取编码结果
-        code_json: list = await llm_client.extract_json_response(
-            code_prompt + "\n\n以下为文档内容，请帮我提取：" + doc,
+        # 构造一个合适的提示消息
+        prompt_message = str(code_prompt) + "\n\n以下为文档内容，请帮我提取：" + str(doc)
+        code_json_result = await llm_client.extract_json_response(
+            prompt_message,
             db=db,
         )
+        # 确保code_json是一个列表
+        if isinstance(code_json_result, dict):
+            code_json: List[Dict[str, Any]] = [code_json_result]
+        elif isinstance(code_json_result, list):
+            code_json = code_json_result
+        else:
+            code_json = []
+        
         logger.info("👓️ 编码结果：" + str(code_json))
         event.data = f"[info] 提取编码结果： {code_json}"
         yield event.model_dump_json(ensure_ascii=False)
@@ -226,9 +237,9 @@ class DocumentService:
         # 9️⃣ 提取文档类型
         type_list = [
             {
-                "type_code": i.type_code,
-                "type_name": i.type_name,
-                "description": i.description,
+                "type_code": getattr(i, "type_code"),
+                "type_name": getattr(i, "type_name"),
+                "description": getattr(i, "description"),
             }
             for i in doc_types
         ]
@@ -242,14 +253,17 @@ class DocumentService:
         yield event.model_dump_json(ensure_ascii=False)
 
         # 10️⃣ 合并编码和分类结果
+        type_value = type_json.get("type_code", "UNKNOWN") if isinstance(type_json, dict) else "UNKNOWN"
         type_json_into_code_json = {
             "code": "TYPE",
-            "value": type_json.get("type_code", "UNKNOWN"),
+            "value": type_value,
             "level": type_level,
         }
 
         code_json.append(type_json_into_code_json)
-        sorted_code_json = sorted(code_json, key=lambda x: x.get("level", 0))
+        # 确保列表中的元素是字典类型
+        dict_items = [item for item in code_json if isinstance(item, dict)]
+        sorted_code_json = sorted(dict_items, key=lambda x: x.get("level", 0) if isinstance(x, dict) else 0)
 
         logger.info(
             "✅ 合并编码和分类结果： "
@@ -257,9 +271,10 @@ class DocumentService:
         )
 
         # 11️⃣ 获取对应 DocumentType
+        type_code = type_json.get("type_code", "UNKNOWN") if isinstance(type_json, dict) else "UNKNOWN"
         doc_type_result = await db.execute(
             select(DocumentType).where(
-                DocumentType.type_code == type_json.get("type_code", "UNKNOWN"),
+                DocumentType.type_code == type_code,
                 DocumentType.template_id == template_id,
             )
         )
@@ -267,7 +282,7 @@ class DocumentService:
 
         # 12️⃣ 构造文件编码 TODO 有时候Sector无法正确识别，需要处理
         file_code_id_prefix = "-".join(
-            str(i.get("value")) if i.get("value") is not None else "UNKNOWN"
+            str(i.get("value")) if isinstance(i, dict) and i.get("value") is not None else "UNKNOWN"
             for i in sorted_code_json
         )
         logger.info("✅ 编码结果：" + file_code_id_prefix)
@@ -308,20 +323,29 @@ class DocumentService:
             title=document_data.title,
             original_filename=filename,
             file_path=file_path,
-            class_code=final_code_id,
             file_type=file_extension.lstrip("."),
             file_size=len(file_bytes),
             template_id=document_data.template_id,
             doc_metadata=document_data.metadata or {},
-            status="completed",
             uploader_id=user_id,
             content_text=doc,
             doc_type_id=doc_type.id if doc_type else 0,
-            processed_time=int(time.time()),
-            extracted_data=_extracted_data,
         )
 
         db.add(document)
+        await db.flush()  # 获取文档ID
+
+        # 创建模板和文档的映射记录
+        mapping = TemplateDocumentMapping(
+            template_id=document_data.template_id,
+            document_id=document.id,
+            class_code=final_code_id,
+            status="completed",
+            processed_time=int(time.time()),
+            extracted_data=json.dumps(_extracted_data, ensure_ascii=False) if _extracted_data else None,
+        )
+        db.add(mapping)
+        
         await db.commit()
 
         event.data = "[info] 文档创建成功"
@@ -378,7 +402,6 @@ class DocumentService:
             file_size=len(file_bytes),
             template_id=document_data.template_id,
             doc_metadata=document_data.metadata or {},
-            status="pending",
             uploader_id=user_id,
         )
 
@@ -390,12 +413,30 @@ class DocumentService:
         # REPLACE: 流式接口更好
         try:
             await DocumentService.parse_document(
-                db, document.id, file_bytes, file_extension
+                db, int(getattr(document, "id")), file_bytes, file_extension
             )
         except Exception as e:
-            document.status = "failed"
-            document.error_message = str(e)
-            await db.commit()
+            # 更新映射表中的错误信息
+            result = await db.execute(
+                select(TemplateDocumentMapping).where(
+                    TemplateDocumentMapping.document_id == getattr(document, "id")
+                )
+            )
+            mapping = result.scalar_one_or_none()
+            if mapping:
+                setattr(mapping, "status", "failed")
+                setattr(mapping, "error_message", str(e))
+                await db.commit()
+            else:
+                # 如果映射表记录不存在，创建一个新的
+                mapping = TemplateDocumentMapping(
+                    template_id=document_data.template_id,
+                    document_id=getattr(document, "id"),
+                    status="failed",
+                    error_message=str(e),
+                )
+                db.add(mapping)
+                await db.commit()
 
         return document
 
@@ -412,10 +453,18 @@ class DocumentService:
         if not document:
             return
 
-        try:
-            document.status = "processing"
+        # 更新映射表状态为处理中
+        result = await db.execute(
+            select(TemplateDocumentMapping).where(
+                TemplateDocumentMapping.document_id == document_id
+            )
+        )
+        mapping = result.scalar_one_or_none()
+        if mapping:
+            setattr(mapping, "status", "processing")
             await db.commit()
 
+        try:
             # 解析文本内容
             content_text = await DocumentParser.parse_file(file_data, file_extension)
 
@@ -426,21 +475,27 @@ class DocumentService:
             summary = content_text[:500] if len(content_text) > 500 else content_text
 
             # 更新文档
-            document.content_text = content_text
-            document.summary = summary
+            setattr(document, "content_text", content_text)
+            setattr(document, "summary", summary)
             # 合并 doc_metadata
-            current_metadata = document.doc_metadata or {}
+            current_metadata = getattr(document, "doc_metadata") or {}
             current_metadata.update(metadata)
-            document.doc_metadata = current_metadata
-            document.status = "completed"
-            setattr(document, "processed_time", int(time.time()))
-
+            setattr(document, "doc_metadata", current_metadata)
+            
             await db.commit()
+
+            # 更新映射表状态为完成
+            if mapping:
+                setattr(mapping, "status", "completed")
+                setattr(mapping, "processed_time", int(time.time()))
+                await db.commit()
 
         except Exception as e:
-            document.status = "failed"
-            document.error_message = str(e)
-            await db.commit()
+            # 更新映射表中的错误信息
+            if mapping:
+                setattr(mapping, "status", "failed")
+                setattr(mapping, "error_message", str(e))
+                await db.commit()
             raise
 
     @staticmethod
@@ -512,10 +567,11 @@ class DocumentService:
             return False
 
         # 从对象存储删除文件
+        file_path = getattr(document, "file_path")
         object_name = (
-            document.file_path.split("/", 1)[1]
-            if "/" in document.file_path
-            else document.file_path
+            file_path.split("/", 1)[1]
+            if "/" in file_path
+            else file_path
         )
         await storage_client.delete_file(object_name)
 
@@ -532,10 +588,11 @@ class DocumentService:
             return None
 
         # 提取对象名
+        file_path = getattr(document, "file_path")
         object_name = (
-            document.file_path.split("/", 1)[1]
-            if "/" in document.file_path
-            else document.file_path
+            file_path.split("/", 1)[1]
+            if "/" in file_path
+            else file_path
         )
 
         return storage_client.get_presigned_url(object_name)

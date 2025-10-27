@@ -1,3 +1,4 @@
+import traceback
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -11,14 +12,44 @@ from schemas.api_schemas import (
 )
 from services.document_service import DocumentService
 from api.deps import get_current_user
-from models.database_models import User
+from models.database_models import User, TemplateDocumentMapping
 from config import get_settings
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from services.search_service import SearchService
 import json
 from sse_starlette import EventSourceResponse
 
 router = APIRouter(prefix="/documents", tags=["文档上传与管理"])
 settings = get_settings()
+
+
+
+@router.get("/statistics", response_model=ResponseBase)
+async def get_statistics(
+    template_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    获取文档统计信息
+
+    - **template_id**: 按模板统计（可选）
+    """
+    try:
+        stats = await SearchService.get_statistics(db, template_id)
+
+        return ResponseBase(
+            message="统计信息获取成功",
+            data=stats,
+        )
+
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"统计失败: {str(e)}",
+        )
 
 
 @router.post("/upload")
@@ -111,7 +142,24 @@ async def get_document(
             detail="文档不存在",
         )
 
-    return ResponseBase(data=DocumentResponse.model_validate(document))
+    # 获取映射表信息
+    result = await db.execute(
+        select(TemplateDocumentMapping).where(
+            TemplateDocumentMapping.document_id == document_id
+        )
+    )
+    mapping = result.scalar_one_or_none()
+    
+    # 创建响应数据，包含映射表中的信息
+    response_data = document.to_dict()
+    if mapping:
+        response_data["class_code"] = getattr(mapping, "class_code")
+        response_data["status"] = getattr(mapping, "status")
+        response_data["error_message"] = getattr(mapping, "error_message")
+        response_data["processed_time"] = getattr(mapping, "processed_time")
+        response_data["extracted_data"] = mapping.extracted_data
+
+    return ResponseBase(data=DocumentResponse.model_validate(response_data))
 
 
 @router.get("/", response_model=ResponseBase)
@@ -136,12 +184,38 @@ async def list_documents(
         db, skip=skip, limit=page_size, template_id=template_id, status=status
     )
 
+    # 获取映射表信息
+    document_ids = [doc.id for doc in documents]
+    if document_ids:
+        result = await db.execute(
+            select(TemplateDocumentMapping).where(
+                TemplateDocumentMapping.document_id.in_(document_ids)
+            )
+        )
+        mappings = result.scalars().all()
+        mapping_dict = {mapping.document_id: mapping for mapping in mappings}
+    else:
+        mapping_dict = {}
+
+    # 创建响应数据，包含映射表中的信息
+    response_items = []
+    for doc in documents:
+        doc_data = doc.to_dict()
+        mapping = mapping_dict.get(doc.id)
+        if mapping:
+            doc_data["class_code"] = getattr(mapping, "class_code")
+            doc_data["status"] = getattr(mapping, "status")
+            doc_data["error_message"] = getattr(mapping, "error_message")
+            doc_data["processed_time"] = getattr(mapping, "processed_time")
+            doc_data["extracted_data"] = mapping.extracted_data
+        response_items.append(DocumentResponse.model_validate(doc_data))
+
     return ResponseBase(
         data=PaginatedResponse(
             total=total,
             page=page,
             page_size=page_size,
-            items=[DocumentResponse.model_validate(d) for d in documents],
+            items=response_items,
         )
     )
 
@@ -162,9 +236,26 @@ async def update_document(
             detail="文档不存在",
         )
 
+    # 获取映射表信息
+    result = await db.execute(
+        select(TemplateDocumentMapping).where(
+            TemplateDocumentMapping.document_id == document_id
+        )
+    )
+    mapping = result.scalar_one_or_none()
+    
+    # 创建响应数据，包含映射表中的信息
+    response_data = document.to_dict()
+    if mapping:
+        response_data["class_code"] = getattr(mapping, "class_code")
+        response_data["status"] = getattr(mapping, "status")
+        response_data["error_message"] = getattr(mapping, "error_message")
+        response_data["processed_time"] = getattr(mapping, "processed_time")
+        response_data["extracted_data"] = mapping.extracted_data
+
     return ResponseBase(
         message="文档更新成功",
-        data=DocumentResponse.model_validate(document),
+        data=DocumentResponse.model_validate(response_data),
     )
 
 
@@ -203,4 +294,64 @@ async def get_download_url(
 
     return ResponseBase(
         message="获取下载链接成功", data={"download_url": url, "expires_in": 3600}
+    )
+
+
+@router.get("/{document_id}/class-code", response_model=ResponseBase)
+async def get_document_class_code(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """获取文档的分类编码"""
+    from sqlalchemy import select
+    
+    result = await db.execute(
+        select(TemplateDocumentMapping).where(
+            TemplateDocumentMapping.document_id == document_id
+        )
+    )
+    mapping = result.scalar_one_or_none()
+    
+    if not mapping:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="文档分类信息不存在",
+        )
+    
+    return ResponseBase(
+        message="获取分类编码成功",
+        data={"class_code": getattr(mapping, "class_code")}
+    )
+
+
+@router.get("/{document_id}/status", response_model=ResponseBase)
+async def get_document_status(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """获取文档处理状态"""
+    from sqlalchemy import select
+    
+    result = await db.execute(
+        select(TemplateDocumentMapping).where(
+            TemplateDocumentMapping.document_id == document_id
+        )
+    )
+    mapping = result.scalar_one_or_none()
+    
+    if not mapping:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="文档状态信息不存在",
+        )
+    
+    return ResponseBase(
+        message="获取状态成功",
+        data={
+            "status": getattr(mapping, "status"),
+            "error_message": getattr(mapping, "error_message"),
+            "processed_time": getattr(mapping, "processed_time")
+        }
     )

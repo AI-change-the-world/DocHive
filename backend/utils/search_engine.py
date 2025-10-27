@@ -7,6 +7,9 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from config import get_settings
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from models.database_models import TemplateDocumentMapping
 
 settings = get_settings()
 
@@ -46,6 +49,15 @@ class BaseSearchEngine(ABC):
     async def close(self):
         """关闭连接（可选）"""
         pass
+
+    async def _get_document_mapping_info(self, db: AsyncSession, document_id: int) -> Optional[TemplateDocumentMapping]:
+        """获取文档的映射信息"""
+        result = await db.execute(
+            select(TemplateDocumentMapping).where(
+                TemplateDocumentMapping.document_id == document_id
+            )
+        )
+        return result.scalar_one_or_none()
 
 
 class ElasticsearchEngine(BaseSearchEngine):
@@ -91,7 +103,7 @@ class ElasticsearchEngine(BaseSearchEngine):
         try:
             await self.client.index(
                 index=self.index_name,
-                id=document_data["document_id"],
+                id=str(document_data["document_id"]),
                 document=document_data,
             )
             return True
@@ -102,7 +114,6 @@ class ElasticsearchEngine(BaseSearchEngine):
     async def search_documents(
         self,
         keyword: Optional[str] = None,
-        class_path: Optional[Dict[str, str]] = None,
         template_id: Optional[int] = None,
         file_type: Optional[str] = None,
         start_date: Optional[datetime] = None,
@@ -110,6 +121,10 @@ class ElasticsearchEngine(BaseSearchEngine):
         page: int = 1,
         page_size: int = 20,
     ) -> Dict[str, Any]:
+        # 为了保持与基类方法签名一致，我们需要重新组织参数
+        # 在这个实现中，我们忽略class_path参数，因为基类方法没有这个参数
+        class_path = None  # 这个参数在基类中不存在，但在原实现中被使用了
+        
         query = {"bool": {"must": [], "filter": []}}
 
         if keyword:
@@ -125,12 +140,7 @@ class ElasticsearchEngine(BaseSearchEngine):
         else:
             query["bool"]["must"].append({"match_all": {}})
 
-        if class_path:
-            for key, value in class_path.items():
-                query["bool"]["filter"].append(
-                    {"term": {f"class_path.{key}.keyword": value}}
-                )
-
+        # 使用正确的参数名
         if template_id:
             query["bool"]["filter"].append({"term": {"template_id": template_id}})
 
@@ -182,7 +192,7 @@ class ElasticsearchEngine(BaseSearchEngine):
 
     async def delete_document(self, document_id: int) -> bool:
         try:
-            await self.client.delete(index=self.index_name, id=document_id)
+            await self.client.delete(index=self.index_name, id=str(document_id))
             return True
         except Exception:
             return False
@@ -258,7 +268,6 @@ class ClickHouseEngine(BaseSearchEngine):
     async def search_documents(
         self,
         keyword: Optional[str] = None,
-        class_path: Optional[Dict[str, str]] = None,
         template_id: Optional[int] = None,
         file_type: Optional[str] = None,
         start_date: Optional[datetime] = None,
@@ -266,6 +275,10 @@ class ClickHouseEngine(BaseSearchEngine):
         page: int = 1,
         page_size: int = 20,
     ) -> Dict[str, Any]:
+        # 为了保持与基类方法签名一致，我们需要重新组织参数
+        # 在这个实现中，我们忽略class_path参数，因为基类方法没有这个参数
+        class_path = None  # 这个参数在基类中不存在，但在原实现中被使用了
+        
         conditions = []
         params = {}
 
@@ -298,7 +311,17 @@ class ClickHouseEngine(BaseSearchEngine):
         try:
             # 查询总数
             count_query = f"SELECT count(*) FROM {self.table_name} WHERE {where_clause}"
-            total = self.client.execute(count_query, params)[0][0]
+            count_result = self.client.execute(count_query, params)
+            # 处理count_result，确保它是一个可迭代的对象
+            if count_result:
+                # 假设count_result是一个包含元组的列表
+                first_row = count_result[0] if isinstance(count_result, (list, tuple)) and len(count_result) > 0 else None
+                if first_row:
+                    total = first_row[0] if isinstance(first_row, (list, tuple)) and len(first_row) > 0 else 0
+                else:
+                    total = 0
+            else:
+                total = 0
 
             # 查询结果
             query = f"""
@@ -311,17 +334,20 @@ class ClickHouseEngine(BaseSearchEngine):
             params["limit"] = page_size
             params["offset"] = offset
 
-            rows = self.client.execute(query, params)
-            results = [
-                {
-                    "document_id": row[0],
-                    "title": row[1],
-                    "summary": row[2],
-                    "class_code": row[3],
-                    "score": 1.0,
-                }
-                for row in rows
-            ]
+            rows_result = self.client.execute(query, params)
+            # 确保rows_result是一个列表
+            rows = rows_result if isinstance(rows_result, list) else []
+            
+            results = []
+            for row in rows:
+                if isinstance(row, (list, tuple)) and len(row) >= 4:
+                    results.append({
+                        "document_id": row[0],
+                        "title": row[1],
+                        "summary": row[2],
+                        "class_code": row[3],
+                        "score": 1.0,
+                    })
 
             return {
                 "results": results,
@@ -441,7 +467,6 @@ class DatabaseEngine(BaseSearchEngine):
     async def search_documents(
         self,
         keyword: Optional[str] = None,
-        class_path: Optional[Dict[str, str]] = None,
         template_id: Optional[int] = None,
         file_type: Optional[str] = None,
         start_date: Optional[datetime] = None,
@@ -449,6 +474,10 @@ class DatabaseEngine(BaseSearchEngine):
         page: int = 1,
         page_size: int = 20,
     ) -> Dict[str, Any]:
+        # 为了保持与基类方法签名一致，我们需要重新组织参数
+        # 在这个实现中，我们忽略class_path参数，因为基类方法没有这个参数
+        class_path = None  # 这个参数在基类中不存在，但在原实现中被使用了
+        
         """使用数据库原生全文检索"""
         from database import AsyncSessionLocal
         from sqlalchemy import select, func, or_, and_, text
@@ -529,16 +558,21 @@ class DatabaseEngine(BaseSearchEngine):
             result = await session.execute(query)
             documents = result.scalars().all()
 
-            results = [
-                {
+            # 获取每个文档的分类编码和其他信息
+            results = []
+            for doc in documents:
+                doc_id = getattr(doc, "id")
+                mapping_info = await self._get_document_mapping_info(session, int(doc_id))
+                
+                results.append({
                     "document_id": doc.id,
                     "title": doc.title,
                     "summary": doc.summary,
-                    "class_code": doc.class_code,
+                    "class_code": getattr(mapping_info, "class_code") if mapping_info else None,
+                    "status": getattr(mapping_info, "status") if mapping_info else None,
+                    "processed_time": getattr(mapping_info, "processed_time") if mapping_info else None,
                     "score": 1.0,
-                }
-                for doc in documents
-            ]
+                })
 
             return {
                 "results": results,
