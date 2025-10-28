@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Input, Button, Card, Empty, Spin, message, Tag, Typography, Space, Divider } from 'antd';
+import { Input, Button, Card, Empty, Spin, message, Tag, Typography, Space, Divider, Modal } from 'antd';
 import { SendOutlined, StopOutlined, FileTextOutlined, RobotOutlined, LoadingOutlined } from '@ant-design/icons';
 import type { QADocumentReference, QARequest } from '../../types';
 import { qaService } from '../../services/qa';
@@ -24,6 +24,14 @@ export default function QAPage() {
     const [currentAnswer, setCurrentAnswer] = useState('');
     const [currentReferences, setCurrentReferences] = useState<QADocumentReference[]>([]);
     const [thinkingStatus, setThinkingStatus] = useState('');
+    const [isAgentMode, setIsAgentMode] = useState(false); // 是否使用智能体模式
+    const [templateId, setTemplateId] = useState<number | undefined>(undefined); // 模板ID
+    const [showTemplateModal, setShowTemplateModal] = useState(false); // 显示模板选择模态框
+    const [sessionId, setSessionId] = useState<string>(''); // 会话ID，用于处理歧义
+    const [ambiguityMessage, setAmbiguityMessage] = useState<string>(''); // 歧义消息
+    const [clarification, setClarification] = useState(''); // 澄清内容
+    const [showClarificationModal, setShowClarificationModal] = useState(false); // 显示澄清模态框
+
     const abortControllerRef = useRef<AbortController | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -43,6 +51,12 @@ export default function QAPage() {
             return;
         }
 
+        // 如果是智能体模式但没有选择模板，显示模板选择模态框
+        if (isAgentMode && !templateId) {
+            setShowTemplateModal(true);
+            return;
+        }
+
         // 添加用户消息
         const userMessage: Message = {
             id: Date.now().toString(),
@@ -56,6 +70,7 @@ export default function QAPage() {
         setCurrentAnswer('');
         setCurrentReferences([]);
         setThinkingStatus('');
+        setAmbiguityMessage('');
         setIsStreaming(true);
 
         // 创建AbortController用于中断请求
@@ -66,8 +81,12 @@ export default function QAPage() {
             // 构建请求数据
             const requestData: QARequest = {
                 question: question.trim(),
+                template_id: isAgentMode ? templateId : undefined,
                 top_k: 5,
             };
+
+            // 选择使用哪个API端点
+            const streamUrl = isAgentMode ? qaService.getAgentStreamUrl() : qaService.getStreamUrl();
 
             // 创建FormData
             const formData = new FormData();
@@ -80,7 +99,7 @@ export default function QAPage() {
             // 使用SSE客户端
             const { SSEClient } = await import('../../utils/sseClient');
             const sseClient = new SSEClient(
-                qaService.getStreamUrl(),
+                streamUrl,
                 formData,
                 (event) => {
                     // 处理SSE事件
@@ -98,6 +117,17 @@ export default function QAPage() {
 
                         case 'answer':
                             setCurrentAnswer(prev => prev + (eventData.data?.content || ''));
+                            break;
+
+                        case 'ambiguity':
+                            // 处理歧义消息
+                            setAmbiguityMessage(eventData.data?.message || '');
+                            setShowClarificationModal(true);
+                            setIsStreaming(false);
+                            // 从响应中获取会话ID
+                            if (eventData.data?.session_id) {
+                                setSessionId(eventData.data.session_id);
+                            }
                             break;
 
                         case 'complete':
@@ -165,6 +195,100 @@ export default function QAPage() {
         }
     };
 
+    // 处理澄清问题
+    const handleClarify = async () => {
+        if (!clarification.trim()) {
+            message.warning('请输入澄清内容');
+            return;
+        }
+
+        setShowClarificationModal(false);
+        setIsStreaming(true);
+        setCurrentAnswer('');
+        setCurrentReferences([]);
+        setThinkingStatus('正在处理您的澄清...');
+
+        try {
+            // 构建请求数据
+            const requestData: QARequest = {
+                question: question.trim(),
+                template_id: templateId,
+                top_k: 5,
+            };
+
+            // 调用澄清API
+            const response = await qaService.clarifyAgentQuestion(requestData, clarification, sessionId);
+
+            // 处理SSE流
+            const reader = response.body?.getReader();
+            const decoder = new TextDecoder();
+
+            if (!reader) {
+                throw new Error('无法读取响应流');
+            }
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                const chunk = decoder.decode(value, { stream: true });
+                // 解析SSE事件
+                const lines = chunk.split('\n');
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const eventData = JSON.parse(line.slice(6));
+                            switch (eventData.event) {
+                                case 'thinking':
+                                    setThinkingStatus(eventData.data?.message || '思考中...');
+                                    break;
+
+                                case 'references':
+                                    setCurrentReferences(eventData.data?.references || []);
+                                    setThinkingStatus('');
+                                    break;
+
+                                case 'answer':
+                                    setCurrentAnswer(prev => prev + (eventData.data?.content || ''));
+                                    break;
+
+                                case 'complete':
+                                    // 添加助手消息
+                                    const assistantMessage: Message = {
+                                        id: Date.now().toString(),
+                                        type: 'assistant',
+                                        content: currentAnswer,
+                                        references: currentReferences,
+                                        timestamp: new Date(),
+                                    };
+                                    setMessages(prev => [...prev, assistantMessage]);
+                                    setCurrentAnswer('');
+                                    setCurrentReferences([]);
+                                    setThinkingStatus('');
+                                    setIsStreaming(false);
+                                    setClarification('');
+                                    break;
+
+                                case 'error':
+                                    message.error(eventData.data?.message || '问答失败');
+                                    setIsStreaming(false);
+                                    setThinkingStatus('');
+                                    break;
+                            }
+                        } catch (e) {
+                            console.error('解析SSE事件失败:', e);
+                        }
+                    }
+                }
+            }
+
+        } catch (error: any) {
+            message.error(`问答失败: ${error.message}`);
+            setIsStreaming(false);
+            setThinkingStatus('');
+        }
+    };
+
     // 中断请求
     const handleStop = () => {
         if (abortControllerRef.current) {
@@ -182,6 +306,18 @@ export default function QAPage() {
         setCurrentAnswer('');
         setCurrentReferences([]);
         setThinkingStatus('');
+        setAmbiguityMessage('');
+        setClarification('');
+    };
+
+    // 选择模板
+    const handleSelectTemplate = (id: number) => {
+        setTemplateId(id);
+        setShowTemplateModal(false);
+        // 延迟执行，确保状态更新完成
+        setTimeout(() => {
+            handleAsk();
+        }, 100);
     };
 
     return (
@@ -191,11 +327,19 @@ export default function QAPage() {
                     <RobotOutlined className="text-3xl text-primary-600" />
                     <Title level={2} className="!mb-0">智能问答</Title>
                 </div>
-                {messages.length > 0 && (
-                    <Button onClick={handleClear} danger>
-                        清空对话
+                <div className="flex items-center space-x-3">
+                    <Button
+                        type={isAgentMode ? "primary" : "default"}
+                        onClick={() => setIsAgentMode(!isAgentMode)}
+                    >
+                        {isAgentMode ? "智能体模式 (开)" : "智能体模式 (关)"}
                     </Button>
-                )}
+                    {messages.length > 0 && (
+                        <Button onClick={handleClear} danger>
+                            清空对话
+                        </Button>
+                    )}
+                </div>
             </div>
 
             {/* 消息列表 */}
@@ -223,8 +367,8 @@ export default function QAPage() {
                     <div key={msg.id} className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}>
                         <Card
                             className={`max-w-[80%] ${msg.type === 'user'
-                                    ? 'bg-primary-50 border-primary-200'
-                                    : 'bg-white border-gray-200'
+                                ? 'bg-primary-50 border-primary-200'
+                                : 'bg-white border-gray-200'
                                 }`}
                         >
                             <div className="flex items-start space-x-2">
@@ -366,10 +510,15 @@ export default function QAPage() {
             {/* 输入区域 */}
             <Card className="shadow-md">
                 <div className="space-y-3">
+                    {isAgentMode && templateId && (
+                        <div className="text-sm text-gray-600">
+                            当前模板: {templateId} <Button type="link" onClick={() => setShowTemplateModal(true)}>更改</Button>
+                        </div>
+                    )}
                     <TextArea
                         value={question}
                         onChange={(e) => setQuestion(e.target.value)}
-                        placeholder="请输入您的问题..."
+                        placeholder={isAgentMode ? "请输入您的问题（智能体模式）..." : "请输入您的问题..."}
                         autoSize={{ minRows: 2, maxRows: 6 }}
                         disabled={isStreaming}
                         onPressEnter={(e) => {
@@ -408,6 +557,54 @@ export default function QAPage() {
                     </div>
                 </div>
             </Card>
+
+            {/* 模板选择模态框 */}
+            <Modal
+                title="选择模板"
+                open={showTemplateModal}
+                onCancel={() => setShowTemplateModal(false)}
+                footer={null}
+            >
+                <div className="space-y-2">
+                    <p>请选择一个文档模板以启用智能体问答：</p>
+                    <div className="space-y-2 max-h-60 overflow-y-auto">
+                        {/* 这里应该从API获取模板列表，这里简化处理 */}
+                        {[1, 2, 3, 4, 5].map(id => (
+                            <Card
+                                key={id}
+                                hoverable
+                                onClick={() => handleSelectTemplate(id)}
+                                className="cursor-pointer"
+                            >
+                                <div className="flex justify-between items-center">
+                                    <span>模板 {id}</span>
+                                    <Button type="primary" size="small">选择</Button>
+                                </div>
+                            </Card>
+                        ))}
+                    </div>
+                </div>
+            </Modal>
+
+            {/* 澄清问题模态框 */}
+            <Modal
+                title="需要更多信息"
+                open={showClarificationModal}
+                onCancel={() => setShowClarificationModal(false)}
+                onOk={handleClarify}
+                okText="提交"
+                cancelText="取消"
+            >
+                <div className="space-y-3">
+                    <p>{ambiguityMessage}</p>
+                    <TextArea
+                        value={clarification}
+                        onChange={(e) => setClarification(e.target.value)}
+                        placeholder="请提供更多信息..."
+                        autoSize={{ minRows: 3, maxRows: 6 }}
+                    />
+                </div>
+            </Modal>
         </div>
     );
 }

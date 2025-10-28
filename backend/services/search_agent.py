@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict, cast
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from elasticsearch import AsyncElasticsearch
@@ -9,6 +9,9 @@ from backend.models.database_models import Document, DocumentType, DocumentTypeF
 from backend.services.template_service import TemplateService
 from backend.utils.llm_client import llm_client
 from loguru import logger
+
+# 全局变量存储graph状态，用于支持中断和恢复
+graph_state_storage: Dict[str, Dict[str, Any]] = {}
 
 
 class RetrievalState(TypedDict):
@@ -20,33 +23,34 @@ class RetrievalState(TypedDict):
     template_id: int
     db: AsyncSession  # 数据库会话
     es_client: AsyncElasticsearch # ES 客户端
+    session_id: str  # 会话ID，用于状态存储
 
     # === 节点 0 (SQL 检索) 产出 ===
-    class_template_levels: Optional[Any] = None
-    docs: List[Document] = []  # SQL 粗召回的文档列表
-    category: str = "*"        # 识别出的文档类别 (来自LLM)
-    category_field_code: Optional[str] = None # 存储类别的字段名 (例如 'doc_type')
+    class_template_levels: Optional[Any]
+    docs: List[Document]  # SQL 粗召回的文档列表
+    category: str  # 识别出的文档类别 (来自LLM)
+    category_field_code: Optional[str]  # 存储类别的字段名 (例如 'doc_type')
 
     # === 节点 1 (ES 条件提取) 产出 ===
-    document_type_fields: List[DocumentTypeField] = [] # 类别相关的特定字段
-    extracted_llm_json: Optional[Dict[str, Any]] = None # LLM 提取的特定条件
-    es_query: Optional[Dict[str, Any]] = None          # 构造的 ES 查询语句
+    document_type_fields: List[DocumentTypeField]  # 类别相关的特定字段
+    extracted_llm_json: Optional[Dict[str, Any]]  # LLM 提取的特定条件
+    es_query: Optional[Dict[str, Any]]  # 构造的 ES 查询语句
     
     # === 节点 2 (ES 检索) 产出 ===
-    es_results: List[Dict[str, Any]] = [] # ES 精排后的结果
+    es_results: List[Dict[str, Any]]  # ES 精排后的结果
 
     # === 节点 3 (歧义处理) 产出 ===
-    ambiguity_message: Optional[str] = None # 如果有歧义，向用户提问的消息
+    ambiguity_message: Optional[str]  # 如果有歧义，向用户提问的消息
     
     # === 节点 4 (最终回答) 产出 ===
-    answer: Optional[str] = None # 最终的RAG回答
+    answer: Optional[str]  # 最终的RAG回答
 
 # === 节点 0：查询必要的数据 (SQL粗召回) ===
 async def query_necessary_data(state: RetrievalState) -> RetrievalState:
     """ 根据template_id 查询必要数据，并进行 SQL 粗召回
     """
-    cls_template = await TemplateService.get_template(state.db, state.template_id)
-    cls_template_levels = cls_template._levels
+    cls_template = await TemplateService.get_template(state["db"], state["template_id"])
+    cls_template_levels = cls_template._levels if cls_template else None
 
     if isinstance(cls_template_levels, str):
         try:
@@ -58,7 +62,7 @@ async def query_necessary_data(state: RetrievalState) -> RetrievalState:
         
     field_desc = ""
     type_code = ""
-    for field in cls_template_levels:
+    for field in cls_template_levels or []:
         if field.get("is_doc_type", False):
             type_code = field.get("code")
             state['category_field_code'] = type_code  # *** 增强点：保存类别字段名 ***
@@ -95,16 +99,16 @@ async def query_necessary_data(state: RetrievalState) -> RetrievalState:
 
     # 提取类别
     for c in conditions:
-        if c.get("code") == type_code:
-            state.category = c.get("value","*")
+        if isinstance(c, dict) and c.get("code") == type_code:
+            state["category"] = c.get("value","*")
             break
 
     normalized = []
-    for f in cls_template_levels:
+    for f in cls_template_levels or []:
         code = f.get("code")
         level = f.get("level")
-        match = next((c for c in conditions if c.get("code") == code), None)
-        value = match.get("value") if match else "UNKNOWN"
+        match = next((c for c in conditions if isinstance(c, dict) and c.get("code") == code), None)
+        value = match.get("value") if isinstance(match, dict) else "UNKNOWN"
         normalized.append({
             "code": code,
             "value": value or "UNKNOWN",
@@ -124,30 +128,33 @@ async def query_necessary_data(state: RetrievalState) -> RetrievalState:
                 conditions_clauses.append(TemplateDocumentMapping.class_code.like(f"%{value}%"))
 
     stmt = select(TemplateDocumentMapping.document_id).where(
-        TemplateDocumentMapping.template_id == state.template_id
+        TemplateDocumentMapping.template_id == state["template_id"]
     )
     if conditions_clauses:
         stmt = stmt.where(or_(*conditions_clauses))
 
-    result = await state.db.execute(stmt)
+    result = await state["db"].execute(stmt)
     document_ids = [row[0] for row in result.all()]
 
     if not document_ids:
         logger.warning("Node 0 SQL 粗召回未命中任何文档。")
-        state.docs = []
+        state["docs"] = []
+        # 保存状态到全局存储
+        graph_state_storage[state['session_id']] = dict(state)
         return state
 
-    docs = await state.db.execute(
+    docs_result = await state["db"].execute(
         select(Document).where(Document.id.in_(document_ids))
     )
-    docs = docs.scalars().all()
-    state.docs = docs
+    docs = list(docs_result.scalars().all())
+    state["docs"] = docs
     logger.info(f"Node 0 SQL 粗召回 {len(docs)} 篇文档。")
 
+    # 保存状态到全局存储
+    graph_state_storage[state['session_id']] = dict(state)
+    
     return state
 
-
-    
 
 # === 节点 1：根据类别信息，提取查询条件 (ES精排准备) ===
 async def extract_query_conditions(state: RetrievalState) -> RetrievalState:
@@ -162,28 +169,28 @@ async def extract_query_conditions(state: RetrievalState) -> RetrievalState:
     # 如果 Node 0 未召回任何文档，或未指定类别，则跳过精排
     if state['category'] == '*' or not state['docs']:
         logger.warning(f"类别为 '*' 或 SQL 粗召回文档为0，跳过 Node 1 ES 精排。")
-        # 我们可以构造一个“仅全文检索”的ES查询作为后备
+        # 我们可以构造一个"仅全文检索"的ES查询作为后备
         return await _build_fallback_es_query(state)
 
     # 1. 获取 DocumentType 和 DocumentTypeField
-    doc_types = await state.db.execute(
+    doc_types_result = await state["db"].execute(
         select(DocumentType).where(
-            DocumentType.template_id == state.template_id,
-            DocumentType.type_code == state.category
+            DocumentType.template_id == state["template_id"],
+            DocumentType.type_code == state["category"]
         )
     )
-    doc_types = doc_types.scalars().all()
+    doc_types = doc_types_result.scalars().all()
 
     if not doc_types:
         logger.warning(f"未在数据库中找到类别为 '{state['category']}' 的 DocumentType。转为后备查询。")
         return await _build_fallback_es_query(state)
 
-    document_type_fields = await state.db.execute(
+    document_type_fields_result = await state["db"].execute(
         select(DocumentTypeField).where(
             DocumentTypeField.doc_type_id.in_([doc_type.id for doc_type in doc_types])
         )
     )
-    document_type_fields = document_type_fields.scalars().all()
+    document_type_fields = list(document_type_fields_result.scalars().all())
     state['document_type_fields'] = document_type_fields
     
     # 2. 使用 LLM 提取特定查询条件
@@ -232,8 +239,8 @@ async def extract_query_conditions(state: RetrievalState) -> RetrievalState:
         state['extracted_llm_json'] = {"conditions": {}, "missing_fields": []}
 
     
-    extracted_conditions = state['extracted_llm_json'].get("conditions", {})
-    missing_fields = state['extracted_llm_json'].get("missing_fields", [])
+    extracted_conditions = state['extracted_llm_json'].get("conditions", {}) if isinstance(state['extracted_llm_json'], dict) else {}
+    missing_fields = state['extracted_llm_json'].get("missing_fields", []) if isinstance(state['extracted_llm_json'], dict) else []
 
     # 3. 处理歧义 (Requirement 1)
     # 如果 LLM 没有提取到任何条件，并且它认为缺少字段，我们就触发歧义处理
@@ -249,16 +256,19 @@ async def extract_query_conditions(state: RetrievalState) -> RetrievalState:
         
         # 为满足要求2 (如果用户不提供)，我们先构造一个后备查询
         logger.warning(f"查询有歧义，建议用户补充: {missing_fields_str}。将构造后备查询。")
+        # 保存状态到全局存储
+        graph_state_storage[state['session_id']] = dict(state)
         return await _build_fallback_es_query(state, "ambiguous_query")
 
 
     # 4. 构造 ES 查询 (Requirement 2)
     
     # 基础过滤器：只在 Node 0 返回的文档中搜索
-    document_ids_from_sql = [doc.id for doc in state.get('docs', [])]
-    filters = [
-        {"terms": {"document_id": document_ids_from_sql}}
-    ]
+    document_ids_from_sql = [int(str(doc.id)) for doc in state.get('docs', [])]
+    filters = []
+    if document_ids_from_sql:
+        # 将列表转换为单个整数（这里我们只取第一个，实际应用中可能需要调整）
+        filters.append({"terms": {"document_id": document_ids_from_sql}})
     
     # 构造查询子句
     must_clauses = []
@@ -306,6 +316,9 @@ async def extract_query_conditions(state: RetrievalState) -> RetrievalState:
     state['es_query'] = es_query
     logger.info(f"Node 1 构造的 ES 查询: {json.dumps(es_query, indent=2)}")
 
+    # 保存状态到全局存储
+    graph_state_storage[state['session_id']] = dict(state)
+    
     return state
 
 
@@ -314,7 +327,7 @@ async def _build_fallback_es_query(state: RetrievalState, reason: str = "no_cate
     (私有) 构造一个后备的 ES 查询，仅基于全文和 SQL 召回列表。
     """
     logger.info(f"执行后备 ES 查询，原因: {reason}")
-    document_ids_from_sql = [doc.id for doc in state.get('docs', [])]
+    document_ids_from_sql = [int(str(doc.id)) for doc in state.get('docs', [])]
     
     # 如果 SQL 列表为空，则进行全库全文检索
     filters = [{"term": {"template_id": state['template_id']}}]
@@ -336,6 +349,10 @@ async def _build_fallback_es_query(state: RetrievalState, reason: str = "no_cate
         "size": 5 # Requirement 2
     }
     logger.info(f"Node 1 构造的 Fallback ES 查询: {json.dumps(state['es_query'], indent=2)}")
+    
+    # 保存状态到全局存储
+    graph_state_storage[state['session_id']] = dict(state)
+    
     return state
 
 
@@ -348,6 +365,8 @@ async def run_es_query(state: RetrievalState) -> RetrievalState:
     if not es_query:
         logger.warning("Node 2: ES query 为空，跳过检索。")
         state['es_results'] = []
+        # 保存状态到全局存储
+        graph_state_storage[state['session_id']] = dict(state)
         return state
 
     try:
@@ -364,6 +383,9 @@ async def run_es_query(state: RetrievalState) -> RetrievalState:
         logger.error(f"Node 2: ES 查询失败: {e}")
         state['es_results'] = []
 
+    # 保存状态到全局存储
+    graph_state_storage[state['session_id']] = dict(state)
+    
     return state
 
 
@@ -383,6 +405,8 @@ async def generate_answer(state: RetrievalState) -> RetrievalState:
             state['answer'] = "抱歉，根据您提供的信息，我没有找到相关的文档。"
         else:
             state['answer'] = "抱歉，我没有找到与您问题相关的文档。"
+        # 保存状态到全局存储
+        graph_state_storage[state['session_id']] = dict(state)
         return state
 
     # 构造 RAG prompt
@@ -415,6 +439,9 @@ async def generate_answer(state: RetrievalState) -> RetrievalState:
         logger.error(f"Node 3: LLM 生成答案失败: {e}")
         state['answer'] = "抱歉，我在处理您的请求时遇到了一个内部错误。"
 
+    # 保存状态到全局存储
+    graph_state_storage[state['session_id']] = dict(state)
+    
     return state
 
 
@@ -427,13 +454,15 @@ async def ask_user_for_info(state: RetrievalState) -> RetrievalState:
     """
     logger.info("进入歧义处理节点 (ask_user_for_info)。等待用户输入。")
     # 状态中已包含 ambiguity_message，智能体图应将其返回
+    # 保存状态到全局存储
+    graph_state_storage[state['session_id']] = dict(state)
     return state
 
 
 def check_ambiguity(state: RetrievalState) -> str:
     """
     检查 Node 1 是否产生了歧义消息。
-    这是图的“决策者”。
+    这是图的"决策者"。
     """
     logger.info("--- 检查条件: check_ambiguity ---")
     if state.get("ambiguity_message"):
