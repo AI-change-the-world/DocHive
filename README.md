@@ -13,6 +13,22 @@
 
 DocHive 是一个智能文档分类分级系统,通过大语言模型实现文档的自动分类、信息抽取、智能编号和全文检索。
 
+### 核心思路
+
+传统的 **RAG（Retrieval-Augmented Generation）** 实际上是一个相对粗糙的概念。
+在实践中，绝大多数文档类型（例如简历、报告、合同等）并不适合直接采用传统 RAG 进行处理。
+即便后续出现的 **GraphRAG** 等变体引入了“实体–关系”图的概念，也仅仅是在知识组织层面进行了扩展。
+对于缺乏显性实体的文档类型（如政策法规、技术规范、制度文件等），这些方法仍然难以解决检索性能差、上下文关联弱的问题。
+
+在 2025 年 4 月，我提出过一个设想：
+**将所有非结构化文档转化为结构化数据进行处理。**
+理由是：几乎所有类型的文档都围绕某种“关注对象”展开。
+只要能够准确抽取并索引这些关注信息，就可以在检索阶段快速锁定相关内容，从而显著提升 RAG 的准确性与响应效率。
+
+接下来，我计划将这一“文档结构化”思路与 **分类分级体系** 相结合，
+以“结构化（或半结构化）文档”为核心，使文档具备更强的 **可比性** 与 **可检索性**。
+这不仅能优化 RAG 的信息召回效果，也为构建可解释、可控的知识语义体系奠定基础。
+
 ### 核心功能
 
 - 🏷️ **自定义分类模板** - 支持多级分类层级设计
@@ -23,26 +39,13 @@ DocHive 是一个智能文档分类分级系统,通过大语言模型实现文�
 - 🔎 **多维度检索** - 支持全文检索、分类筛选、时间范围等
 - 👥 **权限管理** - 基于角色的访问控制
 
-### ✨ 最新更新 (v1.1.0)
-
-**🎯 多搜索引擎支持 + SQLite 数据库支持**
-
-- ✅ 支持 3 种搜索引擎: Database FTS / Elasticsearch / ClickHouse
-- ✅ 支持 3 种数据库: SQLite / PostgreSQL / MySQL
-- ✅ 开发环境内存占用降低 95% (2GB → 100MB)
-- ✅ 零配置快速启动 (SQLite + Database FTS)
-- ✅ 完整的配置向导和文档
-
-📚 详细更新说明: [README_SEARCH_ENGINE.md](README_SEARCH_ENGINE.md)
-
----
 
 ## 🏗️ 技术栈
 
 ### 后端
 - **框架**: FastAPI 0.109
 - **数据库**: PostgreSQL / MySQL / **SQLite** (新增)
-- **搜索引擎**: Database FTS / Elasticsearch / ClickHouse (可配置)
+- **搜索引擎**: Database FTS / Elasticsearch（推荐，支持复杂的查询逻辑） / ClickHouse (可配置)
 - **对象存储**: MinIO
 - **LLM**: OpenAI / DeepSeek
 - **任务队列**: Celery + Redis
@@ -182,16 +185,16 @@ chmod +x configure_search.sh
 
 ## 📖 文档
 
-| 文档                                                         | 描述             |
-| ------------------------------------------------------------ | ---------------- |
-| [QUICK_START.md](./docs/QUICK_START.md)                      | 快速启动指南     |
-| [README_SEARCH_ENGINE.md](./docs/README_SEARCH_ENGINE.md)    | 搜索引擎更新说明 |
-| [UPDATE_SUMMARY.md](./docs/UPDATE_SUMMARY.md)                | 完整更新清单     |
-| [backend/README.md](backend/README.md)                       | 后端项目说明     |
+| 文档                                                           | 描述             |
+| -------------------------------------------------------------- | ---------------- |
+| [QUICK_START.md](./docs/QUICK_START.md)                        | 快速启动指南     |
+| [README_SEARCH_ENGINE.md](./docs/README_SEARCH_ENGINE.md)      | 搜索引擎更新说明 |
+| [UPDATE_SUMMARY.md](./docs/UPDATE_SUMMARY.md)                  | 完整更新清单     |
+| [backend/README.md](backend/README.md)                         | 后端项目说明     |
 | [backend/docs/SEARCH_ENGINE.md](backend/docs/SEARCH_ENGINE.md) | 搜索引擎配置指南 |
-| [frontend/README.md](frontend/README.md)                     | 前端项目说明     |
-| [backend/ARCHITECTURE.md](backend/ARCHITECTURE.md)           | 后端架构说明     |
-| [backend/DEPLOYMENT.md](backend/DEPLOYMENT.md)               | 部署指南         |
+| [frontend/README.md](frontend/README.md)                       | 前端项目说明     |
+| [backend/ARCHITECTURE.md](backend/ARCHITECTURE.md)             | 后端架构说明     |
+| [backend/DEPLOYMENT.md](backend/DEPLOYMENT.md)                 | 部署指南         |
 
 ---
 

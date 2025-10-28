@@ -84,7 +84,6 @@ class ElasticsearchEngine(BaseSearchEngine):
                         "analyzer": "ik_max_word",
                         "search_analyzer": "ik_smart"
                     },
-                    "summary": {"type": "text", "analyzer": "ik_max_word"},
                     "content": {
                         "type": "text",
                         "analyzer": "ik_max_word",
