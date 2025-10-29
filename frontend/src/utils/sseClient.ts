@@ -1,13 +1,13 @@
 export interface SSEEvent {
     event?: string;
-    data: string;
-    id?: string | null;
+    data?: any;
     done?: boolean;
 }
 
 export interface SSERequestOptions {
-    method?: 'POST';
-    body?: FormData;
+    method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+    body?: FormData | string | object; // 支持FormData、字符串和对象
+    headers?: Record<string, string>;
     signal?: AbortSignal;
 }
 
@@ -20,7 +20,7 @@ export class SSEClient {
 
     constructor(
         url: string,
-        formData: FormData,
+        data: FormData | object, // 支持FormData和普通对象
         onMessage: (event: SSEEvent) => void,
         onError?: (error: Error) => void,
         onComplete?: () => void
@@ -28,7 +28,7 @@ export class SSEClient {
         this.url = url;
         this.options = {
             method: 'POST',
-            body: formData,
+            body: data,
         };
         this.onMessage = onMessage;
         this.onError = onError || (() => { });
@@ -41,9 +41,24 @@ export class SSEClient {
                 'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
             };
 
+            // 根据body类型设置相应的headers和body
+            let body: FormData | string | undefined;
+            if (this.options.body instanceof FormData) {
+                // FormData情况，不需要额外设置Content-Type，浏览器会自动设置
+                body = this.options.body;
+            } else if (typeof this.options.body === 'object' && this.options.body !== null) {
+                // JSON对象情况
+                headers['Content-Type'] = 'application/json';
+                body = JSON.stringify(this.options.body);
+            } else if (typeof this.options.body === 'string') {
+                // 字符串情况
+                headers['Content-Type'] = 'application/json';
+                body = this.options.body;
+            }
+
             const response = await fetch(this.url, {
                 method: this.options.method,
-                body: this.options.body,
+                body: body,
                 headers,
                 signal: this.options.signal,
             });

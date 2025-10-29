@@ -18,12 +18,6 @@ interface Message {
     timestamp: Date;
 }
 
-// 模板类型定义
-interface Template {
-    id: number;
-    name: string;
-}
-
 export default function QAPage() {
     const [question, setQuestion] = useState('');
     const [messages, setMessages] = useState<Message[]>([]);
@@ -118,19 +112,11 @@ export default function QAPage() {
             // 选择使用哪个API端点
             const streamUrl = qaService.getAgentStreamUrl();
 
-            // 创建FormData
-            const formData = new FormData();
-            formData.append('question', requestData.question);
-            if (requestData.template_id) {
-                formData.append('template_id', requestData.template_id.toString());
-            }
-            formData.append('top_k', (requestData.top_k || 5).toString());
-
-            // 使用SSE客户端
+            // 使用SSE客户端，现在可以发送JSON对象
             const { SSEClient } = await import('../../utils/sseClient');
             const sseClient = new SSEClient(
                 streamUrl,
-                formData,
+                requestData, // 直接发送JSON对象
                 (event) => {
                     // 处理SSE事件
                     const eventData = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
@@ -346,23 +332,6 @@ export default function QAPage() {
                 <div className="flex items-center space-x-2">
                     <RobotOutlined className="text-2xl text-primary-600" />
                     <Title level={3} className="!mb-0 !text-lg">智能问答</Title>
-                    <div className="w-48">
-                        <Select
-                            size="small"
-                            placeholder="选择模板"
-                            value={templateId}
-                            onChange={setTemplateId}
-                            loading={loadingTemplates}
-                            showSearch
-                            optionFilterProp="children"
-                        >
-                            {templates.map(template => (
-                                <Option key={template.template_id} value={template.template_id}>
-                                    {template.template_name}
-                                </Option>
-                            ))}
-                        </Select>
-                    </div>
                 </div>
                 <div className="flex items-center space-x-2">
                     {messages.length > 0 && (
@@ -541,6 +510,26 @@ export default function QAPage() {
             {/* 输入区域 */}
             <Card className="shadow-md">
                 <div className="space-y-3">
+                    {/* 模板选择放在输入区域内部 */}
+                    <div className="flex items-center space-x-2">
+                        <span className="text-sm text-gray-600">模板:</span>
+                        <Select
+                            size="small"
+                            style={{ width: 150 }}
+                            placeholder="选择模板"
+                            value={templateId}
+                            onChange={setTemplateId}
+                            loading={loadingTemplates}
+                            showSearch
+                            optionFilterProp="children"
+                        >
+                            {templates.map(template => (
+                                <Option key={template.template_id} value={template.template_id}>
+                                    {template.template_name}
+                                </Option>
+                            ))}
+                        </Select>
+                    </div>
                     <TextArea
                         value={question}
                         onChange={(e) => setQuestion(e.target.value)}
