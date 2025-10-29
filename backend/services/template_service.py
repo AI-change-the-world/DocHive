@@ -85,16 +85,13 @@ class TemplateService:
 
         return templates, total
 
-
     @staticmethod
     async def list_all_templates(
         db: AsyncSession,
     ) -> List[TemplateSelection]:
         """获取所有模板列表"""
-        
-        templates = await db.execute(
-            select(ClassTemplate.id, ClassTemplate.name)
-        )
+
+        templates = await db.execute(select(ClassTemplate.id, ClassTemplate.name))
         template_selections = []
         for template in templates.all():
             logger.debug(f"🛑 Template: {template}")

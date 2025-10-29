@@ -131,7 +131,6 @@ class ClassTemplateConfigs(Base, ToDictMixin):
     is_active = Column(Boolean, default=True)
 
 
-
 class Document(Base, ToDictMixin):
     """文档记录表"""
 
@@ -254,7 +253,6 @@ class ExtractionConfig(Base, ToDictMixin):
         return result
 
 
-
 class OperationLog(Base, ToDictMixin):
     """操作日志表"""
 
@@ -316,17 +314,19 @@ class TemplateDocumentMapping(Base, ToDictMixin):
     template_id = Column(Integer, nullable=False, index=True)  # 关联 class_templates.id
     document_id = Column(Integer, nullable=False, index=True)  # 关联 documents.id
     class_code = Column(String(100), index=True)  # 分类编号
-    
+
     # 状态信息
-    status = Column(String(20), default="pending")  # pending, processing, completed, failed
+    status = Column(
+        String(20), default="pending"
+    )  # pending, processing, completed, failed
     error_message = Column(Text)
     processed_time = Column(Integer)
-    
+
     # 抽取信息
     _extracted_data = Column("extracted_data", Text)  # 结构化抽取字段
-    
+
     created_at = Column(Integer, default=lambda: int(time.time()))
-    
+
     @property
     def extracted_data(self):
         """自动将 JSON 字符串转为 dict"""

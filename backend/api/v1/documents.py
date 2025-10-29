@@ -24,7 +24,6 @@ router = APIRouter(prefix="/documents", tags=["文档上传与管理"])
 settings = get_settings()
 
 
-
 @router.get("/statistics", response_model=ResponseBase)
 async def get_statistics(
     template_id: Optional[int] = None,
@@ -149,7 +148,7 @@ async def get_document(
         )
     )
     mapping = result.scalar_one_or_none()
-    
+
     # 创建响应数据，包含映射表中的信息
     response_data = document.to_dict()
     if mapping:
@@ -243,7 +242,7 @@ async def update_document(
         )
     )
     mapping = result.scalar_one_or_none()
-    
+
     # 创建响应数据，包含映射表中的信息
     response_data = document.to_dict()
     if mapping:
@@ -305,23 +304,22 @@ async def get_document_class_code(
 ):
     """获取文档的分类编码"""
     from sqlalchemy import select
-    
+
     result = await db.execute(
         select(TemplateDocumentMapping).where(
             TemplateDocumentMapping.document_id == document_id
         )
     )
     mapping = result.scalar_one_or_none()
-    
+
     if not mapping:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="文档分类信息不存在",
         )
-    
+
     return ResponseBase(
-        message="获取分类编码成功",
-        data={"class_code": getattr(mapping, "class_code")}
+        message="获取分类编码成功", data={"class_code": getattr(mapping, "class_code")}
     )
 
 
@@ -333,25 +331,25 @@ async def get_document_status(
 ):
     """获取文档处理状态"""
     from sqlalchemy import select
-    
+
     result = await db.execute(
         select(TemplateDocumentMapping).where(
             TemplateDocumentMapping.document_id == document_id
         )
     )
     mapping = result.scalar_one_or_none()
-    
+
     if not mapping:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="文档状态信息不存在",
         )
-    
+
     return ResponseBase(
         message="获取状态成功",
         data={
             "status": getattr(mapping, "status"),
             "error_message": getattr(mapping, "error_message"),
-            "processed_time": getattr(mapping, "processed_time")
-        }
+            "processed_time": getattr(mapping, "processed_time"),
+        },
     )

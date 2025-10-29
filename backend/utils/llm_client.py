@@ -1,3 +1,4 @@
+from loguru import logger
 from config import get_settings
 import json
 from typing import Dict, Any, Optional, List
@@ -189,16 +190,11 @@ class LLMClient:
                 user_id=user_id,
             )
 
+        logger.info(f"LLM 输出: {response}")
+
         # 解析 JSON 内容
         try:
-            if "```json" in response:
-                json_start = response.find("```json") + 7
-                json_end = response.find("```", json_start)
-                response = response[json_start:json_end].strip()
-            elif "```" in response:
-                json_start = response.find("```") + 3
-                json_end = response.find("```", json_start)
-                response = response[json_start:json_end].strip()
+            response = response.replace("```json", "").replace("```", "").strip()
 
             return json.loads(response)
         except json.JSONDecodeError as e:

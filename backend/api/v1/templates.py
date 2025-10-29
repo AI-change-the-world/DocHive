@@ -125,8 +125,6 @@ async def list_templates(
     )
 
 
-
-
 @router.put("/{template_id}", response_model=ResponseBase)
 async def update_template(
     template_id: int,

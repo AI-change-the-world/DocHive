@@ -15,7 +15,11 @@ import uuid
 from typing import Dict, Any, Optional
 
 # 导入search_agent相关模块
-from services.search_agent import app as search_agent_app, RetrievalState, graph_state_storage
+from services.search_agent import (
+    app as search_agent_app,
+    RetrievalState,
+    graph_state_storage,
+)
 from elasticsearch import AsyncElasticsearch
 from config import get_settings
 from utils.search_engine import search_client
@@ -133,7 +137,7 @@ async def ask_question_agent_stream(
     - **error**: 错误信息
     - **ambiguity**: 需要用户澄清的问题
     """
-    
+
     # 检查template_id是否提供
     if not qa_request.template_id:
         raise HTTPException(
@@ -146,13 +150,15 @@ async def ask_question_agent_stream(
         try:
             # 生成会话ID
             session_id = str(uuid.uuid4())
-            
+
             # 获取配置
             settings = get_settings()
-            
+
             # 初始化Elasticsearch客户端
-            es_client = AsyncElasticsearch([settings.ELASTICSEARCH_URL], verify_certs=False)
-            
+            es_client = AsyncElasticsearch(
+                [settings.ELASTICSEARCH_URL], verify_certs=False
+            )
+
             try:
                 # 构造初始状态
                 initial_state: RetrievalState = {
@@ -170,89 +176,116 @@ async def ask_question_agent_stream(
                     "es_query": None,
                     "es_results": [],
                     "ambiguity_message": None,
-                    "answer": None
+                    "answer": None,
                 }
-                
+
                 # 发送开始处理消息
                 yield {
                     "event": "thinking",
-                    "data": json.dumps({
-                        "event": "thinking",
-                        "data": {"stage": "start", "message": "开始处理您的问题..."},
-                        "done": False,
-                    }, ensure_ascii=False),
+                    "data": json.dumps(
+                        {
+                            "event": "thinking",
+                            "data": {
+                                "stage": "start",
+                                "message": "开始处理您的问题...",
+                            },
+                            "done": False,
+                        },
+                        ensure_ascii=False,
+                    ),
                 }
-                
+
                 # 运行智能体图
                 final_state = await search_agent_app.ainvoke(dict(initial_state))
-                
+
                 # 检查是否有歧义消息需要用户澄清
                 if final_state.get("ambiguity_message"):
                     yield {
                         "event": "ambiguity",
-                        "data": json.dumps({
-                            "event": "ambiguity",
-                            "data": {"message": final_state["ambiguity_message"]},
-                            "done": True,
-                        }, ensure_ascii=False),
+                        "data": json.dumps(
+                            {
+                                "event": "ambiguity",
+                                "data": {"message": final_state["ambiguity_message"]},
+                                "done": True,
+                            },
+                            ensure_ascii=False,
+                        ),
                     }
                     return
-                
+
                 # 发送检索到的文档引用
                 es_results = final_state.get("es_results", [])
                 if es_results:
                     references = []
                     for i, doc in enumerate(es_results):
-                        references.append({
-                            "document_id": doc.get("document_id", i),
-                            "title": doc.get("title", "未知文档"),
-                            "snippet": doc.get("content", "")[:200] + "..." if doc.get("content") else "",
-                            "score": 1.0,  # 简化处理
-                        })
-                    
+                        references.append(
+                            {
+                                "document_id": doc.get("document_id", i),
+                                "title": doc.get("title", "未知文档"),
+                                "snippet": (
+                                    doc.get("content", "")[:200] + "..."
+                                    if doc.get("content")
+                                    else ""
+                                ),
+                                "score": 1.0,  # 简化处理
+                            }
+                        )
+
                     yield {
                         "event": "references",
-                        "data": json.dumps({
-                            "event": "references",
-                            "data": {"references": references},
-                            "done": False,
-                        }, ensure_ascii=False),
+                        "data": json.dumps(
+                            {
+                                "event": "references",
+                                "data": {"references": references},
+                                "done": False,
+                            },
+                            ensure_ascii=False,
+                        ),
                     }
-                
+
                 # 发送最终答案
                 answer = final_state.get("answer", "抱歉，我没有找到相关答案。")
                 yield {
                     "event": "answer",
-                    "data": json.dumps({
-                        "event": "answer",
-                        "data": {"content": answer},
-                        "done": False,
-                    }, ensure_ascii=False),
+                    "data": json.dumps(
+                        {
+                            "event": "answer",
+                            "data": {"content": answer},
+                            "done": False,
+                        },
+                        ensure_ascii=False,
+                    ),
                 }
-                
+
                 # 发送完成信号
                 yield {
                     "event": "complete",
-                    "data": json.dumps({
-                        "event": "complete",
-                        "data": {"message": "回答完成"},
-                        "done": True,
-                    }, ensure_ascii=False),
+                    "data": json.dumps(
+                        {
+                            "event": "complete",
+                            "data": {"message": "回答完成"},
+                            "done": True,
+                        },
+                        ensure_ascii=False,
+                    ),
                 }
-                
+
             finally:
                 # 关闭Elasticsearch客户端
                 await es_client.close()
-                
+
         except Exception as e:
             # 发送错误事件
             yield {
                 "event": "error",
-                "data": json.dumps({
-                    "event": "error",
-                    "data": {"message": f"智能体问答失败: {str(e)}"},
-                    "done": True,
-                }, ensure_ascii=False),
+                "data": json.dumps(
+                    {
+                        "event": "error",
+                        "data": {"message": f"智能体问答失败: {str(e)}"},
+                        "done": True,
+                    },
+                    ensure_ascii=False,
+                ),
             }
 
     return EventSourceResponse(event_generator())
@@ -282,7 +315,7 @@ async def clarify_question_agent(
     - **complete**: 回答完成标记
     - **error**: 错误信息
     """
-    
+
     # 检查template_id是否提供
     if not qa_request.template_id:
         raise HTTPException(
@@ -299,95 +332,121 @@ async def clarify_question_agent(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="无效的会话ID或会话已过期",
                 )
-            
+
             # 获取存储的状态
             stored_state = graph_state_storage[session_id]
-            
+
             # 更新问题为澄清后的问题
             stored_state["query"] = f"{stored_state['query']} {clarification}"
             # 清除歧义消息
             stored_state["ambiguity_message"] = None
-            
+
             # 获取配置
             settings = get_settings()
-            
+
             # 初始化Elasticsearch客户端
-            es_client = AsyncElasticsearch([settings.ELASTICSEARCH_URL], verify_certs=False)
+            es_client = AsyncElasticsearch(
+                [settings.ELASTICSEARCH_URL], verify_certs=False
+            )
             stored_state["es_client"] = es_client
-            
+
             try:
                 # 发送开始处理消息
                 yield {
                     "event": "thinking",
-                    "data": json.dumps({
-                        "event": "thinking",
-                        "data": {"stage": "start", "message": "正在处理您的澄清..."},
-                        "done": False,
-                    }, ensure_ascii=False),
+                    "data": json.dumps(
+                        {
+                            "event": "thinking",
+                            "data": {
+                                "stage": "start",
+                                "message": "正在处理您的澄清...",
+                            },
+                            "done": False,
+                        },
+                        ensure_ascii=False,
+                    ),
                 }
-                
+
                 # 继续运行智能体图
                 final_state = await search_agent_app.ainvoke(dict(stored_state))
-                
+
                 # 发送检索到的文档引用
                 es_results = final_state.get("es_results", [])
                 if es_results:
                     references = []
                     for i, doc in enumerate(es_results):
-                        references.append({
-                            "document_id": doc.get("document_id", i),
-                            "title": doc.get("title", "未知文档"),
-                            "snippet": doc.get("content", "")[:200] + "..." if doc.get("content") else "",
-                            "score": 1.0,  # 简化处理
-                        })
-                    
+                        references.append(
+                            {
+                                "document_id": doc.get("document_id", i),
+                                "title": doc.get("title", "未知文档"),
+                                "snippet": (
+                                    doc.get("content", "")[:200] + "..."
+                                    if doc.get("content")
+                                    else ""
+                                ),
+                                "score": 1.0,  # 简化处理
+                            }
+                        )
+
                     yield {
                         "event": "references",
-                        "data": json.dumps({
-                            "event": "references",
-                            "data": {"references": references},
-                            "done": False,
-                        }, ensure_ascii=False),
+                        "data": json.dumps(
+                            {
+                                "event": "references",
+                                "data": {"references": references},
+                                "done": False,
+                            },
+                            ensure_ascii=False,
+                        ),
                     }
-                
+
                 # 发送最终答案
                 answer = final_state.get("answer", "抱歉，我没有找到相关答案。")
                 yield {
                     "event": "answer",
-                    "data": json.dumps({
-                        "event": "answer",
-                        "data": {"content": answer},
-                        "done": False,
-                    }, ensure_ascii=False),
+                    "data": json.dumps(
+                        {
+                            "event": "answer",
+                            "data": {"content": answer},
+                            "done": False,
+                        },
+                        ensure_ascii=False,
+                    ),
                 }
-                
+
                 # 发送完成信号
                 yield {
                     "event": "complete",
-                    "data": json.dumps({
-                        "event": "complete",
-                        "data": {"message": "回答完成"},
-                        "done": True,
-                    }, ensure_ascii=False),
+                    "data": json.dumps(
+                        {
+                            "event": "complete",
+                            "data": {"message": "回答完成"},
+                            "done": True,
+                        },
+                        ensure_ascii=False,
+                    ),
                 }
-                
+
                 # 清除存储的状态
                 if session_id in graph_state_storage:
                     del graph_state_storage[session_id]
-                
+
             finally:
                 # 关闭Elasticsearch客户端
                 await es_client.close()
-                
+
         except Exception as e:
             # 发送错误事件
             yield {
                 "event": "error",
-                "data": json.dumps({
-                    "event": "error",
-                    "data": {"message": f"智能体问答失败: {str(e)}"},
-                    "done": True,
-                }, ensure_ascii=False),
+                "data": json.dumps(
+                    {
+                        "event": "error",
+                        "data": {"message": f"智能体问答失败: {str(e)}"},
+                        "done": True,
+                    },
+                    ensure_ascii=False,
+                ),
             }
 
     return EventSourceResponse(event_generator())

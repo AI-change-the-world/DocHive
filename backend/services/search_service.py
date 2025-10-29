@@ -177,11 +177,14 @@ class SearchService:
 
         # 按状态统计（从TemplateDocumentMapping表获取）
         status_query = select(
-            TemplateDocumentMapping.status, func.count(TemplateDocumentMapping.id).label("count")
+            TemplateDocumentMapping.status,
+            func.count(TemplateDocumentMapping.id).label("count"),
         ).group_by(TemplateDocumentMapping.status)
 
         if template_id:
-            status_query = status_query.where(TemplateDocumentMapping.template_id == template_id)
+            status_query = status_query.where(
+                TemplateDocumentMapping.template_id == template_id
+            )
 
         status_result = await db.execute(status_query)
         stats["by_status"] = {row.status: row.count for row in status_result.all()}
@@ -189,7 +192,8 @@ class SearchService:
         # 按模板统计
         if not template_id:
             template_query = select(
-                TemplateDocumentMapping.template_id, func.count(TemplateDocumentMapping.id).label("count")
+                TemplateDocumentMapping.template_id,
+                func.count(TemplateDocumentMapping.id).label("count"),
             ).group_by(TemplateDocumentMapping.template_id)
 
             template_result = await db.execute(template_query)
@@ -200,7 +204,9 @@ class SearchService:
         return stats
 
     @staticmethod
-    async def index_document_to_es(document: Document, mapping: Optional[TemplateDocumentMapping] = None) -> bool:
+    async def index_document_to_es(
+        document: Document, mapping: Optional[TemplateDocumentMapping] = None
+    ) -> bool:
         """将文档索引到 Elasticsearch"""
         # 如果没有提供mapping，从数据库获取
         if mapping is None:
@@ -209,26 +215,36 @@ class SearchService:
             pass
 
         # 检查文档状态（从mapping获取）
-        document_status = getattr(mapping, "status", getattr(document, "status", "")) if mapping else getattr(document, "status", "")
+        document_status = (
+            getattr(mapping, "status", getattr(document, "status", ""))
+            if mapping
+            else getattr(document, "status", "")
+        )
         if document_status != "completed":
             return False
 
         # 获取upload_time的值
         upload_time = getattr(document, "upload_time", None)
-        
+
         document_data = {
             "document_id": document.id,
             "title": document.title,
             "content": document.content_text or "",
             "summary": document.summary or "",
             "class_path": getattr(document, "class_path", {}) or {},
-            "class_code": getattr(mapping, "class_code", getattr(document, "class_code", "")) if mapping else getattr(document, "class_code", ""),
-            "template_id": document.template_id,
-            "extracted_data": mapping.extracted_data if mapping else getattr(document, "extracted_data", {}) or {},
-            "file_type": document.file_type,
-            "upload_time": (
-                upload_time.isoformat() if upload_time else None
+            "class_code": (
+                getattr(mapping, "class_code", getattr(document, "class_code", ""))
+                if mapping
+                else getattr(document, "class_code", "")
             ),
+            "template_id": document.template_id,
+            "extracted_data": (
+                mapping.extracted_data
+                if mapping
+                else getattr(document, "extracted_data", {}) or {}
+            ),
+            "file_type": document.file_type,
+            "upload_time": (upload_time.isoformat() if upload_time else None),
             "uploader_id": document.uploader_id,
         }
 

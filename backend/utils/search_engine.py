@@ -50,7 +50,9 @@ class BaseSearchEngine(ABC):
         """关闭连接（可选）"""
         pass
 
-    async def _get_document_mapping_info(self, db: AsyncSession, document_id: int) -> Optional[TemplateDocumentMapping]:
+    async def _get_document_mapping_info(
+        self, db: AsyncSession, document_id: int
+    ) -> Optional[TemplateDocumentMapping]:
         """获取文档的映射信息"""
         result = await db.execute(
             select(TemplateDocumentMapping).where(
@@ -66,7 +68,9 @@ class ElasticsearchEngine(BaseSearchEngine):
     def __init__(self):
         from elasticsearch import AsyncElasticsearch
 
-        self.client = AsyncElasticsearch([settings.ELASTICSEARCH_URL], verify_certs=False)
+        self.client = AsyncElasticsearch(
+            [settings.ELASTICSEARCH_URL], verify_certs=False
+        )
         self.index_name = settings.ELASTICSEARCH_INDEX
 
     async def ensure_index(self):
@@ -82,18 +86,18 @@ class ElasticsearchEngine(BaseSearchEngine):
                     "title": {
                         "type": "text",
                         "analyzer": "ik_max_word",
-                        "search_analyzer": "ik_smart"
+                        "search_analyzer": "ik_smart",
                     },
                     "content": {
                         "type": "text",
                         "analyzer": "ik_max_word",
-                        "search_analyzer": "ik_smart"
+                        "search_analyzer": "ik_smart",
                     },
                     "template_id": {"type": "keyword"},
                     "file_type": {"type": "keyword"},
                     "upload_time": {"type": "date"},
                     "metadata": {"type": "object", "dynamic": True},  # 动态元数据区域
-                }
+                },
             }
         }
         await self.client.indices.create(index=self.index_name, body=index_mapping)
@@ -123,7 +127,7 @@ class ElasticsearchEngine(BaseSearchEngine):
         # 为了保持与基类方法签名一致，我们需要重新组织参数
         # 在这个实现中，我们忽略class_path参数，因为基类方法没有这个参数
         class_path = None  # 这个参数在基类中不存在，但在原实现中被使用了
-        
+
         query = {"bool": {"must": [], "filter": []}}
 
         if keyword:
@@ -277,7 +281,7 @@ class ClickHouseEngine(BaseSearchEngine):
         # 为了保持与基类方法签名一致，我们需要重新组织参数
         # 在这个实现中，我们忽略class_path参数，因为基类方法没有这个参数
         class_path = None  # 这个参数在基类中不存在，但在原实现中被使用了
-        
+
         conditions = []
         params = {}
 
@@ -314,9 +318,17 @@ class ClickHouseEngine(BaseSearchEngine):
             # 处理count_result，确保它是一个可迭代的对象
             if count_result:
                 # 假设count_result是一个包含元组的列表
-                first_row = count_result[0] if isinstance(count_result, (list, tuple)) and len(count_result) > 0 else None
+                first_row = (
+                    count_result[0]
+                    if isinstance(count_result, (list, tuple)) and len(count_result) > 0
+                    else None
+                )
                 if first_row:
-                    total = first_row[0] if isinstance(first_row, (list, tuple)) and len(first_row) > 0 else 0
+                    total = (
+                        first_row[0]
+                        if isinstance(first_row, (list, tuple)) and len(first_row) > 0
+                        else 0
+                    )
                 else:
                     total = 0
             else:
@@ -336,17 +348,19 @@ class ClickHouseEngine(BaseSearchEngine):
             rows_result = self.client.execute(query, params)
             # 确保rows_result是一个列表
             rows = rows_result if isinstance(rows_result, list) else []
-            
+
             results = []
             for row in rows:
                 if isinstance(row, (list, tuple)) and len(row) >= 4:
-                    results.append({
-                        "document_id": row[0],
-                        "title": row[1],
-                        "summary": row[2],
-                        "class_code": row[3],
-                        "score": 1.0,
-                    })
+                    results.append(
+                        {
+                            "document_id": row[0],
+                            "title": row[1],
+                            "summary": row[2],
+                            "class_code": row[3],
+                            "score": 1.0,
+                        }
+                    )
 
             return {
                 "results": results,
@@ -476,7 +490,7 @@ class DatabaseEngine(BaseSearchEngine):
         # 为了保持与基类方法签名一致，我们需要重新组织参数
         # 在这个实现中，我们忽略class_path参数，因为基类方法没有这个参数
         class_path = None  # 这个参数在基类中不存在，但在原实现中被使用了
-        
+
         """使用数据库原生全文检索"""
         from database import AsyncSessionLocal
         from sqlalchemy import select, func, or_, and_, text
@@ -561,17 +575,31 @@ class DatabaseEngine(BaseSearchEngine):
             results = []
             for doc in documents:
                 doc_id = getattr(doc, "id")
-                mapping_info = await self._get_document_mapping_info(session, int(doc_id))
-                
-                results.append({
-                    "document_id": doc.id,
-                    "title": doc.title,
-                    "summary": doc.summary,
-                    "class_code": getattr(mapping_info, "class_code") if mapping_info else None,
-                    "status": getattr(mapping_info, "status") if mapping_info else None,
-                    "processed_time": getattr(mapping_info, "processed_time") if mapping_info else None,
-                    "score": 1.0,
-                })
+                mapping_info = await self._get_document_mapping_info(
+                    session, int(doc_id)
+                )
+
+                results.append(
+                    {
+                        "document_id": doc.id,
+                        "title": doc.title,
+                        "summary": doc.summary,
+                        "class_code": (
+                            getattr(mapping_info, "class_code")
+                            if mapping_info
+                            else None
+                        ),
+                        "status": (
+                            getattr(mapping_info, "status") if mapping_info else None
+                        ),
+                        "processed_time": (
+                            getattr(mapping_info, "processed_time")
+                            if mapping_info
+                            else None
+                        ),
+                        "score": 1.0,
+                    }
+                )
 
             return {
                 "results": results,
