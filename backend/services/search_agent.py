@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from elasticsearch import AsyncElasticsearch
 from langgraph.graph import END, StateGraph
 
+from config import get_settings
 from models.database_models import (
     Document,
     DocumentType,
@@ -17,7 +18,7 @@ from loguru import logger
 
 # 全局变量存储graph状态，用于支持中断和恢复
 graph_state_storage: Dict[str, Dict[str, Any]] = {}
-
+settings = get_settings()
 
 class RetrievalState(TypedDict):
     """
@@ -342,6 +343,8 @@ async def _build_fallback_es_query(
     logger.info(f"执行后备 ES 查询，原因: {reason}")
     document_ids_from_sql = [int(str(doc.id)) for doc in state.get("docs", [])]
 
+    # TODO 结合大模型，对需要提取的内容，和query进行结合，构造更加准确的查询条件
+
     # 如果 SQL 列表为空，则进行全库全文检索
     filters = [{"term": {"template_id": state["template_id"]}}]
     if document_ids_from_sql:
@@ -386,7 +389,7 @@ async def run_es_query(state: RetrievalState) -> RetrievalState:
 
     try:
         response = await state["es_client"].search(
-            index="your_es_index_name", body=es_query  # 替换为你的 ES 索引名
+            index=settings.ELASTICSEARCH_INDEX, body=es_query  # 替换为你的 ES 索引名
         )
 
         hits = response.get("hits", {}).get("hits", [])
