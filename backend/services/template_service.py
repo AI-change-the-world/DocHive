@@ -11,6 +11,7 @@ from schemas.api_schemas import (
     ClassTemplateCreate,
     ClassTemplateUpdate,
     DocumentTypeCreate,
+    TemplateSelection,
 )
 import time
 from utils.llm_client import llm_client
@@ -83,6 +84,28 @@ class TemplateService:
         templates = list(result.scalars().all())
 
         return templates, total
+
+
+    @staticmethod
+    async def list_all_templates(
+        db: AsyncSession,
+    ) -> List[TemplateSelection]:
+        """获取所有模板列表"""
+        
+        templates = await db.execute(
+            select(ClassTemplate.id, ClassTemplate.name)
+        )
+        template_selections = []
+        for template in templates.all():
+            logger.debug(f"🛑 Template: {template}")
+            template_selections.append(
+                TemplateSelection(
+                    template_id=template.id,
+                    template_name=template.name,
+                )
+            )
+
+        return template_selections
 
     @staticmethod
     async def update_template(

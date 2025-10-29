@@ -145,6 +145,10 @@ class ClassTemplateResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+class TemplateSelection(BaseModel):
+    template_id: int
+    template_name: str
+
 
 # ============= 编号规则相关 =============
 class NumberingRuleCreate(BaseModel):

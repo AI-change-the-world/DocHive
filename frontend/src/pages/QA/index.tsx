@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
-import { Input, Button, Card, Empty, Spin, message, Tag, Typography, Space, Divider, Modal } from 'antd';
+import { Input, Button, Card, Empty, Spin, message, Tag, Typography, Space, Divider, Modal, Select } from 'antd';
 import { SendOutlined, StopOutlined, FileTextOutlined, RobotOutlined, LoadingOutlined } from '@ant-design/icons';
-import type { QADocumentReference, QARequest } from '../../types';
+import type { QADocumentReference, QARequest, TemplateSelection } from '../../types';
 import { qaService } from '../../services/qa';
 import ReactMarkdown from 'react-markdown';
 
 const { TextArea } = Input;
 const { Title, Text, Paragraph } = Typography;
+const { Option } = Select;
 
 interface Message {
     id: string;
@@ -17,6 +18,12 @@ interface Message {
     timestamp: Date;
 }
 
+// 模板类型定义
+interface Template {
+    id: number;
+    name: string;
+}
+
 export default function QAPage() {
     const [question, setQuestion] = useState('');
     const [messages, setMessages] = useState<Message[]>([]);
@@ -24,9 +31,9 @@ export default function QAPage() {
     const [currentAnswer, setCurrentAnswer] = useState('');
     const [currentReferences, setCurrentReferences] = useState<QADocumentReference[]>([]);
     const [thinkingStatus, setThinkingStatus] = useState('');
-    const [isAgentMode, setIsAgentMode] = useState(false); // 是否使用智能体模式
     const [templateId, setTemplateId] = useState<number | undefined>(undefined); // 模板ID
-    const [showTemplateModal, setShowTemplateModal] = useState(false); // 显示模板选择模态框
+    const [templates, setTemplates] = useState<TemplateSelection[]>([]); // 模板列表
+    const [loadingTemplates, setLoadingTemplates] = useState(false); // 模板加载状态
     const [sessionId, setSessionId] = useState<string>(''); // 会话ID，用于处理歧义
     const [ambiguityMessage, setAmbiguityMessage] = useState<string>(''); // 歧义消息
     const [clarification, setClarification] = useState(''); // 澄清内容
@@ -34,6 +41,25 @@ export default function QAPage() {
 
     const abortControllerRef = useRef<AbortController | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    // 获取模板列表
+    const fetchTemplates = async () => {
+        setLoadingTemplates(true);
+        try {
+            const response = await qaService.getAllTemplates();
+            if (response.data) {
+                setTemplates(response.data);
+                // 如果还没有选择模板，默认选择第一个
+                if (!templateId && response.data.length > 0) {
+                    setTemplateId(response.data[0].template_id);
+                }
+            }
+        } catch (error) {
+            message.error('获取模板列表失败');
+        } finally {
+            setLoadingTemplates(false);
+        }
+    };
 
     // 自动滚动到底部
     const scrollToBottom = () => {
@@ -44,6 +70,11 @@ export default function QAPage() {
         scrollToBottom();
     }, [messages, currentAnswer, thinkingStatus]);
 
+    // 组件挂载时获取模板列表
+    useEffect(() => {
+        fetchTemplates();
+    }, []);
+
     // 发送问题
     const handleAsk = async () => {
         if (!question.trim()) {
@@ -51,9 +82,8 @@ export default function QAPage() {
             return;
         }
 
-        // 如果是智能体模式但没有选择模板，显示模板选择模态框
-        if (isAgentMode && !templateId) {
-            setShowTemplateModal(true);
+        if (!templateId) {
+            message.warning('请选择模板');
             return;
         }
 
@@ -81,12 +111,12 @@ export default function QAPage() {
             // 构建请求数据
             const requestData: QARequest = {
                 question: question.trim(),
-                template_id: isAgentMode ? templateId : undefined,
+                template_id: templateId,
                 top_k: 5,
             };
 
             // 选择使用哪个API端点
-            const streamUrl = isAgentMode ? qaService.getAgentStreamUrl() : qaService.getStreamUrl();
+            const streamUrl = qaService.getAgentStreamUrl();
 
             // 创建FormData
             const formData = new FormData();
@@ -310,32 +340,33 @@ export default function QAPage() {
         setClarification('');
     };
 
-    // 选择模板
-    const handleSelectTemplate = (id: number) => {
-        setTemplateId(id);
-        setShowTemplateModal(false);
-        // 延迟执行，确保状态更新完成
-        setTimeout(() => {
-            handleAsk();
-        }, 100);
-    };
-
     return (
         <div className="h-full flex flex-col">
-            <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center space-x-3">
-                    <RobotOutlined className="text-3xl text-primary-600" />
-                    <Title level={2} className="!mb-0">智能问答</Title>
+            <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-2">
+                    <RobotOutlined className="text-2xl text-primary-600" />
+                    <Title level={3} className="!mb-0 !text-lg">智能问答</Title>
+                    <div className="w-48">
+                        <Select
+                            size="small"
+                            placeholder="选择模板"
+                            value={templateId}
+                            onChange={setTemplateId}
+                            loading={loadingTemplates}
+                            showSearch
+                            optionFilterProp="children"
+                        >
+                            {templates.map(template => (
+                                <Option key={template.template_id} value={template.template_id}>
+                                    {template.template_name}
+                                </Option>
+                            ))}
+                        </Select>
+                    </div>
                 </div>
-                <div className="flex items-center space-x-3">
-                    <Button
-                        type={isAgentMode ? "primary" : "default"}
-                        onClick={() => setIsAgentMode(!isAgentMode)}
-                    >
-                        {isAgentMode ? "智能体模式 (开)" : "智能体模式 (关)"}
-                    </Button>
+                <div className="flex items-center space-x-2">
                     {messages.length > 0 && (
-                        <Button onClick={handleClear} danger>
+                        <Button size="small" onClick={handleClear} danger>
                             清空对话
                         </Button>
                     )}
@@ -510,15 +541,10 @@ export default function QAPage() {
             {/* 输入区域 */}
             <Card className="shadow-md">
                 <div className="space-y-3">
-                    {isAgentMode && templateId && (
-                        <div className="text-sm text-gray-600">
-                            当前模板: {templateId} <Button type="link" onClick={() => setShowTemplateModal(true)}>更改</Button>
-                        </div>
-                    )}
                     <TextArea
                         value={question}
                         onChange={(e) => setQuestion(e.target.value)}
-                        placeholder={isAgentMode ? "请输入您的问题（智能体模式）..." : "请输入您的问题..."}
+                        placeholder="请输入您的问题..."
                         autoSize={{ minRows: 2, maxRows: 6 }}
                         disabled={isStreaming}
                         onPressEnter={(e) => {
@@ -540,6 +566,7 @@ export default function QAPage() {
                                     danger
                                     icon={<StopOutlined />}
                                     onClick={handleStop}
+                                    size="small"
                                 >
                                     停止生成
                                 </Button>
@@ -548,7 +575,8 @@ export default function QAPage() {
                                     type="primary"
                                     icon={<SendOutlined />}
                                     onClick={handleAsk}
-                                    disabled={!question.trim()}
+                                    disabled={!question.trim() || !templateId}
+                                    size="small"
                                 >
                                     发送问题
                                 </Button>
@@ -557,34 +585,6 @@ export default function QAPage() {
                     </div>
                 </div>
             </Card>
-
-            {/* 模板选择模态框 */}
-            <Modal
-                title="选择模板"
-                open={showTemplateModal}
-                onCancel={() => setShowTemplateModal(false)}
-                footer={null}
-            >
-                <div className="space-y-2">
-                    <p>请选择一个文档模板以启用智能体问答：</p>
-                    <div className="space-y-2 max-h-60 overflow-y-auto">
-                        {/* 这里应该从API获取模板列表，这里简化处理 */}
-                        {[1, 2, 3, 4, 5].map(id => (
-                            <Card
-                                key={id}
-                                hoverable
-                                onClick={() => handleSelectTemplate(id)}
-                                className="cursor-pointer"
-                            >
-                                <div className="flex justify-between items-center">
-                                    <span>模板 {id}</span>
-                                    <Button type="primary" size="small">选择</Button>
-                                </div>
-                            </Card>
-                        ))}
-                    </div>
-                </div>
-            </Modal>
 
             {/* 澄清问题模态框 */}
             <Modal

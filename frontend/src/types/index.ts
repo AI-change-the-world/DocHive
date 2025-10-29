@@ -20,11 +20,13 @@ export interface PaginatedResponse<T> {
 }
 
 // 用户相关类型
-export enum UserRole {
-    ADMIN = 'admin',
-    USER = 'user',
-    REVIEWER = 'reviewer',
-}
+export type UserRole = 'admin' | 'user' | 'reviewer';
+
+export const UserRole = {
+    ADMIN: 'admin',
+    USER: 'user',
+    REVIEWER: 'reviewer',
+} as const;
 
 export interface User {
     id: number;
@@ -208,6 +210,11 @@ export interface SystemConfig {
     description?: string;
     is_public: boolean;
     updated_at: string;
+}
+
+export interface TemplateSelection {
+    template_id: number;
+    template_name: string;
 }
 
 export interface SystemConfigCreate {

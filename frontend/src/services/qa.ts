@@ -3,7 +3,14 @@ import type {
     ApiResponse,
     QARequest,
     QAResponse,
+    TemplateSelection,
 } from '../types';
+
+// 定义模板类型
+interface Template {
+    id: number;
+    name: string;
+}
 
 export const qaService = {
     // 非流式问答
@@ -47,5 +54,12 @@ export const qaService = {
                 // 认证头部应该由request拦截器添加
             }
         });
-    }
+    },
+
+    // 获取模板列表
+    getTemplates: () =>
+        request.get<ApiResponse<Template[]>>('/templates'),
+
+    getAllTemplates: () =>
+        request.get<ApiResponse<TemplateSelection[]>>('/templates/all'),
 };

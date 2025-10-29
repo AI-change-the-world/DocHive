@@ -5,9 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from elasticsearch import AsyncElasticsearch
 from langgraph.graph import END, StateGraph
 
-from backend.models.database_models import Document, DocumentType, DocumentTypeField, TemplateDocumentMapping
-from backend.services.template_service import TemplateService
-from backend.utils.llm_client import llm_client
+from models.database_models import Document, DocumentType, DocumentTypeField, TemplateDocumentMapping
+from services.template_service import TemplateService
+from utils.llm_client import llm_client
 from loguru import logger
 
 # 全局变量存储graph状态，用于支持中断和恢复

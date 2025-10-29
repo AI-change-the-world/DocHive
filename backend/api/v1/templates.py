@@ -1,5 +1,6 @@
 import traceback
 from fastapi import APIRouter, Depends, HTTPException, status
+from loguru import logger
 from sqlalchemy.orm import Session
 from typing import List
 from database import get_db
@@ -16,6 +17,30 @@ from models.database_models import User
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/templates", tags=["分类模板管理"])
+
+
+@router.get("/all", response_model=ResponseBase)
+async def list_all_templates(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    获取模板列表
+    """
+    try:
+        templates = await TemplateService.list_all_templates(db)
+
+        logger.info(f"✅ 获取模板列表成功 {templates}")
+
+        return ResponseBase(
+            data=templates,
+        )
+    except ValueError as e:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
 
 @router.post("/", response_model=ResponseBase, status_code=status.HTTP_201_CREATED)
@@ -98,6 +123,8 @@ async def list_templates(
             items=[ClassTemplateResponse.model_validate(t) for t in templates],
         ),
     )
+
+
 
 
 @router.put("/{template_id}", response_model=ResponseBase)
