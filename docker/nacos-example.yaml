@@ -1,0 +1,55 @@
+app:
+  name: DocHive
+  version: 1.0.0
+  debug: true
+  secret_key: M6tz2TdDzT0mo4Z_OlGwSzSNJbS0PMDlnhZ06m4Tdls=
+
+database:
+  url: sqlite:///./dochive.db
+  pool_size: 20
+  max_overflow: 10
+
+storage:
+  type: s3
+  bucket: dochive-documents
+  endpoint: http://localhost:9000
+  region: us-east-1
+  access_key:
+  secret_key:
+  root: /
+
+search:
+  engine: elasticsearch
+  elastic_url: http://elastic:admin123@localhost:9200
+  elastic_index: dochive_documents
+
+qdrant:
+  host: localhost
+  port: 6333
+  collection: dochive_vectors
+
+llm:
+  provider: deepseek
+  openai_api_key: your-openai-api-key
+  openai_base_url: https://api.openai.com/v1
+  deepseek_api_key: sk-
+  deepseek_base_url: https://
+  default_model: deepseek-v3.1
+
+redis:
+  url: redis://localhost:6379/0
+
+jwt:
+  secret_key: your-jwt-secret-key
+  algorithm: HS256
+  access_minutes: 300
+  refresh_days: 7
+
+upload:
+  max_size: 52428800
+  allowed: pdf,docx,txt,md,png,jpg,jpeg
+
+cors:
+  origins:
+    - http://localhost:3000
+    - http://localhost:5173

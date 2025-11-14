@@ -1,0 +1,48 @@
+version: '3.9'
+
+name: doc-hive
+
+services:
+  doc-hive-nacos:
+    image: qingpan/rnacos:v0.7.4
+    container_name: doc-hive-nacos
+    environment:
+      MODE: standalone
+      NACOS_AUTH_ENABLE: "false"
+    ports:
+      - "8848:8848"
+      - "10848:10848"
+    volumes:
+      - nacos-data:/home/nacos/data
+
+  doc-hive-minio:
+    image: minio/minio:RELEASE.2025-04-03T14-56-28Z
+    container_name: doc-hive-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+  
+  doc-hive-es:
+    image: elasticsearch:9.2.1
+    container_name: doc-hive-es
+    environment:
+      - "discovery.type=single-node"
+      - "xpack.security.enabled=true"
+      - "ELASTIC_PASSWORD=${ELASTIC_PASSWORD}"
+      - "ES_JAVA_OPTS=${ES_JAVA_OPTS}"
+    ports:
+      - "9200:9200"
+  
+networks:
+  default:
+    driver: bridge
+
+volumes:
+  nacos-data:
+  minio-data:
