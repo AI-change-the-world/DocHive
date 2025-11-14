@@ -39,3 +39,5 @@ celery[redis]
 # 工具库
 python-dateutil==2.9.0
 loguru==0.7.3
+PyYAML==6.0.2
+nacos-sdk-python==2.0.7

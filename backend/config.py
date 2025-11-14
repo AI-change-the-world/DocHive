@@ -1,82 +1,282 @@
-from pydantic_settings import BaseSettings
-from typing import List
+import os
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import List, Optional, Any, Dict
 from functools import lru_cache
+import asyncio
+from loguru import logger
 
 
-class Settings(BaseSettings):
-    """应用配置类"""
+class Settings:
+    """应用配置类 - 从Nacos动态获取配置"""
+    
+    def __init__(self):
+        # 只从环境变量/.env读取Nacos连接配置
+        self.NACOS_HOST = os.getenv("NACOS_HOST", "localhost")
+        self.NACOS_PORT = int(os.getenv("NACOS_PORT", "8848"))
+        self.NACOS_NAMESPACE = os.getenv("NACOS_NAMESPACE", "")
+        self.NACOS_GROUP = os.getenv("NACOS_GROUP", "DEFAULT_GROUP")
+        self.NACOS_DATA_ID = os.getenv("NACOS_DATA_ID", "dochive-config.yaml")
+        
+        # 配置数据缓存
+        self._config_data: Dict[str, Any] = {}
+        self._nacos_client = None
+        
+        # 初始化Nacos客户端并加载配置
+        self._init_nacos()
 
+    def _init_nacos(self):
+        """初始化Nacos客户端并加载配置"""
+        try:
+            from utils.nacos_client import NacosClient
+            
+            # 创建Nacos客户端
+            self._nacos_client = NacosClient(
+                host=self.NACOS_HOST,
+                port=self.NACOS_PORT,
+                namespace=self.NACOS_NAMESPACE,
+                group=self.NACOS_GROUP
+            )
+            
+            # 同步加载初始配置
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            config_data = loop.run_until_complete(self._nacos_client.get_config(self.NACOS_DATA_ID))
+            
+            if config_data:
+                self._config_data = config_data
+                logger.info("✅ 从Nacos加载配置成功")
+            else:
+                logger.warning("⚠️ 从Nacos获取配置为空，使用默认配置")
+                
+            loop.close()
+            
+        except Exception as e:
+            logger.error(f"❌ 初始化Nacos配置失败: {e}")
+            raise
+    
+    # async def _add_config_listener(self):
+    #     """添加配置监听器，支持动态更新"""
+    #     try:
+    #         async def config_listener(namespace_id: str, data_id: str, group: str, content: str):
+    #             """配置更新回调函数"""
+    #             import yaml
+    #             try:
+    #                 new_config = yaml.safe_load(content)
+    #                 if isinstance(new_config, dict):
+    #                     self._config_data = new_config
+    #                     logger.info(f"🔄 Nacos配置已更新: {data_id}")
+    #             except Exception as e:
+    #                 logger.error(f"❌ 解析更新的配置失败: {e}")
+    #         
+    #         if self._nacos_client and self._nacos_client.client:
+    #             from v2.nacos import ConfigParam
+    #             config_param = ConfigParam(data_id=self.NACOS_DATA_ID, group=self.NACOS_GROUP)
+    #             await self._nacos_client.client.add_listener(config_param, config_listener)
+    #             logger.info("✅ Nacos配置监听器已添加")
+    #     except Exception as e:
+    #         logger.warning(f"⚠️ 添加配置监听器失败: {e}")
+    
+    def _get_config(self, key_path: str, default: Any = None) -> Any:
+        """从配置中获取值，支持环境变量优先"""
+        # 优先从环境变量获取
+        env_key = key_path.upper().replace(".", "_")
+        env_value = os.getenv(env_key)
+        if env_value is not None:
+            # 尝试转换类型
+            if isinstance(default, bool):
+                return env_value.lower() in ('true', '1', 'yes')
+            elif isinstance(default, int):
+                try:
+                    return int(env_value)
+                except ValueError:
+                    return default
+            return env_value
+        
+        # 从Nacos配置中获取
+        keys = key_path.split(".")
+        value = self._config_data
+        try:
+            for key in keys:
+                value = value[key]
+            return value if value is not None else default
+        except (KeyError, TypeError):
+            return default
+    
     # 应用基础配置
-    APP_NAME: str = "DocHive"
-    APP_VERSION: str = "1.0.0"
-    DEBUG: bool = True
-    SECRET_KEY: str
-
+    @property
+    def APP_NAME(self) -> str:
+        return self._get_config("app.name", "DocHive")
+    
+    @property
+    def APP_VERSION(self) -> str:
+        return self._get_config("app.version", "1.0.0")
+    
+    @property
+    def DEBUG(self) -> bool:
+        return self._get_config("app.debug", True)
+    
+    @property
+    def SECRET_KEY(self) -> str:
+        return self._get_config("app.secret_key", "")
+    
     # 数据库配置
-    DATABASE_URL: str
-    DATABASE_POOL_SIZE: int = 20
-    DATABASE_MAX_OVERFLOW: int = 10
-
+    @property
+    def DATABASE_URL(self) -> str:
+        return self._get_config("database.url", "")
+    
+    @property
+    def DATABASE_POOL_SIZE(self) -> int:
+        return self._get_config("database.pool_size", 20)
+    
+    @property
+    def DATABASE_MAX_OVERFLOW(self) -> int:
+        return self._get_config("database.max_overflow", 10)
+    
     # 搜索引擎配置
-    SEARCH_ENGINE: str = (
-        "database"  # elasticsearch, clickhouse, database (pg/mysql/sqlite)
-    )
-
-    # 对象存储配置 (OpenDAL)
-    STORAGE_TYPE: str = "s3"  # s3, fs, memory
-    STORAGE_BUCKET: str
-    STORAGE_ENDPOINT: str = ""
-    STORAGE_REGION: str = "us-east-1"
-    STORAGE_ACCESS_KEY: str = ""
-    STORAGE_SECRET_KEY: str = ""
-    STORAGE_ROOT: str = "/"  # 文件存储根目录
-
-    # Elasticsearch 配置（可选）
-    ELASTICSEARCH_URL: str = ""
-    ELASTICSEARCH_INDEX: str = "dochive_documents"
-
-    # ClickHouse 配置（可选）
-    CLICKHOUSE_HOST: str = "localhost"
-    CLICKHOUSE_PORT: int = 9000
-    CLICKHOUSE_USER: str = "default"
-    CLICKHOUSE_PASSWORD: str = ""
-    CLICKHOUSE_DATABASE: str = "dochive"
-
-    # Qdrant 配置
-    QDRANT_HOST: str = "localhost"
-    QDRANT_PORT: int = 6333
-    QDRANT_COLLECTION: str = "dochive_vectors"
-
-    # LLM 配置
-    LLM_PROVIDER: str = "openai"
-    OPENAI_API_KEY: str = ""
-    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
-    DEEPSEEK_API_KEY: str = ""
-    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
-    DEFAULT_MODEL: str = "gpt-3.5-turbo"
-
-    # Redis 配置
-    REDIS_URL: str = "redis://localhost:6379/0"
-
-    # JWT 配置
-    JWT_SECRET_KEY: str
-    JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-    JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-
-    # OCR 配置
-    TESSERACT_PATH: str = ""
-
+    @property
+    def SEARCH_ENGINE(self) -> str:
+        return "elasticsearch"
+    
+    # 对象存储配置
+    @property
+    def STORAGE_TYPE(self) -> str:
+        return self._get_config("storage.type", "s3")
+    
+    @property
+    def STORAGE_BUCKET(self) -> str:
+        return self._get_config("storage.bucket", "")
+    
+    @property
+    def STORAGE_ENDPOINT(self) -> str:
+        return self._get_config("storage.endpoint", "")
+    
+    @property
+    def STORAGE_REGION(self) -> str:
+        return self._get_config("storage.region", "us-east-1")
+    
+    @property
+    def STORAGE_ACCESS_KEY(self) -> str:
+        return self._get_config("storage.access_key", "")
+    
+    @property
+    def STORAGE_SECRET_KEY(self) -> str:
+        return self._get_config("storage.secret_key", "")
+    
+    @property
+    def STORAGE_ROOT(self) -> str:
+        return self._get_config("storage.root", "/")
+    
+    # Elasticsearch配置
+    @property
+    def ELASTICSEARCH_URL(self) -> str:
+        return self._get_config("search.elastic_url", "")
+    
+    @property
+    def ELASTICSEARCH_INDEX(self) -> str:
+        return self._get_config("search.elastic_index", "dochive_documents")
+    
+    # ClickHouse配置
+    @property
+    def CLICKHOUSE_HOST(self) -> str:
+        return self._get_config("clickhouse.host", "localhost")
+    
+    @property
+    def CLICKHOUSE_PORT(self) -> int:
+        return self._get_config("clickhouse.port", 9000)
+    
+    @property
+    def CLICKHOUSE_USER(self) -> str:
+        return self._get_config("clickhouse.user", "default")
+    
+    @property
+    def CLICKHOUSE_PASSWORD(self) -> str:
+        return self._get_config("clickhouse.password", "")
+    
+    @property
+    def CLICKHOUSE_DATABASE(self) -> str:
+        return self._get_config("clickhouse.database", "dochive")
+    
+    # Qdrant配置
+    @property
+    def QDRANT_HOST(self) -> str:
+        return self._get_config("qdrant.host", "localhost")
+    
+    @property
+    def QDRANT_PORT(self) -> int:
+        return self._get_config("qdrant.port", 6333)
+    
+    @property
+    def QDRANT_COLLECTION(self) -> str:
+        return self._get_config("qdrant.collection", "dochive_vectors")
+    
+    # LLM配置
+    @property
+    def LLM_PROVIDER(self) -> str:
+        return self._get_config("llm.provider", "openai")
+    
+    @property
+    def OPENAI_API_KEY(self) -> str:
+        return self._get_config("llm.openai_api_key", "")
+    
+    @property
+    def OPENAI_BASE_URL(self) -> str:
+        return self._get_config("llm.openai_base_url", "https://api.openai.com/v1")
+    
+    @property
+    def DEEPSEEK_API_KEY(self) -> str:
+        return self._get_config("llm.deepseek_api_key", "")
+    
+    @property
+    def DEEPSEEK_BASE_URL(self) -> str:
+        return self._get_config("llm.deepseek_base_url", "https://api.deepseek.com/v1")
+    
+    @property
+    def DEFAULT_MODEL(self) -> str:
+        return self._get_config("llm.default_model", "gpt-3.5-turbo")
+    
+    # Redis配置
+    @property
+    def REDIS_URL(self) -> str:
+        return self._get_config("redis.url", "redis://localhost:6379/0")
+    
+    # JWT配置
+    @property
+    def JWT_SECRET_KEY(self) -> str:
+        return self._get_config("jwt.secret_key", "")
+    
+    @property
+    def JWT_ALGORITHM(self) -> str:
+        return self._get_config("jwt.algorithm", "HS256")
+    
+    @property
+    def JWT_ACCESS_TOKEN_EXPIRE_MINUTES(self) -> int:
+        return self._get_config("jwt.access_minutes", 30)
+    
+    @property
+    def JWT_REFRESH_TOKEN_EXPIRE_DAYS(self) -> int:
+        return self._get_config("jwt.refresh_days", 7)
+    
+    # OCR配置
+    @property
+    def TESSERACT_PATH(self) -> str:
+        return self._get_config("ocr.tesseract_path", "")
+    
     # 文件上传配置
-    MAX_UPLOAD_SIZE: int = 52428800  # 50MB
-    ALLOWED_EXTENSIONS: str = "pdf,docx,txt,md,png,jpg,jpeg"
-
-    # CORS 配置
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    @property
+    def MAX_UPLOAD_SIZE(self) -> int:
+        return self._get_config("upload.max_size", 52428800)
+    
+    @property
+    def ALLOWED_EXTENSIONS(self) -> str:
+        return self._get_config("upload.allowed", "pdf,docx,txt,md,png,jpg,jpeg")
+    
+    # CORS配置
+    @property
+    def CORS_ORIGINS(self) -> str:
+        origins = self._get_config("cors.origins")
+        if isinstance(origins, list):
+            return ",".join(origins)
+        return origins or "http://localhost:3000,http://localhost:5173"
 
     @property
     def cors_origins_list(self) -> List[str]:

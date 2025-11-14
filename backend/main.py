@@ -8,6 +8,7 @@ from config import get_settings
 from database import init_db
 from api.router import api_v1_router
 from utils.search_engine import search_client
+from utils.nacos_client import init_nacos_client
 import logging
 from loguru import logger
 
@@ -15,6 +16,14 @@ settings = get_settings()
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
+
+# 初始化Nacos客户端
+init_nacos_client(
+    host=settings.NACOS_HOST,
+    port=settings.NACOS_PORT,
+    namespace=settings.NACOS_NAMESPACE,
+    group=settings.NACOS_GROUP
+)
 
 
 @asynccontextmanager
