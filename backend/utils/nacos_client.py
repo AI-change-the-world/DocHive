@@ -1,8 +1,7 @@
 import yaml
 from typing import Dict, Any, Optional
 from loguru import logger
-import asyncio
-from v2.nacos import NacosConfigService, ClientConfigBuilder, ConfigParam
+from v2.nacos import NacosConfigService, ClientConfigBuilder, ConfigParam, GRPCConfig
 
 
 class NacosClient:
@@ -14,26 +13,29 @@ class NacosClient:
         self.namespace = namespace
         self.group = group
         self.server_addresses = f"{host}:{port}"
-        self.client = None
+        self.client: Optional[NacosConfigService] = None
         self.client_config = None
         
-        try:
-            # 构建客户端配置
-            self.client_config = (ClientConfigBuilder()
-                           .server_address(self.server_addresses)
-                           .namespace_id(namespace)
-                           .build())
-        except Exception as e:
-            logger.error(f"初始化Nacos客户端配置失败: {e}")
-            raise
+        # 构建客户端配置
+        self.client_config = (
+            ClientConfigBuilder()
+            .server_address(self.server_addresses)
+            .namespace_id(namespace)
+            .log_level("INFO")
+            .grpc_config(GRPCConfig(grpc_timeout=5000))
+            .build()
+        )
 
-    async def _ensure_client(self):
-        """确保客户端已初始化"""
-        if self.client is None and self.client_config:
+    async def init_client(self):
+        """初始化Nacos配置服务客户端"""
+        if self.client is None:
             try:
+                if not self.client_config:
+                    raise ValueError("Nacos客户端配置未初始化")
                 self.client = await NacosConfigService.create_config_service(self.client_config)
+                logger.info("✅ Nacos配置服务初始化成功")
             except Exception as e:
-                logger.error(f"创建Nacos配置服务失败: {e}")
+                logger.error(f"❌ 创建Nacos配置服务失败: {e}")
                 raise
 
     async def get_config(self, data_id: str) -> Optional[Dict[str, Any]]:
@@ -47,7 +49,8 @@ class NacosClient:
             配置字典或None（如果获取失败）
         """
         try:
-            await self._ensure_client()
+            if not self.client:
+                await self.init_client()
             
             if not self.client:
                 logger.error("Nacos客户端未初始化")
@@ -67,42 +70,55 @@ class NacosClient:
             logger.error(f"从Nacos获取配置失败: {e}")
             return None
 
-    async def get_config_value(self, data_id: str, key_path: str, default=None):
-        """
-        异步获取配置中的特定值
-        
-        Args:
-            data_id: 配置的dataId
-            key_path: 键路径，例如 "app.name" 或 "database.url"
-            default: 默认值
-            
-        Returns:
-            配置值或默认值
-        """
-        config = await self.get_config(data_id)
-        if not config:
-            return default
-            
-        keys = key_path.split(".")
-        value = config
+    async def add_listener(self, data_id: str, listener_callback):
+        """添加配置监听器"""
         try:
-            for key in keys:
-                value = value[key]
-            return value
-        except (KeyError, TypeError):
-            return default
+            if not self.client:
+                await self.init_client()
+            
+            if not self.client:
+                logger.error("Nacos客户端未初始化")
+                return
+            
+            await self.client.add_listener(
+                data_id=data_id,
+                group=self.group,
+                listener=listener_callback
+            )
+            logger.info(f"✅ 配置监听器已添加: {data_id}")
+        except Exception as e:
+            logger.error(f"添加配置监听器失败: {e}")
+
+    async def shutdown(self):
+        """关闭Nacos配置服务"""
+        if self.client:
+            try:
+                await self.client.shutdown()
+                logger.info("✅ Nacos配置服务已关闭")
+            except Exception as e:
+                logger.error(f"关闭Nacos配置服务失败: {e}")
 
 
 # 全局Nacos客户端实例
 nacos_client: Optional[NacosClient] = None
 
 
-def init_nacos_client(host: str, port: int, namespace: str = "", group: str = "DEFAULT_GROUP"):
-    """初始化Nacos客户端"""
-    global nacos_client
-    nacos_client = NacosClient(host, port, namespace, group)
-
-
 def get_nacos_client() -> Optional[NacosClient]:
     """获取Nacos客户端实例"""
     return nacos_client
+
+
+async def init_nacos_client(host: str, port: int, namespace: str = "", group: str = "DEFAULT_GROUP"):
+    """初始化Nacos客户端"""
+    global nacos_client
+    nacos_client = NacosClient(host, port, namespace, group)
+    await nacos_client.init_client()
+    return nacos_client
+
+
+async def close_nacos_client():
+    """关闭Nacos客户端"""
+    global nacos_client
+    if nacos_client:
+        await nacos_client.shutdown()
+        nacos_client = None

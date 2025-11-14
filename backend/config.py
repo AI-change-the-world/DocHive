@@ -1,9 +1,9 @@
 import os
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Optional, Any, Dict
-from functools import lru_cache
 import asyncio
+from typing import List, Any
+from functools import lru_cache
 from loguru import logger
+import yaml
 
 
 class Settings:
@@ -18,63 +18,18 @@ class Settings:
         self.NACOS_DATA_ID = os.getenv("NACOS_DATA_ID", "dochive-config.yaml")
         
         # 配置数据缓存
-        self._config_data: Dict[str, Any] = {}
+        self._config_data: dict[str, Any] = {}
         self._nacos_client = None
-        
-        # 初始化Nacos客户端并加载配置
-        self._init_nacos()
-
-    def _init_nacos(self):
-        """初始化Nacos客户端并加载配置"""
-        try:
-            from utils.nacos_client import NacosClient
-            
-            # 创建Nacos客户端
-            self._nacos_client = NacosClient(
-                host=self.NACOS_HOST,
-                port=self.NACOS_PORT,
-                namespace=self.NACOS_NAMESPACE,
-                group=self.NACOS_GROUP
-            )
-            
-            # 同步加载初始配置
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            config_data = loop.run_until_complete(self._nacos_client.get_config(self.NACOS_DATA_ID))
-            
-            if config_data:
-                self._config_data = config_data
-                logger.info("✅ 从Nacos加载配置成功")
-            else:
-                logger.warning("⚠️ 从Nacos获取配置为空，使用默认配置")
-                
-            loop.close()
-            
-        except Exception as e:
-            logger.error(f"❌ 初始化Nacos配置失败: {e}")
-            raise
     
-    # async def _add_config_listener(self):
-    #     """添加配置监听器，支持动态更新"""
-    #     try:
-    #         async def config_listener(namespace_id: str, data_id: str, group: str, content: str):
-    #             """配置更新回调函数"""
-    #             import yaml
-    #             try:
-    #                 new_config = yaml.safe_load(content)
-    #                 if isinstance(new_config, dict):
-    #                     self._config_data = new_config
-    #                     logger.info(f"🔄 Nacos配置已更新: {data_id}")
-    #             except Exception as e:
-    #                 logger.error(f"❌ 解析更新的配置失败: {e}")
-    #         
-    #         if self._nacos_client and self._nacos_client.client:
-    #             from v2.nacos import ConfigParam
-    #             config_param = ConfigParam(data_id=self.NACOS_DATA_ID, group=self.NACOS_GROUP)
-    #             await self._nacos_client.client.add_listener(config_param, config_listener)
-    #             logger.info("✅ Nacos配置监听器已添加")
-    #     except Exception as e:
-    #         logger.warning(f"⚠️ 添加配置监听器失败: {e}")
+    def load_from_yaml(self, yaml_content: str):
+        """从YAML内容加载配置"""
+        try:
+            new_config = yaml.safe_load(yaml_content)
+            if isinstance(new_config, dict):
+                self._config_data = new_config
+                logger.info("✅ 配置已更新")
+        except Exception as e:
+            logger.error(f"❌ 解析YAML配置失败: {e}")
     
     def _get_config(self, key_path: str, default: Any = None) -> Any:
         """从配置中获取值，支持环境变量优先"""
@@ -135,7 +90,7 @@ class Settings:
     # 搜索引擎配置
     @property
     def SEARCH_ENGINE(self) -> str:
-        return "elasticsearch"
+        return self._get_config("search.engine", "database")
     
     # 对象存储配置
     @property
@@ -277,17 +232,70 @@ class Settings:
         if isinstance(origins, list):
             return ",".join(origins)
         return origins or "http://localhost:3000,http://localhost:5173"
-
+    
     @property
     def cors_origins_list(self) -> List[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
-
+    
     @property
     def allowed_extensions_list(self) -> List[str]:
         return [ext.strip() for ext in self.ALLOWED_EXTENSIONS.split(",")]
 
 
+# 全局配置实例
+_settings: Settings | None = None
+
+
 @lru_cache()
 def get_settings() -> Settings:
     """获取配置单例"""
-    return Settings()
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings
+
+
+# Nacos配置初始化和监听
+async def init_nacos_config():
+    """初始化Nacos配置（v2异步版）"""
+    from utils.nacos_client import init_nacos_client
+    
+    settings = get_settings()
+    
+    # 初始化Nacos客户端
+    nacos_client = await init_nacos_client(
+        host=settings.NACOS_HOST,
+        port=settings.NACOS_PORT,
+        namespace=settings.NACOS_NAMESPACE,
+        group=settings.NACOS_GROUP
+    )
+    
+    # 加载初始配置
+    yaml_data = await nacos_client.get_config(settings.NACOS_DATA_ID)
+    if yaml_data:
+        import yaml
+        yaml_str = yaml.dump(yaml_data) if isinstance(yaml_data, dict) else str(yaml_data)
+        settings.load_from_yaml(yaml_str)
+        logger.info(f"[Nacos] ✅ Loaded config: dataId={settings.NACOS_DATA_ID}, group={settings.NACOS_GROUP}")
+    
+    # 启动监听协程（热更新）
+    asyncio.create_task(start_watch_config(nacos_client, settings))
+
+
+async def start_watch_config(nacos_client, settings: Settings):
+    """持续监听配置变化"""
+    
+    async def on_change(tenant, data_id, group, content):
+        logger.info("🔥 [Nacos] Config changed, reloading...")
+        settings.load_from_yaml(content)
+    
+    await nacos_client.add_listener(
+        data_id=settings.NACOS_DATA_ID,
+        listener_callback=on_change
+    )
+
+
+async def close_nacos_config():
+    """关闭Nacos配置服务"""
+    from utils.nacos_client import close_nacos_client
+    await close_nacos_client()

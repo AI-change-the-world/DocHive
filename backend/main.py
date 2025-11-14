@@ -4,11 +4,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
-from config import get_settings
+from config import get_settings, init_nacos_config, close_nacos_config
 from database import init_db
 from api.router import api_v1_router
 from utils.search_engine import search_client
-from utils.nacos_client import init_nacos_client
 import logging
 from loguru import logger
 
@@ -17,20 +16,19 @@ settings = get_settings()
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 
-# 初始化Nacos客户端
-init_nacos_client(
-    host=settings.NACOS_HOST,
-    port=settings.NACOS_PORT,
-    namespace=settings.NACOS_NAMESPACE,
-    group=settings.NACOS_GROUP
-)
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时
     logger.info("🚀 DocHive 后端服务启动中...")
+
+    # 初始化Nacos配置
+    try:
+        await init_nacos_config()
+        logger.info("✅ Nacos配置初始化完成")
+    except Exception as e:
+        logger.warning(f"⚠️ Nacos配置初始化失败: {e}")
 
     # 初始化数据库
     await init_db()
@@ -47,6 +45,13 @@ async def lifespan(app: FastAPI):
 
     # 关闭时
     logger.info("🛑 DocHive 后端服务关闭中...")
+
+    # 关闭Nacos配置服务
+    try:
+        await close_nacos_config()
+        logger.info("✅ Nacos配置服务已关闭")
+    except Exception as e:
+        logger.error(f"❌ Nacos配置服务关闭失败: {e}")
 
     # 关闭搜索引擎连接
     try:
