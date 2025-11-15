@@ -7,7 +7,9 @@ from v2.nacos import NacosConfigService, ClientConfigBuilder, ConfigParam, GRPCC
 class NacosClient:
     """Nacos配置客户端（支持异步）"""
 
-    def __init__(self, host: str, port: int, namespace: str = "", group: str = "DEFAULT_GROUP"):
+    def __init__(
+        self, host: str, port: int, namespace: str = "", group: str = "DEFAULT_GROUP"
+    ):
         self.host = host
         self.port = port
         self.namespace = namespace
@@ -15,7 +17,7 @@ class NacosClient:
         self.server_addresses = f"{host}:{port}"
         self.client: Optional[NacosConfigService] = None
         self.client_config = None
-        
+
         # 构建客户端配置
         self.client_config = (
             ClientConfigBuilder()
@@ -32,7 +34,9 @@ class NacosClient:
             try:
                 if not self.client_config:
                     raise ValueError("Nacos客户端配置未初始化")
-                self.client = await NacosConfigService.create_config_service(self.client_config)
+                self.client = await NacosConfigService.create_config_service(
+                    self.client_config
+                )
                 logger.info("✅ Nacos配置服务初始化成功")
             except Exception as e:
                 logger.error(f"❌ 创建Nacos配置服务失败: {e}")
@@ -41,31 +45,31 @@ class NacosClient:
     async def get_config(self, data_id: str) -> Optional[Dict[str, Any]]:
         """
         异步从Nacos获取配置
-        
+
         Args:
             data_id: 配置的dataId
-            
+
         Returns:
             配置字典或None（如果获取失败）
         """
         try:
             if not self.client:
                 await self.init_client()
-            
+
             if not self.client:
                 logger.error("Nacos客户端未初始化")
                 return None
-            
+
             # 使用官方异步SDK获取配置
             config_param = ConfigParam(data_id=data_id, group=self.group)
             config_str = await self.client.get_config(config_param)
-            
+
             # 解析YAML配置
             if config_str:
                 config_data = yaml.safe_load(config_str)
                 return config_data if isinstance(config_data, dict) else {}
             return {}
-            
+
         except Exception as e:
             logger.error(f"从Nacos获取配置失败: {e}")
             return None
@@ -75,15 +79,13 @@ class NacosClient:
         try:
             if not self.client:
                 await self.init_client()
-            
+
             if not self.client:
                 logger.error("Nacos客户端未初始化")
                 return
-            
+
             await self.client.add_listener(
-                data_id=data_id,
-                group=self.group,
-                listener=listener_callback
+                data_id=data_id, group=self.group, listener=listener_callback
             )
             logger.info(f"✅ 配置监听器已添加: {data_id}")
         except Exception as e:
@@ -108,7 +110,9 @@ def get_nacos_client() -> Optional[NacosClient]:
     return nacos_client
 
 
-async def init_nacos_client(host: str, port: int, namespace: str = "", group: str = "DEFAULT_GROUP"):
+async def init_nacos_client(
+    host: str, port: int, namespace: str = "", group: str = "DEFAULT_GROUP"
+):
     """初始化Nacos客户端"""
     global nacos_client
     nacos_client = NacosClient(host, port, namespace, group)

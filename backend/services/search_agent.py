@@ -20,6 +20,7 @@ from loguru import logger
 graph_state_storage: Dict[str, Dict[str, Any]] = {}
 settings = get_settings()
 
+
 class RetrievalState(TypedDict):
     """
     RAG 智能体状态机
