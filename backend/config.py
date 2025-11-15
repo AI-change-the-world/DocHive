@@ -17,7 +17,7 @@ class _LocalSettings(BaseSettings):
     NACOS_NAMESPACE: str = ""
     NACOS_GROUP: str = "DEFAULT_GROUP"
     NACOS_DATA_ID: str = "dochive-config.yaml"
-    DOC_HIVE_PORT : int = 8000
+    DOC_HIVE_PORT: int = 8000
     SECRET_KEY: str = "secret_key"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
@@ -33,10 +33,12 @@ class Settings:
         self.NACOS_HOST = os.getenv("NACOS_HOST", self._local_settings.NACOS_HOST)
         self.NACOS_PORT = int(os.getenv("NACOS_PORT", self._local_settings.NACOS_PORT))
         self.NACOS_NAMESPACE = os.getenv(
-            "NACOS_NAMESPACE", self._local_settings.NACOS_NAMESPACE
+            "NACOS_NAMESPACE", "public"
         )
         self.NACOS_GROUP = os.getenv("NACOS_GROUP", self._local_settings.NACOS_GROUP)
-        self.NACOS_DATA_ID = os.getenv("NACOS_DATA_ID", self._local_settings.NACOS_DATA_ID)
+        self.NACOS_DATA_ID = os.getenv(
+            "NACOS_DATA_ID", self._local_settings.NACOS_DATA_ID
+        )
 
         # 配置数据缓存
         self._config_data: dict[str, Any] = {}
@@ -281,26 +283,33 @@ async def init_nacos_config():
     """初始化Nacos配置（v2异步版）"""
     settings = get_settings()
 
+    logger.debug(
+        f"HOST {settings.NACOS_HOST}, PORT {settings.NACOS_PORT}, NAMESPACE {settings.NACOS_NAMESPACE}, GROUP {settings.NACOS_GROUP}, DATA_ID {settings.NACOS_DATA_ID}"
+    )
+
     # 构建客户端配置
     client_config = (
         ClientConfigBuilder()
         .server_address(f"{settings.NACOS_HOST}:{settings.NACOS_PORT}")
-        .namespace_id(settings.NACOS_NAMESPACE)
         .log_level("INFO")
         .grpc_config(GRPCConfig(grpc_timeout=5000))
         .build()
     )
 
     # 创建Nacos配置服务并赋值给全局settings
-    settings.nacos_config_service = await NacosConfigService.create_config_service(client_config)
+    settings.nacos_config_service = await NacosConfigService.create_config_service(
+        client_config
+    )
     logger.info("✅ Nacos配置服务初始化成功")
 
     # 加载初始配置
-    config_param = ConfigParam(data_id=settings.NACOS_DATA_ID, group=settings.NACOS_GROUP)
+    config_param = ConfigParam(
+        data_id=settings.NACOS_DATA_ID, group=settings.NACOS_GROUP
+    )
     yaml_str = await settings.nacos_config_service.get_config(config_param)
 
     logger.debug(f"[Nacos] 🚀 Loading config from Nacos: {yaml_str}")
-    
+
     if yaml_str:
         settings.load_from_yaml(yaml_str)
         logger.info(
@@ -322,7 +331,7 @@ async def start_watch_config(settings: Settings):
         await settings.nacos_config_service.add_listener(
             data_id=settings.NACOS_DATA_ID,
             group=settings.NACOS_GROUP,
-            listener=on_change
+            listener=on_change,
         )
 
 

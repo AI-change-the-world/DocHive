@@ -28,6 +28,7 @@ async def lifespan(app: FastAPI):
         await init_nacos_config()
         logger.info("✅ Nacos配置初始化完成")
     except Exception as e:
+        traceback.print_exc()
         logger.warning(f"⚠️ Nacos配置初始化失败: {e}")
 
     # 初始化数据库

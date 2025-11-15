@@ -1,4 +1,9 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker, AsyncEngine
+from sqlalchemy.ext.asyncio import (
+    create_async_engine,
+    AsyncSession,
+    async_sessionmaker,
+    AsyncEngine,
+)
 from sqlalchemy.orm import declarative_base
 from config import get_settings
 from loguru import logger
@@ -30,10 +35,10 @@ def get_database_url():
 def init_engine():
     """初始化数据库引擎（在Nacos配置加载后调用）"""
     global engine, AsyncSessionLocal
-    
+
     if engine is not None:
         return  # 已经初始化
-    
+
     # 创建异步引擎
     engine_kwargs: dict = {
         "echo": settings.DEBUG,
@@ -54,7 +59,7 @@ def init_engine():
         autocommit=False,
         autoflush=False,
     )
-    
+
     logger.info("✅ 数据库引擎初始化完成")
 
 
@@ -62,7 +67,7 @@ async def get_db():
     """数据库会话依赖"""
     if AsyncSessionLocal is None:
         raise RuntimeError("数据库未初始化，请先调用 init_db()")
-    
+
     async with AsyncSessionLocal() as session:
         try:
             yield session
@@ -74,9 +79,9 @@ async def init_db():
     """初始化数据库表"""
     # 先初始化引擎
     init_engine()
-    
+
     if engine is None:
         raise RuntimeError("数据库引擎初始化失败")
-    
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
