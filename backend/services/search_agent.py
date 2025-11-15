@@ -18,7 +18,6 @@ from loguru import logger
 
 # 全局变量存储graph状态，用于支持中断和恢复
 graph_state_storage: Dict[str, Dict[str, Any]] = {}
-settings = get_settings()
 
 
 class RetrievalState(TypedDict):
@@ -380,6 +379,7 @@ async def run_es_query(state: RetrievalState) -> RetrievalState:
     """
     执行 state['es_query'] 并将结果存入 state['es_results']
     """
+    settings = get_settings()
     es_query = state.get("es_query")
     if not es_query:
         logger.warning("Node 2: ES query 为空，跳过检索。")
