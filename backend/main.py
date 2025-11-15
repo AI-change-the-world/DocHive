@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from config import get_settings, init_nacos_config, close_nacos_config
 from database import init_db
 from api.router import api_v1_router
-from utils.search_engine import search_client
+from utils.search_engine import get_search_client
 import logging
 from loguru import logger
 
@@ -37,6 +37,7 @@ async def lifespan(app: FastAPI):
 
     # 初始化搜索引擎索引
     try:
+        search_client = get_search_client()
         await search_client.ensure_index()
         logger.info("✅ 搜索引擎索引初始化完成")
     except Exception as e:

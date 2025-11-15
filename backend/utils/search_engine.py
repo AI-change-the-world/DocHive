@@ -1,83 +1,52 @@
 """
-搜索引擎抽象层
-支持多种搜索引擎：Elasticsearch、ClickHouse、数据库原生全文检索
+搜索引擎 - Elasticsearch
 """
 
-from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 from datetime import datetime
-from config import get_settings
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from models.database_models import TemplateDocumentMapping
-
-settings = get_settings()
-
-
-class BaseSearchEngine(ABC):
-    """搜索引擎基类"""
-
-    @abstractmethod
-    async def ensure_index(self):
-        """确保索引/表存在"""
-        pass
-
-    @abstractmethod
-    async def index_document(self, document_data: Dict[str, Any]) -> bool:
-        """索引文档"""
-        pass
-
-    @abstractmethod
-    async def search_documents(
-        self,
-        keyword: Optional[str] = None,
-        template_id: Optional[int] = None,
-        file_type: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        page: int = 1,
-        page_size: int = 20,
-    ) -> Dict[str, Any]:
-        """搜索文档"""
-        pass
-
-    @abstractmethod
-    async def delete_document(self, document_id: int) -> bool:
-        """删除文档索引"""
-        pass
-
-    async def close(self):
-        """关闭连接（可选）"""
-        pass
-
-    async def _get_document_mapping_info(
-        self, db: AsyncSession, document_id: int
-    ) -> Optional[TemplateDocumentMapping]:
-        """获取文档的映射信息"""
-        result = await db.execute(
-            select(TemplateDocumentMapping).where(
-                TemplateDocumentMapping.document_id == document_id
-            )
-        )
-        return result.scalar_one_or_none()
+from elasticsearch import AsyncElasticsearch
 
 
-class ElasticsearchEngine(BaseSearchEngine):
+class SearchEngine:
     """Elasticsearch 搜索引擎"""
 
     def __init__(self):
-        from elasticsearch import AsyncElasticsearch
+        self.client: Optional[AsyncElasticsearch] = None
+        self.index_name: Optional[str] = None
 
+    def _ensure_initialized(self):
+        """确保搜索引擎已初始化"""
+        if self.client is not None:
+            return
+        
+        from config import get_settings
+        
+        settings = get_settings()
         self.client = AsyncElasticsearch(
             [settings.ELASTICSEARCH_URL], verify_certs=False
         )
         self.index_name = settings.ELASTICSEARCH_INDEX
+        
+        logger.info(f"✅ Elasticsearch 搜索引擎初始化完成")
 
     async def ensure_index(self):
+        """确保索引存在"""
+        self._ensure_initialized()
+        assert self.client is not None, "Elasticsearch 客户端初始化失败"
+        assert self.index_name is not None, "Elasticsearch 索引名称未配置"
+        
         if not await self.client.indices.exists(index=self.index_name):
             await self.create_index()
 
     async def create_index(self):
+        """创建索引"""
+        assert self.client is not None, "Elasticsearch 客户端初始化失败"
+        assert self.index_name is not None, "Elasticsearch 索引名称未配置"
+        
         index_mapping = {
             "mappings": {
                 "dynamic": "true",  # 支持动态字段
@@ -103,6 +72,11 @@ class ElasticsearchEngine(BaseSearchEngine):
         await self.client.indices.create(index=self.index_name, body=index_mapping)
 
     async def index_document(self, document_data: Dict[str, Any]) -> bool:
+        """索引文档"""
+        self._ensure_initialized()
+        assert self.client is not None, "Elasticsearch 客户端初始化失败"
+        assert self.index_name is not None, "Elasticsearch 索引名称未配置"
+        
         try:
             await self.client.index(
                 index=self.index_name,
@@ -111,7 +85,7 @@ class ElasticsearchEngine(BaseSearchEngine):
             )
             return True
         except Exception as e:
-            print(f"ES索引失败: {e}")
+            logger.error(f"ES索引失败: {e}")
             return False
 
     async def search_documents(
@@ -124,10 +98,11 @@ class ElasticsearchEngine(BaseSearchEngine):
         page: int = 1,
         page_size: int = 20,
     ) -> Dict[str, Any]:
-        # 为了保持与基类方法签名一致，我们需要重新组织参数
-        # 在这个实现中，我们忽略class_path参数，因为基类方法没有这个参数
-        class_path = None  # 这个参数在基类中不存在，但在原实现中被使用了
-
+        """搜索文档"""
+        self._ensure_initialized()
+        assert self.client is not None, "Elasticsearch 客户端初始化失败"
+        assert self.index_name is not None, "Elasticsearch 索引名称未配置"
+        
         query = {"bool": {"must": [], "filter": []}}
 
         if keyword:
@@ -143,7 +118,6 @@ class ElasticsearchEngine(BaseSearchEngine):
         else:
             query["bool"]["must"].append({"match_all": {}})
 
-        # 使用正确的参数名
         if template_id:
             query["bool"]["filter"].append({"term": {"template_id": template_id}})
 
@@ -190,10 +164,15 @@ class ElasticsearchEngine(BaseSearchEngine):
                 "page_size": page_size,
             }
         except Exception as e:
-            print(f"ES搜索失败: {e}")
+            logger.error(f"ES搜索失败: {e}")
             return {"results": [], "total": 0, "page": page, "page_size": page_size}
 
     async def delete_document(self, document_id: int) -> bool:
+        """删除文档索引"""
+        self._ensure_initialized()
+        assert self.client is not None, "Elasticsearch 客户端初始化失败"
+        assert self.index_name is not None, "Elasticsearch 索引名称未配置"
+        
         try:
             await self.client.delete(index=self.index_name, id=str(document_id))
             return True
@@ -201,442 +180,29 @@ class ElasticsearchEngine(BaseSearchEngine):
             return False
 
     async def close(self):
-        await self.client.close()
+        """关闭连接"""
+        if self.client is not None:
+            await self.client.close()
 
-
-class ClickHouseEngine(BaseSearchEngine):
-    """ClickHouse 搜索引擎"""
-
-    def __init__(self):
-        from clickhouse_driver import Client
-
-        self.client = Client(
-            host=settings.CLICKHOUSE_HOST,
-            port=settings.CLICKHOUSE_PORT,
-            user=settings.CLICKHOUSE_USER,
-            password=settings.CLICKHOUSE_PASSWORD,
-            database=settings.CLICKHOUSE_DATABASE,
+    async def _get_document_mapping_info(
+        self, db: AsyncSession, document_id: int
+    ) -> Optional[TemplateDocumentMapping]:
+        """获取文档的映射信息"""
+        result = await db.execute(
+            select(TemplateDocumentMapping).where(
+                TemplateDocumentMapping.document_id == document_id
+            )
         )
-        self.table_name = "documents"
-
-    async def ensure_index(self):
-        """创建ClickHouse表"""
-        try:
-            self.client.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.table_name} (
-                    document_id UInt32,
-                    title String,
-                    content String,
-                    summary String,
-                    class_path String,
-                    class_code String,
-                    template_id UInt32,
-                    file_type String,
-                    upload_time DateTime,
-                    uploader_id UInt32
-                ) ENGINE = MergeTree()
-                ORDER BY (upload_time, document_id)
-            """
-            )
-        except Exception as e:
-            print(f"ClickHouse表创建失败: {e}")
-
-    async def index_document(self, document_data: Dict[str, Any]) -> bool:
-        try:
-            import json
-
-            self.client.execute(
-                f"INSERT INTO {self.table_name} VALUES",
-                [
-                    (
-                        document_data["document_id"],
-                        document_data["title"],
-                        document_data.get("content", ""),
-                        document_data.get("summary", ""),
-                        json.dumps(document_data.get("class_path", {})),
-                        document_data.get("class_code", ""),
-                        document_data.get("template_id", 0),
-                        document_data.get("file_type", ""),
-                        document_data.get("upload_time", datetime.now()),
-                        document_data.get("uploader_id", 0),
-                    )
-                ],
-            )
-            return True
-        except Exception as e:
-            print(f"ClickHouse索引失败: {e}")
-            return False
-
-    async def search_documents(
-        self,
-        keyword: Optional[str] = None,
-        template_id: Optional[int] = None,
-        file_type: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        page: int = 1,
-        page_size: int = 20,
-    ) -> Dict[str, Any]:
-        # 为了保持与基类方法签名一致，我们需要重新组织参数
-        # 在这个实现中，我们忽略class_path参数，因为基类方法没有这个参数
-        class_path = None  # 这个参数在基类中不存在，但在原实现中被使用了
-
-        conditions = []
-        params = {}
-
-        if keyword:
-            # ClickHouse 全文检索
-            conditions.append(
-                "(positionCaseInsensitive(title, %(keyword)s) > 0 OR positionCaseInsensitive(content, %(keyword)s) > 0)"
-            )
-            params["keyword"] = keyword
-
-        if template_id:
-            conditions.append("template_id = %(template_id)s")
-            params["template_id"] = template_id
-
-        if file_type:
-            conditions.append("file_type = %(file_type)s")
-            params["file_type"] = file_type
-
-        if start_date:
-            conditions.append("upload_time >= %(start_date)s")
-            params["start_date"] = start_date
-
-        if end_date:
-            conditions.append("upload_time <= %(end_date)s")
-            params["end_date"] = end_date
-
-        where_clause = " AND ".join(conditions) if conditions else "1=1"
-        offset = (page - 1) * page_size
-
-        try:
-            # 查询总数
-            count_query = f"SELECT count(*) FROM {self.table_name} WHERE {where_clause}"
-            count_result = self.client.execute(count_query, params)
-            # 处理count_result，确保它是一个可迭代的对象
-            if count_result:
-                # 假设count_result是一个包含元组的列表
-                first_row = (
-                    count_result[0]
-                    if isinstance(count_result, (list, tuple)) and len(count_result) > 0
-                    else None
-                )
-                if first_row:
-                    total = (
-                        first_row[0]
-                        if isinstance(first_row, (list, tuple)) and len(first_row) > 0
-                        else 0
-                    )
-                else:
-                    total = 0
-            else:
-                total = 0
-
-            # 查询结果
-            query = f"""
-                SELECT document_id, title, summary, class_code
-                FROM {self.table_name}
-                WHERE {where_clause}
-                ORDER BY upload_time DESC
-                LIMIT %(limit)s OFFSET %(offset)s
-            """
-            params["limit"] = page_size
-            params["offset"] = offset
-
-            rows_result = self.client.execute(query, params)
-            # 确保rows_result是一个列表
-            rows = rows_result if isinstance(rows_result, list) else []
-
-            results = []
-            for row in rows:
-                if isinstance(row, (list, tuple)) and len(row) >= 4:
-                    results.append(
-                        {
-                            "document_id": row[0],
-                            "title": row[1],
-                            "summary": row[2],
-                            "class_code": row[3],
-                            "score": 1.0,
-                        }
-                    )
-
-            return {
-                "results": results,
-                "total": total,
-                "page": page,
-                "page_size": page_size,
-            }
-        except Exception as e:
-            print(f"ClickHouse搜索失败: {e}")
-            return {"results": [], "total": 0, "page": page, "page_size": page_size}
-
-    async def delete_document(self, document_id: int) -> bool:
-        try:
-            self.client.execute(
-                f"ALTER TABLE {self.table_name} DELETE WHERE document_id = %(doc_id)s",
-                {"doc_id": document_id},
-            )
-            return True
-        except Exception:
-            return False
+        return result.scalar_one_or_none()
 
 
-class DatabaseEngine(BaseSearchEngine):
-    """数据库原生全文检索引擎（PostgreSQL/MySQL/SQLite）"""
-
-    def __init__(self):
-        self.db_type = self._detect_db_type()
-
-    def _detect_db_type(self) -> str:
-        """检测数据库类型"""
-        url = settings.DATABASE_URL.lower()
-        if "postgresql" in url or "postgres" in url:
-            return "postgresql"
-        elif "mysql" in url:
-            return "mysql"
-        elif "sqlite" in url:
-            return "sqlite"
-        return "unknown"
-
-    async def ensure_index(self):
-        """创建全文索引"""
-        from database import engine
-        from sqlalchemy import text
-
-        async with engine.begin() as conn:
-            try:
-                if self.db_type == "postgresql":
-                    # PostgreSQL 使用 GIN 索引 + to_tsvector
-                    await conn.execute(
-                        text(
-                            """
-                        CREATE INDEX IF NOT EXISTS idx_documents_fulltext 
-                        ON documents USING GIN (
-                            to_tsvector('simple', title || ' ' || COALESCE(content_text, ''))
-                        )
-                    """
-                        )
-                    )
-                elif self.db_type == "mysql":
-                    # MySQL 使用 FULLTEXT 索引
-                    await conn.execute(
-                        text(
-                            """
-                        ALTER TABLE documents 
-                        ADD FULLTEXT INDEX idx_documents_fulltext (title, content_text)
-                    """
-                        )
-                    )
-                elif self.db_type == "sqlite":
-                    # SQLite 使用 FTS5 虚拟表
-                    await conn.execute(
-                        text(
-                            """
-                        CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts 
-                        USING fts5(document_id, title, content_text, content='documents', content_rowid='id')
-                    """
-                        )
-                    )
-                    # 创建触发器保持同步
-                    await conn.execute(
-                        text(
-                            """
-                        CREATE TRIGGER IF NOT EXISTS documents_ai AFTER INSERT ON documents BEGIN
-                            INSERT INTO documents_fts(rowid, document_id, title, content_text)
-                            VALUES (new.id, new.id, new.title, new.content_text);
-                        END
-                    """
-                        )
-                    )
-                    await conn.execute(
-                        text(
-                            """
-                        CREATE TRIGGER IF NOT EXISTS documents_ad AFTER DELETE ON documents BEGIN
-                            DELETE FROM documents_fts WHERE rowid = old.id;
-                        END
-                    """
-                        )
-                    )
-                    await conn.execute(
-                        text(
-                            """
-                        CREATE TRIGGER IF NOT EXISTS documents_au AFTER UPDATE ON documents BEGIN
-                            DELETE FROM documents_fts WHERE rowid = old.id;
-                            INSERT INTO documents_fts(rowid, document_id, title, content_text)
-                            VALUES (new.id, new.id, new.title, new.content_text);
-                        END
-                    """
-                        )
-                    )
-            except Exception as e:
-                print(f"创建全文索引失败: {e}")
-
-    async def index_document(self, document_data: Dict[str, Any]) -> bool:
-        """数据库自动索引，无需额外操作"""
-        return True
-
-    async def search_documents(
-        self,
-        keyword: Optional[str] = None,
-        template_id: Optional[int] = None,
-        file_type: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        page: int = 1,
-        page_size: int = 20,
-    ) -> Dict[str, Any]:
-        # 为了保持与基类方法签名一致，我们需要重新组织参数
-        # 在这个实现中，我们忽略class_path参数，因为基类方法没有这个参数
-        class_path = None  # 这个参数在基类中不存在，但在原实现中被使用了
-
-        """使用数据库原生全文检索"""
-        from database import AsyncSessionLocal
-        from sqlalchemy import select, func, or_, and_, text
-        from models.database_models import Document
-
-        async with AsyncSessionLocal() as session:
-            # 构建基础查询
-            query = select(Document)
-            count_query = select(func.count(Document.id))
-
-            conditions = []
-
-            # 全文检索条件
-            if keyword:
-                if self.db_type == "postgresql":
-                    # PostgreSQL to_tsvector
-                    search_condition = text(
-                        "to_tsvector('simple', title || ' ' || COALESCE(content_text, '')) @@ plainto_tsquery('simple', :keyword)"
-                    )
-                    conditions.append(search_condition.bindparams(keyword=keyword))
-                elif self.db_type == "mysql":
-                    # MySQL MATCH AGAINST
-                    search_condition = text(
-                        "MATCH(title, content_text) AGAINST(:keyword IN NATURAL LANGUAGE MODE)"
-                    )
-                    conditions.append(search_condition.bindparams(keyword=keyword))
-                elif self.db_type == "sqlite":
-                    # SQLite FTS5
-                    # 需要通过子查询关联
-                    fts_query = text(
-                        """
-                        id IN (
-                            SELECT rowid FROM documents_fts 
-                            WHERE documents_fts MATCH :keyword
-                        )
-                    """
-                    )
-                    conditions.append(fts_query.bindparams(keyword=keyword))
-                else:
-                    # 降级到 LIKE 查询
-                    conditions.append(
-                        or_(
-                            Document.title.like(f"%{keyword}%"),
-                            Document.content_text.like(f"%{keyword}%"),
-                        )
-                    )
-
-            # 其他过滤条件
-            if template_id:
-                conditions.append(Document.template_id == template_id)
-
-            if file_type:
-                conditions.append(Document.file_type == file_type)
-
-            if start_date:
-                conditions.append(Document.upload_time >= start_date)
-
-            if end_date:
-                conditions.append(Document.upload_time <= end_date)
-
-            # 应用条件
-            if conditions:
-                query = query.where(and_(*conditions))
-                count_query = count_query.where(and_(*conditions))
-
-            # 查询总数
-            total_result = await session.execute(count_query)
-            total = total_result.scalar()
-
-            # 分页查询
-            offset = (page - 1) * page_size
-            query = (
-                query.order_by(Document.upload_time.desc())
-                .offset(offset)
-                .limit(page_size)
-            )
-
-            result = await session.execute(query)
-            documents = result.scalars().all()
-
-            # 获取每个文档的分类编码和其他信息
-            results = []
-            for doc in documents:
-                doc_id = getattr(doc, "id")
-                mapping_info = await self._get_document_mapping_info(
-                    session, int(doc_id)
-                )
-
-                results.append(
-                    {
-                        "document_id": doc.id,
-                        "title": doc.title,
-                        "summary": doc.summary,
-                        "class_code": (
-                            getattr(mapping_info, "class_code")
-                            if mapping_info
-                            else None
-                        ),
-                        "status": (
-                            getattr(mapping_info, "status") if mapping_info else None
-                        ),
-                        "processed_time": (
-                            getattr(mapping_info, "processed_time")
-                            if mapping_info
-                            else None
-                        ),
-                        "score": 1.0,
-                    }
-                )
-
-            return {
-                "results": results,
-                "total": total,
-                "page": page,
-                "page_size": page_size,
-            }
-
-    async def delete_document(self, document_id: int) -> bool:
-        """数据库自动删除索引"""
-        return True
+# 全局实例（延迟初始化）
+_search_client: Optional[SearchEngine] = None
 
 
-def get_search_engine() -> BaseSearchEngine:
-    """工厂方法：根据配置返回搜索引擎实例"""
-    engine_type = settings.SEARCH_ENGINE.lower()
-
-    if engine_type == "elasticsearch":
-        if not settings.ELASTICSEARCH_URL:
-            print("⚠️ Elasticsearch URL 未配置，降级使用数据库搜索")
-            return DatabaseEngine()
-        try:
-            return ElasticsearchEngine()
-        except Exception as e:
-            print(f"⚠️ Elasticsearch 初始化失败: {e}，降级使用数据库搜索")
-            return DatabaseEngine()
-
-    elif engine_type == "clickhouse":
-        try:
-            return ClickHouseEngine()
-        except Exception as e:
-            print(f"⚠️ ClickHouse 初始化失败: {e}，降级使用数据库搜索")
-            return DatabaseEngine()
-
-    else:  # database
-        return DatabaseEngine()
-
-
-# 全局实例
-search_client = get_search_engine()
+def get_search_client() -> SearchEngine:
+    """获取搜索引擎客户端（懒加载）"""
+    global _search_client
+    if _search_client is None:
+        _search_client = SearchEngine()
+    return _search_client

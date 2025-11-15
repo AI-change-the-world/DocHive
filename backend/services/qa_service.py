@@ -3,7 +3,7 @@ from sqlalchemy import select
 from typing import List, Dict, Any, Optional, AsyncGenerator
 from models.database_models import Document
 from utils.llm_client import llm_client
-from utils.search_engine import search_client
+from utils.search_engine import get_search_client
 import json
 
 
@@ -29,6 +29,7 @@ class QAService:
         Returns:
             相关文档列表
         """
+        search_client = get_search_client()
         # 使用搜索引擎进行检索
         search_results = await search_client.search_documents(
             keyword=question,

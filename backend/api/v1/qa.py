@@ -22,7 +22,6 @@ from services.search_agent import (
 )
 from elasticsearch import AsyncElasticsearch
 from config import get_settings
-from utils.search_engine import search_client
 
 router = APIRouter(prefix="/qa", tags=["智能问答"])
 

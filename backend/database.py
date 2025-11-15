@@ -63,6 +63,11 @@ def init_engine():
     logger.info("✅ 数据库引擎初始化完成")
 
 
+def get_engine() -> Optional[AsyncEngine]:
+    """获取数据库引擎实例"""
+    return engine
+
+
 async def get_db():
     """数据库会话依赖"""
     if AsyncSessionLocal is None:

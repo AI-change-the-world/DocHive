@@ -3,7 +3,7 @@ from sqlalchemy import select, func
 from typing import List, Dict, Any, Optional
 from models.database_models import Document, TemplateDocumentMapping
 from services.document_service import DocumentService
-from utils.search_engine import search_client
+from utils.search_engine import get_search_client
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -96,7 +96,6 @@ RETERIEVAL_ROUTER_PROMPT = """
 
 class SearchService:
     """检索服务层"""
-
     @staticmethod
     async def search_documents(
         db: AsyncSession,
@@ -118,6 +117,7 @@ class SearchService:
         3. 抽取字段过滤
         4. 时间范围过滤
         """
+        search_client = get_search_client()
         # 使用搜索引擎
         search_results = await search_client.search_documents(
             keyword=keyword,
@@ -208,6 +208,7 @@ class SearchService:
         document: Document, mapping: Optional[TemplateDocumentMapping] = None
     ) -> bool:
         """将文档索引到 Elasticsearch"""
+        search_client = get_search_client()
         # 如果没有提供mapping，从数据库获取
         if mapping is None:
             # 这里应该从数据库获取mapping，但在当前上下文中我们可能没有db session

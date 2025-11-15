@@ -1,19 +1,29 @@
 from loguru import logger
-from config import get_settings
-import json
 from typing import Dict, Any, Optional, List
 from openai import OpenAI
 import time
+import json
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
-
-settings = get_settings()
 
 
 class LLMClient:
     """大语言模型客户端（同步版）"""
 
     def __init__(self):
+        self.client: Optional[OpenAI] = None
+        self.provider: Optional[str] = None
+        self.default_model: Optional[str] = None
+
+    def _ensure_initialized(self):
+        """确保LLM客户端已初始化"""
+        if self.client is not None:
+            return
+        
+        # 延迟导入配置，确保Nacos配置已加载
+        from config import get_settings
+        settings = get_settings()
+        
         self.provider = settings.LLM_PROVIDER
         self.default_model = settings.DEFAULT_MODEL
 
@@ -30,6 +40,8 @@ class LLMClient:
             )
         else:
             raise ValueError(f"不支持的 LLM 提供商: {self.provider}")
+        
+        logger.info(f"✅ LLM客户端初始化完成: {self.provider}")
 
     async def _log_llm_call(
         self,
@@ -94,6 +106,10 @@ class LLMClient:
             db: 数据库会话（用于记录日志）
             user_id: 调用用户ID
         """
+        self._ensure_initialized()
+        assert self.client is not None, "LLM客户端初始化失败"
+        assert self.default_model is not None, "LLM默认模型未配置"
+        
         model = model or self.default_model
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
@@ -102,13 +118,13 @@ class LLMClient:
         try:
             response = self.client.chat.completions.create(
                 model=model,
-                messages=messages,
+                messages=messages,  # type: ignore
                 temperature=temperature,
                 max_tokens=max_tokens,
-                response_format=response_format,
+                response_format=response_format,  # type: ignore
             )
             duration_ms = int((time.time() - start_time) * 1000)
-            output_content = response.choices[0].message.content
+            output_content = response.choices[0].message.content or ""
 
             # 记录日志
             if db is not None:
