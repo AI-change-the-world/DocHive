@@ -7,16 +7,16 @@ import yaml
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class __LocalSettings(BaseSettings):
+class _LocalSettings(BaseSettings):
     """本地配置类 - 从.env读取配置"""
 
     APP_NAME: str = "DocHive"
-    APP_VERSION: str = "1.0.0"
     NACOS_HOST: str = "localhost"
     NACOS_PORT: int = 8848
     NACOS_NAMESPACE: str = ""
     NACOS_GROUP: str = "DEFAULT_GROUP"
     NACOS_DATA_ID: str = "dochive-config.yaml"
+    DOC_HIVE_PORT : int = 8000
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
@@ -26,15 +26,15 @@ class Settings:
 
     def __init__(self):
 
-        __local_settings = __LocalSettings()
+        _local_settings = _LocalSettings()
 
-        self.NACOS_HOST = os.getenv("NACOS_HOST", __local_settings.NACOS_HOST)
-        self.NACOS_PORT = int(os.getenv("NACOS_PORT", __local_settings.NACOS_PORT))
+        self.NACOS_HOST = os.getenv("NACOS_HOST", _local_settings.NACOS_HOST)
+        self.NACOS_PORT = int(os.getenv("NACOS_PORT", _local_settings.NACOS_PORT))
         self.NACOS_NAMESPACE = os.getenv(
-            "NACOS_NAMESPACE", __local_settings.NACOS_NAMESPACE
+            "NACOS_NAMESPACE", _local_settings.NACOS_NAMESPACE
         )
-        self.NACOS_GROUP = os.getenv("NACOS_GROUP", __local_settings.NACOS_GROUP)
-        self.NACOS_DATA_ID = os.getenv("NACOS_DATA_ID", __local_settings.NACOS_DATA_ID)
+        self.NACOS_GROUP = os.getenv("NACOS_GROUP", _local_settings.NACOS_GROUP)
+        self.NACOS_DATA_ID = os.getenv("NACOS_DATA_ID", _local_settings.NACOS_DATA_ID)
 
         # 配置数据缓存
         self._config_data: dict[str, Any] = {}

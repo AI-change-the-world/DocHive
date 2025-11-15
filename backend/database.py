@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from config import get_settings
+from loguru import logger
 
 settings = get_settings()
 
@@ -8,6 +9,7 @@ settings = get_settings()
 # 处理 SQLite 数据库 URL
 def get_database_url():
     url = settings.DATABASE_URL
+    logger.debug(f"Using database URL: {url}")
     # 如果是 SQLite，使用 aiosqlite
     if url.startswith("sqlite"):
         if url.startswith("sqlite:///"):
