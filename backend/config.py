@@ -32,9 +32,7 @@ class Settings:
 
         self.NACOS_HOST = os.getenv("NACOS_HOST", self._local_settings.NACOS_HOST)
         self.NACOS_PORT = int(os.getenv("NACOS_PORT", self._local_settings.NACOS_PORT))
-        self.NACOS_NAMESPACE = os.getenv(
-            "NACOS_NAMESPACE", "public"
-        )
+        self.NACOS_NAMESPACE = os.getenv("NACOS_NAMESPACE", "public")
         self.NACOS_GROUP = os.getenv("NACOS_GROUP", self._local_settings.NACOS_GROUP)
         self.NACOS_DATA_ID = os.getenv(
             "NACOS_DATA_ID", self._local_settings.NACOS_DATA_ID

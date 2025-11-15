@@ -22,15 +22,15 @@ class SearchEngine:
         """确保搜索引擎已初始化"""
         if self.client is not None:
             return
-        
+
         from config import get_settings
-        
+
         settings = get_settings()
         self.client = AsyncElasticsearch(
             [settings.ELASTICSEARCH_URL], verify_certs=False
         )
         self.index_name = settings.ELASTICSEARCH_INDEX
-        
+
         logger.info(f"✅ Elasticsearch 搜索引擎初始化完成")
 
     async def ensure_index(self):
@@ -38,7 +38,7 @@ class SearchEngine:
         self._ensure_initialized()
         assert self.client is not None, "Elasticsearch 客户端初始化失败"
         assert self.index_name is not None, "Elasticsearch 索引名称未配置"
-        
+
         if not await self.client.indices.exists(index=self.index_name):
             await self.create_index()
 
@@ -46,7 +46,7 @@ class SearchEngine:
         """创建索引"""
         assert self.client is not None, "Elasticsearch 客户端初始化失败"
         assert self.index_name is not None, "Elasticsearch 索引名称未配置"
-        
+
         index_mapping = {
             "mappings": {
                 "dynamic": "true",  # 支持动态字段
@@ -76,7 +76,7 @@ class SearchEngine:
         self._ensure_initialized()
         assert self.client is not None, "Elasticsearch 客户端初始化失败"
         assert self.index_name is not None, "Elasticsearch 索引名称未配置"
-        
+
         try:
             await self.client.index(
                 index=self.index_name,
@@ -102,7 +102,7 @@ class SearchEngine:
         self._ensure_initialized()
         assert self.client is not None, "Elasticsearch 客户端初始化失败"
         assert self.index_name is not None, "Elasticsearch 索引名称未配置"
-        
+
         query = {"bool": {"must": [], "filter": []}}
 
         if keyword:
@@ -172,7 +172,7 @@ class SearchEngine:
         self._ensure_initialized()
         assert self.client is not None, "Elasticsearch 客户端初始化失败"
         assert self.index_name is not None, "Elasticsearch 索引名称未配置"
-        
+
         try:
             await self.client.delete(index=self.index_name, id=str(document_id))
             return True

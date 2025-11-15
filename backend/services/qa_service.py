@@ -64,7 +64,7 @@ class QAService:
                     "document_id": doc.id,
                     "title": doc.title,
                     "snippet": snippet,
-                    "content": doc.content_text or doc.summary or "",
+                    "content": doc.content_text or "",
                     "score": 0.8,  # 简化处理，实际应从搜索引擎获取
                 }
             )

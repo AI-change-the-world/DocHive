@@ -19,11 +19,12 @@ class LLMClient:
         """确保LLM客户端已初始化"""
         if self.client is not None:
             return
-        
+
         # 延迟导入配置，确保Nacos配置已加载
         from config import get_settings
+
         settings = get_settings()
-        
+
         self.provider = settings.LLM_PROVIDER
         self.default_model = settings.DEFAULT_MODEL
 
@@ -40,7 +41,7 @@ class LLMClient:
             )
         else:
             raise ValueError(f"不支持的 LLM 提供商: {self.provider}")
-        
+
         logger.info(f"✅ LLM客户端初始化完成: {self.provider}")
 
     async def _log_llm_call(
@@ -109,7 +110,7 @@ class LLMClient:
         self._ensure_initialized()
         assert self.client is not None, "LLM客户端初始化失败"
         assert self.default_model is not None, "LLM默认模型未配置"
-        
+
         model = model or self.default_model
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]

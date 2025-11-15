@@ -96,6 +96,7 @@ RETERIEVAL_ROUTER_PROMPT = """
 
 class SearchService:
     """检索服务层"""
+
     @staticmethod
     async def search_documents(
         db: AsyncSession,

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+from backend.config import get_settings
 from database import get_db
 from schemas.api_schemas import (
     QARequest,
@@ -21,7 +22,6 @@ from services.search_agent import (
     graph_state_storage,
 )
 from elasticsearch import AsyncElasticsearch
-from config import get_settings
 
 router = APIRouter(prefix="/qa", tags=["智能问答"])
 
