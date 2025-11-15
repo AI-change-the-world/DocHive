@@ -39,6 +39,8 @@ services:
       - "ES_JAVA_OPTS=${ES_JAVA_OPTS}"
     ports:
       - "9200:9200"
+    volumes:
+      - ./plugins/ik:/usr/share/elasticsearch/plugins/ik
   
 networks:
   default:
