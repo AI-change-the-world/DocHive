@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { Input, Button, Card, Empty, Spin, message, Tag, Typography, Space, Divider, Modal, Select } from 'antd';
-import { SendOutlined, StopOutlined, FileTextOutlined, RobotOutlined, LoadingOutlined } from '@ant-design/icons';
+import { Input, Button, Card, Empty, Spin, message, Tag, Typography, Space, Divider, Modal, Select, Collapse, Steps, Badge, Alert } from 'antd';
+import { SendOutlined, StopOutlined, FileTextOutlined, RobotOutlined, LoadingOutlined, SearchOutlined, DatabaseOutlined, FilterOutlined, BulbOutlined, CheckCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import type { QADocumentReference, QARequest, TemplateSelection } from '../../types';
 import { qaService } from '../../services/qa';
 import ReactMarkdown from 'react-markdown';
@@ -8,6 +8,18 @@ import ReactMarkdown from 'react-markdown';
 const { TextArea } = Input;
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
+const { Panel } = Collapse;
+const { Step } = Steps;
+
+// Agent处理阶段定义
+interface AgentStage {
+    stage: string;
+    label: string;
+    icon: React.ReactNode;
+    status: 'wait' | 'process' | 'finish' | 'error';
+    message?: string;
+    timestamp?: Date;
+}
 
 interface Message {
     id: string;
@@ -16,6 +28,8 @@ interface Message {
     references?: QADocumentReference[];
     thinking?: string;
     timestamp: Date;
+    agentStages?: AgentStage[];  // Agent处理阶段
+    showDetails?: boolean;  // 是否展开详情
 }
 
 export default function QAPage() {
@@ -25,6 +39,13 @@ export default function QAPage() {
     const [currentAnswer, setCurrentAnswer] = useState('');
     const [currentReferences, setCurrentReferences] = useState<QADocumentReference[]>([]);
     const [thinkingStatus, setThinkingStatus] = useState('');
+    const [agentStages, setAgentStages] = useState<AgentStage[]>([]);  // Agent当前处理阶段
+    const [currentStageIndex, setCurrentStageIndex] = useState(0);  // 当前阶段索引
+
+    // 使用ref保存最新的答案和引用，解决闭包问题
+    const currentAnswerRef = useRef('');
+    const currentReferencesRef = useRef<QADocumentReference[]>([]);
+    const agentStagesRef = useRef<AgentStage[]>([]);
     const [templateId, setTemplateId] = useState<number | undefined>(undefined); // 模板ID
     const [templates, setTemplates] = useState<TemplateSelection[]>([]); // 模板列表
     const [loadingTemplates, setLoadingTemplates] = useState(false); // 模板加载状态
@@ -97,6 +118,49 @@ export default function QAPage() {
         setAmbiguityMessage('');
         setIsStreaming(true);
 
+        // 清理ref
+        currentAnswerRef.current = '';
+        currentReferencesRef.current = [];
+        agentStagesRef.current = [];
+
+        // 初始化Agent处理阶段
+        const initialStages: AgentStage[] = [
+            {
+                stage: 'start',
+                label: '开始处理',
+                icon: <ClockCircleOutlined />,
+                status: 'process',
+                message: '正在分析您的问题...',
+                timestamp: new Date(),
+            },
+            {
+                stage: 'es_fulltext',
+                label: 'ES全文检索',
+                icon: <SearchOutlined />,
+                status: 'wait',
+            },
+            {
+                stage: 'sql_structured',
+                label: 'SQL结构化检索',
+                icon: <DatabaseOutlined />,
+                status: 'wait',
+            },
+            {
+                stage: 'merge_results',
+                label: '结果融合',
+                icon: <FilterOutlined />,
+                status: 'wait',
+            },
+            {
+                stage: 'generate',
+                label: '生成答案',
+                icon: <BulbOutlined />,
+                status: 'wait',
+            },
+        ];
+        setAgentStages(initialStages);
+        setCurrentStageIndex(0);
+
         // 创建AbortController用于中断请求
         const abortController = new AbortController();
         abortControllerRef.current = abortController;
@@ -123,16 +187,67 @@ export default function QAPage() {
 
                     switch (eventData.event) {
                         case 'thinking':
-                            setThinkingStatus(eventData.data?.message || '思考中...');
+                            const thinkingMsg = eventData.data?.message || '思考中...';
+                            const stage = eventData.data?.stage || 'start';
+                            setThinkingStatus(thinkingMsg);
+
+                            // 更新Agent处理阶段
+                            setAgentStages(prev => {
+                                const updated = [...prev];
+                                const stageMap: Record<string, number> = {
+                                    'start': 0,
+                                    'es_fulltext': 1,
+                                    'sql_structured': 2,
+                                    'merge_results': 3,
+                                    'generate': 4,
+                                };
+
+                                const currentIdx = stageMap[stage] || 0;
+                                setCurrentStageIndex(currentIdx);
+
+                                // 标记之前的阶段为完成
+                                for (let i = 0; i < currentIdx; i++) {
+                                    if (updated[i]) {
+                                        updated[i].status = 'finish';
+                                    }
+                                }
+
+                                // 标记当前阶段为进行中
+                                if (updated[currentIdx]) {
+                                    updated[currentIdx].status = 'process';
+                                    updated[currentIdx].message = thinkingMsg;
+                                    updated[currentIdx].timestamp = new Date();
+                                }
+
+                                return updated;
+                            });
                             break;
 
                         case 'references':
                             setCurrentReferences(eventData.data?.references || []);
+                            currentReferencesRef.current = eventData.data?.references || [];  // 同步到ref
                             setThinkingStatus('');
+
+                            // 标记检索阶段完成
+                            setAgentStages(prev => {
+                                const updated = [...prev];
+                                for (let i = 0; i <= 3; i++) {
+                                    if (updated[i]) {
+                                        updated[i].status = 'finish';
+                                    }
+                                }
+                                agentStagesRef.current = updated;  // 同步到ref
+                                return updated;
+                            });
                             break;
 
                         case 'answer':
-                            setCurrentAnswer(prev => prev + (eventData.data?.content || ''));
+                            const newContent = (eventData.data?.content || '');
+                            setCurrentAnswer(prev => {
+                                const updated = prev + newContent;
+                                currentAnswerRef.current = updated;  // 同步到ref
+                                return updated;
+                            });
                             break;
 
                         case 'ambiguity':
@@ -147,18 +262,43 @@ export default function QAPage() {
                             break;
 
                         case 'complete':
-                            // 添加助手消息
-                            const assistantMessage: Message = {
-                                id: Date.now().toString(),
-                                type: 'assistant',
-                                content: currentAnswer,
-                                references: currentReferences,
-                                timestamp: new Date(),
-                            };
-                            setMessages(prev => [...prev, assistantMessage]);
+                            // 标记所有阶段完成
+                            setAgentStages(prev => {
+                                const updated = [...prev];
+                                updated.forEach(stage => {
+                                    if (stage.status !== 'error') {
+                                        stage.status = 'finish';
+                                    }
+                                });
+                                agentStagesRef.current = updated;  // 同步到ref
+                                return updated;
+                            });
+
+                            // 使用ref中的最新值添加助手消息
+                            const finalAnswer = currentAnswerRef.current;
+                            const finalReferences = currentReferencesRef.current;
+                            const finalStages = agentStagesRef.current;
+
+                            if (finalAnswer || finalReferences.length > 0) {
+                                setMessages(prev => [...prev, {
+                                    id: Date.now().toString(),
+                                    type: 'assistant',
+                                    content: finalAnswer,
+                                    references: finalReferences,
+                                    timestamp: new Date(),
+                                    agentStages: finalStages,
+                                    showDetails: false,
+                                }]);
+                            }
+
+                            // 清理状态
                             setCurrentAnswer('');
                             setCurrentReferences([]);
                             setThinkingStatus('');
+                            setAgentStages([]);
+                            currentAnswerRef.current = '';
+                            currentReferencesRef.current = [];
+                            agentStagesRef.current = [];
                             setIsStreaming(false);
                             break;
 
@@ -177,19 +317,7 @@ export default function QAPage() {
                     setThinkingStatus('');
                 },
                 () => {
-                    // 完成回调
-                    if (currentAnswer) {
-                        const assistantMessage: Message = {
-                            id: Date.now().toString(),
-                            type: 'assistant',
-                            content: currentAnswer,
-                            references: currentReferences,
-                            timestamp: new Date(),
-                        };
-                        setMessages(prev => [...prev, assistantMessage]);
-                        setCurrentAnswer('');
-                        setCurrentReferences([]);
-                    }
+                    // 完成回调 - 不再在这里添加消息，由complete事件处理
                     setIsStreaming(false);
                     setThinkingStatus('');
                 }
@@ -324,6 +452,20 @@ export default function QAPage() {
         setThinkingStatus('');
         setAmbiguityMessage('');
         setClarification('');
+        setAgentStages([]);
+        setCurrentStageIndex(0);
+
+        // 清理ref
+        currentAnswerRef.current = '';
+        currentReferencesRef.current = [];
+        agentStagesRef.current = [];
+    };
+
+    // 切换消息详情展示
+    const toggleMessageDetails = (messageId: string) => {
+        setMessages(prev => prev.map(msg =>
+            msg.id === messageId ? { ...msg, showDetails: !msg.showDetails } : msg
+        ));
     };
 
     return (
@@ -388,9 +530,59 @@ export default function QAPage() {
                                         <Paragraph className="!mb-0">{msg.content}</Paragraph>
                                     ) : (
                                         <>
+                                            {/* Agent处理阶段展示 */}
+                                            {msg.agentStages && msg.agentStages.length > 0 && (
+                                                <Collapse
+                                                    ghost
+                                                    size="small"
+                                                    className="mb-3"
+                                                    items={[{
+                                                        key: 'agent-stages',
+                                                        label: (
+                                                            <div className="flex items-center space-x-2">
+                                                                <BulbOutlined className="text-blue-500" />
+                                                                <Text strong className="text-sm">
+                                                                    Agent处理过程
+                                                                </Text>
+                                                                <Badge
+                                                                    count={msg.agentStages.filter(s => s.status === 'finish').length}
+                                                                    showZero
+                                                                    style={{ backgroundColor: '#52c41a' }}
+                                                                />
+                                                            </div>
+                                                        ),
+                                                        children: (
+                                                            <Steps
+                                                                size="small"
+                                                                direction="vertical"
+                                                                current={msg.agentStages.findIndex(s => s.status === 'process')}
+                                                                items={msg.agentStages.map(stage => ({
+                                                                    title: stage.label,
+                                                                    status: stage.status,
+                                                                    icon: stage.icon,
+                                                                    description: stage.message && (
+                                                                        <Text type="secondary" className="text-xs">
+                                                                            {stage.message}
+                                                                            {stage.timestamp && (
+                                                                                <span className="ml-2">
+                                                                                    {stage.timestamp.toLocaleTimeString()}
+                                                                                </span>
+                                                                            )}
+                                                                        </Text>
+                                                                    ),
+                                                                }))}
+                                                            />
+                                                        ),
+                                                    }]}
+                                                />
+                                            )}
+
+                                            {/* 答案内容 */}
                                             <div className="prose prose-sm max-w-none">
                                                 <ReactMarkdown>{msg.content}</ReactMarkdown>
                                             </div>
+
+                                            {/* 参考文档 */}
                                             {msg.references && msg.references.length > 0 && (
                                                 <>
                                                     <Divider className="my-3" />
@@ -404,15 +596,21 @@ export default function QAPage() {
                                                                 <Card
                                                                     key={idx}
                                                                     size="small"
-                                                                    className="bg-gray-50"
+                                                                    className="bg-gray-50 hover:bg-gray-100 transition-colors"
                                                                 >
                                                                     <div className="flex items-start justify-between">
                                                                         <div className="flex-1">
-                                                                            <Text strong className="text-sm">
-                                                                                {ref.title}
-                                                                            </Text>
+                                                                            <div className="flex items-center space-x-2">
+                                                                                <Badge
+                                                                                    count={idx + 1}
+                                                                                    style={{ backgroundColor: '#1890ff' }}
+                                                                                />
+                                                                                <Text strong className="text-sm">
+                                                                                    {ref.title}
+                                                                                </Text>
+                                                                            </div>
                                                                             <Paragraph
-                                                                                className="!mb-0 mt-1 text-xs text-gray-600"
+                                                                                className="!mb-0 mt-2 text-xs text-gray-600"
                                                                                 ellipsis={{ rows: 2 }}
                                                                             >
                                                                                 {ref.snippet}
@@ -420,7 +618,7 @@ export default function QAPage() {
                                                                         </div>
                                                                         {ref.score !== undefined && (
                                                                             <Tag color="blue" className="ml-2">
-                                                                                {(ref.score * 100).toFixed(0)}%
+                                                                                相关度 {(ref.score * 100).toFixed(0)}%
                                                                             </Tag>
                                                                         )}
                                                                     </div>
@@ -444,37 +642,78 @@ export default function QAPage() {
                 {/* 当前流式回答 */}
                 {isStreaming && (
                     <div className="flex justify-start">
-                        <Card className="max-w-[80%] bg-white border-gray-200">
+                        <Card className="max-w-[80%] bg-white border-gray-200 shadow-md">
                             <div className="flex items-start space-x-2">
                                 <div className="flex-shrink-0">
                                     <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white">
-                                        <RobotOutlined />
+                                        <Spin indicator={<LoadingOutlined spin />} size="small" />
                                     </div>
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    {thinkingStatus && (
-                                        <div className="flex items-center space-x-2 text-gray-500 mb-2">
-                                            <Spin indicator={<LoadingOutlined spin />} size="small" />
-                                            <Text type="secondary">{thinkingStatus}</Text>
+                                    {/* Agent处理阶段进度 */}
+                                    {agentStages.length > 0 && (
+                                        <div className="mb-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <Text strong className="text-sm text-blue-700">
+                                                    <BulbOutlined className="mr-1" />
+                                                    Agent正在思考...
+                                                </Text>
+                                                <Badge
+                                                    count={`${agentStages.filter(s => s.status === 'finish').length}/${agentStages.length}`}
+                                                    style={{ backgroundColor: '#1890ff' }}
+                                                />
+                                            </div>
+                                            <Steps
+                                                size="small"
+                                                current={currentStageIndex}
+                                                items={agentStages.map(stage => ({
+                                                    title: stage.label,
+                                                    status: stage.status,
+                                                    icon: stage.icon,
+                                                }))}
+                                            />
+                                            {thinkingStatus && (
+                                                <Alert
+                                                    message={thinkingStatus}
+                                                    type="info"
+                                                    showIcon
+                                                    icon={<LoadingOutlined />}
+                                                    className="mt-2"
+                                                    banner
+                                                />
+                                            )}
                                         </div>
                                     )}
 
-                                    {currentReferences.length > 0 && !thinkingStatus && (
+                                    {/* 参考文档 */}
+                                    {currentReferences.length > 0 && (
                                         <>
-                                            <Text strong className="text-gray-600 mb-2 block">
-                                                <FileTextOutlined className="mr-1" />
-                                                参考文档 ({currentReferences.length})
-                                            </Text>
+                                            <Divider className="my-3" orientation="left">
+                                                <Text strong className="text-gray-600 text-sm">
+                                                    <FileTextOutlined className="mr-1" />
+                                                    检索到 {currentReferences.length} 篇相关文档
+                                                </Text>
+                                            </Divider>
                                             <Space direction="vertical" className="w-full mb-3">
                                                 {currentReferences.map((ref, idx) => (
-                                                    <Card key={idx} size="small" className="bg-gray-50">
+                                                    <Card
+                                                        key={idx}
+                                                        size="small"
+                                                        className="bg-gradient-to-r from-gray-50 to-blue-50 border-blue-200 hover:shadow-md transition-shadow"
+                                                    >
                                                         <div className="flex items-start justify-between">
                                                             <div className="flex-1">
-                                                                <Text strong className="text-sm">
-                                                                    {ref.title}
-                                                                </Text>
+                                                                <div className="flex items-center space-x-2">
+                                                                    <Badge
+                                                                        count={idx + 1}
+                                                                        style={{ backgroundColor: '#52c41a' }}
+                                                                    />
+                                                                    <Text strong className="text-sm">
+                                                                        {ref.title}
+                                                                    </Text>
+                                                                </div>
                                                                 <Paragraph
-                                                                    className="!mb-0 mt-1 text-xs text-gray-600"
+                                                                    className="!mb-0 mt-2 text-xs text-gray-600"
                                                                     ellipsis={{ rows: 2 }}
                                                                 >
                                                                     {ref.snippet}
@@ -492,11 +731,20 @@ export default function QAPage() {
                                         </>
                                     )}
 
+                                    {/* 流式答案 */}
                                     {currentAnswer && (
-                                        <div className="prose prose-sm max-w-none">
-                                            <ReactMarkdown>{currentAnswer}</ReactMarkdown>
-                                            <span className="inline-block w-2 h-4 bg-primary-500 animate-pulse ml-1"></span>
-                                        </div>
+                                        <>
+                                            <Divider className="my-3" orientation="left">
+                                                <Text strong className="text-gray-600 text-sm">
+                                                    <CheckCircleOutlined className="mr-1 text-green-500" />
+                                                    AI回答
+                                                </Text>
+                                            </Divider>
+                                            <div className="prose prose-sm max-w-none">
+                                                <ReactMarkdown>{currentAnswer}</ReactMarkdown>
+                                                <span className="inline-block w-2 h-4 bg-primary-500 animate-pulse ml-1"></span>
+                                            </div>
+                                        </>
                                     )}
                                 </div>
                             </div>

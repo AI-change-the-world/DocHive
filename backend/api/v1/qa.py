@@ -212,9 +212,82 @@ async def ask_question_agent_stream(
                         ensure_ascii=False,
                     ),
                 }
+                
+                # 发送ES全文检索阶段
+                yield {
+                    "event": "thinking",
+                    "data": json.dumps(
+                        {
+                            "event": "thinking",
+                            "data": {
+                                "stage": "es_fulltext",
+                                "message": "正在进行ES全文检索...",
+                            },
+                            "done": False,
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
 
                 # 运行智能体图
                 final_state = await search_agent_app.ainvoke(dict(initial_state))  # type: ignore
+                
+                # 发送SQL结构化检索阶段
+                yield {
+                    "event": "thinking",
+                    "data": json.dumps(
+                        {
+                            "event": "thinking",
+                            "data": {
+                                "stage": "sql_structured",
+                                "message": f"SQL结构化检索完成，识别类别: {final_state.get('category', '未知')}",
+                            },
+                            "done": False,
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+                
+                # 发送结果融合阶段
+                fusion_strategy = final_state.get("fusion_strategy", "none")
+                strategy_names = {
+                    "intersection": "交集策略",
+                    "union": "并集策略",
+                    "es_primary": "ES为主策略",
+                    "es_only": "ES单独检索",
+                    "sql_only": "SQL单独检索",
+                    "none": "无结果",
+                }
+                yield {
+                    "event": "thinking",
+                    "data": json.dumps(
+                        {
+                            "event": "thinking",
+                            "data": {
+                                "stage": "merge_results",
+                                "message": f"结果融合完成，采用{strategy_names.get(fusion_strategy, fusion_strategy)}",
+                            },
+                            "done": False,
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+                
+                # 发送生成答案阶段
+                yield {
+                    "event": "thinking",
+                    "data": json.dumps(
+                        {
+                            "event": "thinking",
+                            "data": {
+                                "stage": "generate",
+                                "message": "正在生成答案...",
+                            },
+                            "done": False,
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
 
                 # 检查是否有歧义消息需要用户澄清
                 if final_state.get("ambiguity_message"):
