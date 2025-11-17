@@ -1,4 +1,4 @@
-# DocHive - 智能文档分类分级系统
+# DocHive - 智能文档分类分级系统(此文档由大模型生成)
 
 > 基于大语言模型的智能文档管理平台
 
@@ -32,23 +32,23 @@ DocHive 是一个智能文档分类分级系统,通过大语言模型实现文�
 ### 核心功能
 
 - 🏷️ **自定义分类模板** - 支持多级分类层级设计
-- 📄 **文档上传解析** - 支持 PDF、DOCX、TXT、Markdown 等多种格式
+- 📄 **文档上传解析** - 支持 PDF、DOCX、TXT、Markdown 等多种格式 (```TODO``` 后续支持多模态大模型的OCR)
 - 🤖 **智能分类引擎** - 基于 LLM 的文档自动分类
 - 🔍 **信息抽取引擎** - 智能提取关键字段和结构化数据
 - 🔢 **自动编号管理** - 规则化编号生成与索引
 - 🔎 **多维度检索** - 支持全文检索、分类筛选、时间范围等
-- 👥 **权限管理** - 基于角色的访问控制
+- 👥 **权限管理** - 基于角色的访问控制 (```TODO``` )
 
 
 ## 🏗️ 技术栈
 
 ### 后端
 - **框架**: FastAPI 0.109
-- **数据库**: PostgreSQL / MySQL / **SQLite** (新增)
-- **搜索引擎**: Database FTS / Elasticsearch（推荐，支持复杂的查询逻辑） / ClickHouse (可配置)
+- **数据库**: PostgreSQL / MySQL / **SQLite**
+- **搜索引擎**:  Elasticsearch
 - **对象存储**: MinIO
 - **LLM**: OpenAI / DeepSeek
-- **任务队列**: Celery + Redis
+- **任务队列**: Celery + Redis (```TODO``` )
 
 ### 前端
 - **框架**: React 18.3 + TypeScript 5.9
@@ -63,29 +63,11 @@ DocHive 是一个智能文档分类分级系统,通过大语言模型实现文�
 
 ### 最简单的启动方式 (推荐开发使用)
 
-**Windows**:
 ```bash
 cd backend
-quick_start.bat
+pip install -r requirements.txt
+python run.py
 ```
-
-**Linux/Mac**:
-```bash
-cd backend
-chmod +x quick_start.sh
-./quick_start.sh
-```
-
-一键完成:
-- ✅ 检查环境
-- ✅ 安装依赖
-- ✅ 创建配置 (SQLite + Database FTS)
-- ✅ 初始化索引
-- ✅ 启动服务
-
-### 详细启动步骤
-
-参考 [快速启动指南](QUICK_START.md)
 
 ---
 
@@ -120,66 +102,6 @@ DocHive/
 ├── README_SEARCH_ENGINE.md  # 搜索引擎更新说明 (新增)
 └── UPDATE_SUMMARY.md      # 完整更新清单 (新增)
 ```
-
----
-
-## 🎯 配置选项
-
-### 数据库选择
-
-| 数据库     | 适用场景 | 配置                                    |
-| ---------- | -------- | --------------------------------------- |
-| **SQLite** | 开发调试 | `DATABASE_URL=sqlite:///./dochive.db`   |
-| PostgreSQL | 生产环境 | `DATABASE_URL=postgresql+asyncpg://...` |
-| MySQL      | 单机部署 | `DATABASE_URL=mysql+aiomysql://...`     |
-
-### 搜索引擎选择
-
-| 搜索引擎         | 适用场景      | 内存占用 | 配置                          |
-| ---------------- | ------------- | -------- | ----------------------------- |
-| **Database FTS** | 开发/中小规模 | ~50MB    | `SEARCH_ENGINE=database`      |
-| Elasticsearch    | 生产/大规模   | ~1GB     | `SEARCH_ENGINE=elasticsearch` |
-| ClickHouse       | 海量数据      | ~200MB   | `SEARCH_ENGINE=clickhouse`    |
-
-### 推荐配置
-
-**开发环境** (零配置):
-```env
-DATABASE_URL=sqlite:///./dochive.db
-SEARCH_ENGINE=database
-```
-
-**生产环境** (高性能):
-```env
-DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/dochive
-SEARCH_ENGINE=elasticsearch
-ELASTICSEARCH_URL=http://es-host:9200
-```
-
-📚 详细配置指南: [backend/docs/SEARCH_ENGINE.md](backend/docs/SEARCH_ENGINE.md)
-
----
-
-## 🔧 配置向导
-
-使用交互式配置向导快速配置搜索引擎:
-
-```bash
-cd backend
-
-# Windows
-configure_search.bat
-
-# Linux/Mac
-chmod +x configure_search.sh
-./configure_search.sh
-```
-
-向导功能:
-1. ✅ 选择搜索引擎类型
-2. ✅ 配置数据库连接
-3. ✅ 自动更新 `.env`
-4. ✅ 初始化搜索索引
 
 ---
 
@@ -255,19 +177,9 @@ pnpm test
 
 ## 📊 性能数据
 
-### 搜索性能 (10,000 篇文档)
+```TODO``` 
 
-| 搜索引擎       | 索引时间 | 查询响应 | 内存占用 |
-| -------------- | -------- | -------- | -------- |
-| SQLite FTS5    | 5s       | 150ms    | 50MB     |
-| PostgreSQL GIN | 3s       | 80ms     | 100MB    |
-| MySQL FULLTEXT | 4s       | 120ms    | 80MB     |
-| Elasticsearch  | 10s      | 20ms     | 1GB      |
-| ClickHouse     | 2s       | 15ms     | 200MB    |
-
----
-
-## 🤝 贡献
+### 🤝 贡献
 
 欢迎提交 Issue 和 Pull Request!
 
@@ -281,15 +193,7 @@ pnpm test
 
 ## 📄 许可证
 
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
-
----
-
-## 📞 支持
-
-- 📧 Email: support@dochive.example.com
-- 💬 Issue: [GitHub Issues](https://github.com/your-repo/DocHive/issues)
-- 📚 文档: [在线文档](https://docs.dochive.example.com)
+```TODO``` 
 
 ---
 
