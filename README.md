@@ -107,16 +107,8 @@ DocHive/
 
 ## 📖 文档
 
-| 文档                                                           | 描述             |
-| -------------------------------------------------------------- | ---------------- |
-| [QUICK_START.md](./docs/QUICK_START.md)                        | 快速启动指南     |
-| [README_SEARCH_ENGINE.md](./docs/README_SEARCH_ENGINE.md)      | 搜索引擎更新说明 |
-| [UPDATE_SUMMARY.md](./docs/UPDATE_SUMMARY.md)                  | 完整更新清单     |
-| [backend/README.md](backend/README.md)                         | 后端项目说明     |
-| [backend/docs/SEARCH_ENGINE.md](backend/docs/SEARCH_ENGINE.md) | 搜索引擎配置指南 |
-| [frontend/README.md](frontend/README.md)                       | 前端项目说明     |
-| [backend/ARCHITECTURE.md](backend/ARCHITECTURE.md)             | 后端架构说明     |
-| [backend/DEPLOYMENT.md](backend/DEPLOYMENT.md)                 | 部署指南         |
+| 文档 | 描述 |
+| ---- | ---- |
 
 ---
 
