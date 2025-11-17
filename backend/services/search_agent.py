@@ -1,5 +1,8 @@
 import asyncio
+import hashlib
 import json
+import re
+from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Set, TypedDict
 
 from elasticsearch import AsyncElasticsearch
@@ -23,6 +26,174 @@ from utils.llm_client import llm_client
 # 全局变量存储graph状态，用于支持中断和恢复
 # 注意: 生产环境应使用 Redis 等分布式缓存替代内存存储
 graph_state_storage: Dict[str, Dict[str, Any]] = {}
+
+
+# ==================== 文档去重工具函数 ====================
+
+def normalize_text(text: str) -> str:
+    """
+    文本标准化：去除HTML/Markdown标签、标点、多余空格等
+    
+    用于后续的哈希计算和相似度比对
+    """
+    if not text:
+        return ""
+    
+    # 移除HTML标签
+    text = re.sub(r'<[^>]+>', '', text)
+    # 移除Markdown标题标记
+    text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)
+    # 移除Markdown链接
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    # 转小写
+    text = text.lower()
+    # 折叠多余空白符
+    text = re.sub(r'\s+', ' ', text)
+    # 只保留中英文、数字
+    text = re.sub(r'[^\w\u4e00-\u9fa5]+', '', text)
+    
+    return text.strip()
+
+
+def compute_strong_hash(text: str) -> str:
+    """
+    计算文本的强哈希值（SHA256）
+    
+    用于检测完全相同的文档
+    """
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+
+def compute_simhash(text: str, hashbits: int = 64) -> int:
+    """
+    计算SimHash（局部敏感哈希）
+    
+    用于检测高度相似的文档
+    算法：对文本分词后，使用每个词的hash进行加权求和
+    """
+    if not text:
+        return 0
+    
+    # 简单分词（按空格）
+    tokens = text.split()
+    if not tokens:
+        return 0
+    
+    # 初始化特征向量
+    v = [0] * hashbits
+    
+    for token in tokens:
+        # 计算token的hash
+        h = int(hashlib.md5(token.encode('utf-8')).hexdigest(), 16)
+        
+        # 对每一位进行加权
+        for i in range(hashbits):
+            if h & (1 << i):
+                v[i] += 1
+            else:
+                v[i] -= 1
+    
+    # 生成SimHash指纹
+    fingerprint = 0
+    for i in range(hashbits):
+        if v[i] > 0:
+            fingerprint |= (1 << i)
+    
+    return fingerprint
+
+
+def hamming_distance(hash1: int, hash2: int) -> int:
+    """
+    计算两个SimHash的汉明距离
+    """
+    x = hash1 ^ hash2
+    distance = 0
+    while x:
+        distance += 1
+        x &= x - 1  # 清除最低位的1
+    return distance
+
+
+def compute_shingles(text: str, k: int = 5) -> Set[str]:
+    """
+    生成k-shingles（滑动窗口字符串集合）
+    
+    用于Jaccard相似度计算
+    """
+    if len(text) < k:
+        return {text}
+    
+    shingles = set()
+    for i in range(len(text) - k + 1):
+        shingles.add(text[i:i+k])
+    
+    return shingles
+
+
+def jaccard_similarity(set1: Set[str], set2: Set[str]) -> float:
+    """
+    计算Jaccard相似度
+    """
+    if not set1 or not set2:
+        return 0.0
+    
+    intersection = len(set1 & set2)
+    union = len(set1 | set2)
+    
+    return intersection / union if union > 0 else 0.0
+
+
+def should_remove_duplicate(doc_a: Dict[str, Any], doc_b: Dict[str, Any]) -> Optional[int]:
+    """
+    判断两个文档是否重复，返回应该移除的文档ID
+    
+    返回值：
+    - None: 不重复
+    - document_id: 应该移除的文档ID（保留内容更长、时间更新的）
+    
+    Args:
+        doc_a: 文档A的dict，包含 normalized, strong_hash, simhash, shingles, document_id, content
+        doc_b: 文档B的dict
+    """
+    # 阶段1: 强哈希完全相同
+    if doc_a['strong_hash'] == doc_b['strong_hash']:
+        logger.debug(f"文档 {doc_a['document_id']} 和 {doc_b['document_id']} 强哈希相同（完全重复）")
+        # 保留内容更长的
+        if len(doc_a['content']) < len(doc_b['content']):
+            return doc_a['document_id']
+        else:
+            return doc_b['document_id']
+    
+    # 阶段2: SimHash汉明距离很小（高度相似）
+    hamming_dist = hamming_distance(doc_a['simhash'], doc_b['simhash'])
+    if hamming_dist <= 3:  # 阈值可调
+        logger.debug(f"文档 {doc_a['document_id']} 和 {doc_b['document_id']} SimHash距离={hamming_dist}（高度相似）")
+        if len(doc_a['content']) < len(doc_b['content']):
+            return doc_a['document_id']
+        else:
+            return doc_b['document_id']
+    
+    # 阶段3: Jaccard相似度很高
+    jac_sim = jaccard_similarity(doc_a['shingles'], doc_b['shingles'])
+    if jac_sim > 0.75:  # 阈值可调
+        logger.debug(f"文档 {doc_a['document_id']} 和 {doc_b['document_id']} Jaccard={jac_sim:.3f}（内容重叠高）")
+        if len(doc_a['content']) < len(doc_b['content']):
+            return doc_a['document_id']
+        else:
+            return doc_b['document_id']
+    
+    # 阶段4: 只对Jaccard在0.5-0.75之间的做精细difflib比对（避免O(n²)开销）
+    if 0.5 < jac_sim <= 0.75:
+        # difflib比对（较慢，只对候选执行）
+        ratio = SequenceMatcher(None, doc_a['normalized'], doc_b['normalized']).ratio()
+        if ratio > 0.80:  # 阈值可调
+            logger.debug(f"文档 {doc_a['document_id']} 和 {doc_b['document_id']} difflib={ratio:.3f}（精细比对重复）")
+            if len(doc_a['content']) < len(doc_b['content']):
+                return doc_a['document_id']
+            else:
+                return doc_b['document_id']
+    
+    return None
 
 
 class RetrievalState(TypedDict):
@@ -575,6 +746,100 @@ def _convert_docs_to_results(documents: List[Document]) -> List[Dict[str, Any]]:
     return results
 
 
+# ==================== 节点 4.5: 文档去重 ====================
+async def deduplicate_documents(
+    state: RetrievalState, config: RunnableConfig
+) -> RetrievalState:
+    """
+    节点 4.5: 文档去重
+
+    基于三阶段去重算法，移除重复或高度相似的文档。
+
+    三阶段策略：
+    1. 强哈希 (SHA256): 检测完全相同的文档
+    2. SimHash + 汉明距离: 检测高度相似的文档
+    3. Jaccard相似度 + difflib: 检测“粘贴式重复”（一个文档被粘贴到另一个文档中）
+
+    输出:
+    - final_results: 去重后的文档列表
+    """
+    logger.info("========== 节点 4.5: 文档去重 ===========")
+
+    results = state.get("final_results", [])
+
+    if not results or len(results) <= 1:
+        logger.info("文档数量≤ 1，无需去重")
+        return state
+
+    logger.info(f"开始去重，原始文档数: {len(results)}")
+
+    # 阶段 0: 预处理 - 为每个文档计算特征
+    doc_features = []
+    for doc in results:
+        content = doc.get("content", "")
+        if not content:
+            continue
+
+        # 标准化文本
+        normalized = normalize_text(content)
+        if not normalized:
+            continue
+
+        doc_features.append(
+            {
+                "document_id": doc.get("document_id"),
+                "title": doc.get("title", ""),
+                "content": content,
+                "normalized": normalized,
+                "strong_hash": compute_strong_hash(normalized),
+                "simhash": compute_simhash(normalized),
+                "shingles": compute_shingles(normalized, k=5),
+                "original_index": results.index(doc),
+            }
+        )
+
+    logger.info(f"预处理完成，有效文档数: {len(doc_features)}")
+
+    if len(doc_features) <= 1:
+        return state
+
+    # 阶段 1-4: 进行去重比对
+    removed_ids = set()
+
+    for i in range(len(doc_features)):
+        if doc_features[i]["document_id"] in removed_ids:
+            continue
+
+        for j in range(i + 1, len(doc_features)):
+            if doc_features[j]["document_id"] in removed_ids:
+                continue
+
+            # 判断是否重复
+            remove_id = should_remove_duplicate(doc_features[i], doc_features[j])
+
+            if remove_id is not None:
+                removed_ids.add(remove_id)
+                logger.info(
+                    f"✖️  文档 {remove_id} 被标记为重复，将被移除"
+                )
+
+    # 过滤重复文档
+    deduplicated_results = [
+        doc
+        for doc in results
+        if doc.get("document_id") not in removed_ids
+    ]
+
+    logger.info(
+        f"✅ 去重完成: 原始 {len(results)} 篇 → 去重后 {len(deduplicated_results)} 篇 （移除 {len(removed_ids)} 篇）"
+    )
+
+    # 更新状态
+    state["final_results"] = deduplicated_results
+
+    return state
+
+
 # ==================== 节点 5: 歧义处理 ====================
 async def handle_ambiguity(
     state: RetrievalState, config: RunnableConfig
@@ -693,7 +958,7 @@ def should_ask_user(state: RetrievalState) -> str:
 
 # ==================== 构建 LangGraph 工作流 ====================
 """
-优化后的工作流程:
+优化后的工作流程：
 
 1. ES全文检索 (es_fulltext_retrieval)
    ↓
@@ -702,6 +967,8 @@ def should_ask_user(state: RetrievalState) -> str:
 3. 结果融合 (merge_retrieval_results)
    ↓
 4. 精细化筛选 (refined_filtering)
+   ↓
+4.5. 文档去重 (deduplicate_documents) ← 新增
    ↓
 5. [决策] 是否有歧义? (should_ask_user)
    ├─ ask_user: 歧义处理 (handle_ambiguity) → END
@@ -716,6 +983,7 @@ workflow.add_node("es_fulltext", es_fulltext_retrieval)  # 节点1: ES全文检�
 workflow.add_node("sql_structured", sql_structured_retrieval)  # 节点2: SQL结构化检索
 workflow.add_node("merge_results", merge_retrieval_results)  # 节点3: 结果融合
 workflow.add_node("refined_filter", refined_filtering)  # 节点4: 精细化筛选
+workflow.add_node("deduplicate", deduplicate_documents)  # 节点4.5: 文档去重 ← 新增
 workflow.add_node("ask_user", handle_ambiguity)  # 节点5a: 歧义处理
 workflow.add_node("generate_answer", generate_answer)  # 节点5b: 生成答案
 
@@ -726,11 +994,12 @@ workflow.set_entry_point("es_fulltext")
 workflow.add_edge("es_fulltext", "sql_structured")  # ES全文 → SQL结构化
 workflow.add_edge("sql_structured", "merge_results")  # SQL结构化 → 结果融合
 workflow.add_edge("merge_results", "refined_filter")  # 结果融合 → 精细化筛选
+workflow.add_edge("refined_filter", "deduplicate")  # 精细化筛选 → 文档去重 ← 新增
 
 # 5. 添加条件边 (Conditional Edge)
-#    在精细化筛选后,判断是否有歧义
+#    在去重后，判断是否有歧义
 workflow.add_conditional_edges(
-    "refined_filter",  # 源节点
+    "deduplicate",  # 源节点
     should_ask_user,  # 决策函数
     {
         "ask_user": "ask_user",  # 有歧义 → 向用户提问
@@ -747,5 +1016,5 @@ app : CompiledStateGraph = workflow.compile()
 
 logger.info("✅ LangGraph 智能体工作流编译完成")
 logger.info(
-    "📊 工作流程: ES全文检索 → SQL结构化检索 → 结果融合 → 精细化筛选 → 生成答案/歧义处理"
+    "📊 工作流程: ES全文检索 → SQL结构化检索 → 结果融合 → 精细化筛选 → 文档去重 → 生成答案/歧义处理"
 )
