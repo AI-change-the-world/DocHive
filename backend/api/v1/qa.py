@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from backend.config import get_settings
+from config import get_settings
 from database import get_db
 from schemas.api_schemas import (
     QARequest,
@@ -159,22 +159,41 @@ async def ask_question_agent_stream(
             )
 
             try:
-                # 构造初始状态
+                # 构造初始状态 (优化后的状态机)
                 initial_state: RetrievalState = {
+                    # 必需输入
                     "query": qa_request.question,
-                    "template_id": qa_request.template_id or 0,  # 确保是int类型
+                    "template_id": qa_request.template_id or 0,
                     "db": db,
                     "es_client": es_client,
                     "session_id": session_id,
+                    
+                    # 节点 1 (ES全文检索) 产出
+                    "es_fulltext_results": [],
+                    "es_document_ids": set(),
+                    
+                    # 节点 2 (SQL结构化检索) 产出
                     "class_template_levels": None,
-                    "docs": [],
                     "category": "*",
                     "category_field_code": None,
+                    "sql_extracted_conditions": [],
+                    "sql_document_ids": set(),
+                    
+                    # 节点 3 (结果融合) 产出
+                    "merged_document_ids": [],
+                    "merged_documents": [],
+                    "fusion_strategy": "none",
+                    
+                    # 节点 4 (精细化筛选) 产出
                     "document_type_fields": [],
-                    "extracted_llm_json": None,
-                    "es_query": None,
-                    "es_results": [],
+                    "refined_conditions": {},
+                    "final_es_query": None,
+                    "final_results": [],
+                    
+                    # 节点 5 (歧义处理) 产出
                     "ambiguity_message": None,
+                    
+                    # 节点 6 (生成答案) 产出
                     "answer": None,
                 }
 
@@ -195,7 +214,7 @@ async def ask_question_agent_stream(
                 }
 
                 # 运行智能体图
-                final_state = await search_agent_app.ainvoke(dict(initial_state))
+                final_state = await search_agent_app.ainvoke(dict(initial_state))  # type: ignore
 
                 # 检查是否有歧义消息需要用户澄清
                 if final_state.get("ambiguity_message"):
@@ -213,10 +232,10 @@ async def ask_question_agent_stream(
                     return
 
                 # 发送检索到的文档引用
-                es_results = final_state.get("es_results", [])
-                if es_results:
+                final_results = final_state.get("final_results", [])
+                if final_results:
                     references = []
-                    for i, doc in enumerate(es_results):
+                    for i, doc in enumerate(final_results):
                         references.append(
                             {
                                 "document_id": doc.get("document_id", i),
@@ -226,7 +245,7 @@ async def ask_question_agent_stream(
                                     if doc.get("content")
                                     else ""
                                 ),
-                                "score": 1.0,  # 简化处理
+                                "score": 1.0,
                             }
                         )
 
@@ -367,13 +386,13 @@ async def clarify_question_agent(
                 }
 
                 # 继续运行智能体图
-                final_state = await search_agent_app.ainvoke(dict(stored_state))
+                final_state = await search_agent_app.ainvoke(dict(stored_state))  # type: ignore
 
                 # 发送检索到的文档引用
-                es_results = final_state.get("es_results", [])
-                if es_results:
+                final_results = final_state.get("final_results", [])
+                if final_results:
                     references = []
-                    for i, doc in enumerate(es_results):
+                    for i, doc in enumerate(final_results):
                         references.append(
                             {
                                 "document_id": doc.get("document_id", i),
@@ -383,7 +402,7 @@ async def clarify_question_agent(
                                     if doc.get("content")
                                     else ""
                                 ),
-                                "score": 1.0,  # 简化处理
+                                "score": 1.0,
                             }
                         )
 

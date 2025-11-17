@@ -373,7 +373,8 @@ class DocumentService:
 
         # 将文档索引到Elasticsearch
         try:
-            from utils.search_engine import search_client
+            from utils.search_engine import get_search_client
+            search_client = get_search_client()
 
             # 获取upload_time的值
             upload_time = getattr(document, "upload_time", None)
