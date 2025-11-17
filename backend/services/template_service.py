@@ -1,21 +1,19 @@
 import json
+import time
+from typing import Any, Dict, List, Optional
+
+from loguru import logger
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
-from typing import List, Optional, Dict, Any
-from models.database_models import (
-    ClassTemplate,
-    ClassTemplateConfigs,
-    DocumentType,
-)
+
+from models.database_models import ClassTemplate, ClassTemplateConfigs, DocumentType
 from schemas.api_schemas import (
     ClassTemplateCreate,
     ClassTemplateUpdate,
     DocumentTypeCreate,
     TemplateSelection,
 )
-import time
 from utils.llm_client import llm_client
-from loguru import logger
 
 
 class TemplateService:

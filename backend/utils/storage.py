@@ -1,5 +1,6 @@
-import opendal
 from typing import BinaryIO, Optional
+
+import opendal
 from loguru import logger
 
 

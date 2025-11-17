@@ -1,29 +1,25 @@
+import asyncio
+import json
 import traceback
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+import uuid
+from typing import Any, Dict, Optional
+
+from elasticsearch import AsyncElasticsearch
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette import EventSourceResponse
+
+from api.deps import get_current_user
 from config import get_settings
 from database import get_db
-from schemas.api_schemas import (
-    QARequest,
-    QAResponse,
-    ResponseBase,
-)
-from services.qa_service import QAService
-from api.deps import get_current_user
 from models.database_models import User
-from sse_starlette import EventSourceResponse
-import json
-import uuid
-import asyncio
-from typing import Dict, Any, Optional
+from schemas.api_schemas import QARequest, QAResponse, ResponseBase
+from services.qa_service import QAService
 
 # 导入search_agent相关模块
-from services.search_agent import (
-    app as search_agent_app,
-    RetrievalState,
-    graph_state_storage,
-)
-from elasticsearch import AsyncElasticsearch
+from services.search_agent import RetrievalState
+from services.search_agent import app as search_agent_app
+from services.search_agent import graph_state_storage
 
 router = APIRouter(prefix="/qa", tags=["智能问答"])
 
@@ -159,244 +155,232 @@ async def ask_question_agent_stream(
             es_client = AsyncElasticsearch(
                 [settings.ELASTICSEARCH_URL], verify_certs=False
             )
+            # 构造初始状态 (优化后的状态机)
+            initial_state: RetrievalState = {
+                # 必需输入
+                "query": qa_request.question,
+                "template_id": qa_request.template_id or 0,
+                "session_id": session_id,
+                # 节点 1 (ES全文检索) 产出
+                "es_fulltext_results": [],
+                "es_document_ids": set(),
+                # 节点 2 (SQL结构化检索) 产出
+                "class_template_levels": None,
+                "category": "*",
+                "category_field_code": None,
+                "sql_extracted_conditions": [],
+                "sql_document_ids": set(),
+                # 节点 3 (结果融合) 产出
+                "merged_document_ids": [],
+                "merged_documents": [],
+                "fusion_strategy": "none",
+                # 节点 4 (精细化筛选) 产出
+                "document_type_fields": [],
+                "refined_conditions": {},
+                "final_es_query": None,
+                "final_results": [],
+                # 节点 5 (歧义处理) 产出
+                "ambiguity_message": None,
+                # 节点 6 (生成答案) 产出
+                "answer": None,
+            }
 
-            try:
-                # 构造初始状态 (优化后的状态机)
-                initial_state: RetrievalState = {
-                    # 必需输入
-                    "query": qa_request.question,
-                    "template_id": qa_request.template_id or 0,
-                    "session_id": session_id,
-                    
-                    # 节点 1 (ES全文检索) 产出
-                    "es_fulltext_results": [],
-                    "es_document_ids": set(),
-                    
-                    # 节点 2 (SQL结构化检索) 产出
-                    "class_template_levels": None,
-                    "category": "*",
-                    "category_field_code": None,
-                    "sql_extracted_conditions": [],
-                    "sql_document_ids": set(),
-                    
-                    # 节点 3 (结果融合) 产出
-                    "merged_document_ids": [],
-                    "merged_documents": [],
-                    "fusion_strategy": "none",
-                    
-                    # 节点 4 (精细化筛选) 产出
-                    "document_type_fields": [],
-                    "refined_conditions": {},
-                    "final_es_query": None,
-                    "final_results": [],
-                    
-                    # 节点 5 (歧义处理) 产出
-                    "ambiguity_message": None,
-                    
-                    # 节点 6 (生成答案) 产出
-                    "answer": None,
-                }
-
-                # 发送开始处理消息
-                yield {
-                    "event": "thinking",
-                    "data": json.dumps(
-                        {
-                            "event": "thinking",
-                            "data": {
-                                "stage": "start",
-                                "message": "开始处理您的问题...",
-                            },
-                            "done": False,
+            # 发送开始处理消息
+            yield {
+                "event": "thinking",
+                "data": json.dumps(
+                    {
+                        "event": "thinking",
+                        "data": {
+                            "stage": "start",
+                            "message": "开始处理您的问题...",
                         },
-                        ensure_ascii=False,
-                    ),
-                }
-                
-                # 使用astream_events流式处理LangGraph,通过config注入db和es_client
-                final_state = None
-                async for event in search_agent_app.astream_events(
-                    initial_state,
-                    config={"configurable": {"db": db, "es": es_client}},
-                    version="v1"
-                ):
-                    # 处理不同类型的事件
-                    event_type = event.get("event")
-                    event_name = event.get("name", "")
-                    
-                    # 调试日志
-                    print(f"[LangGraph Event] type={event_type}, name={event_name}")
-                    
-                    # 节点开始执行
-                    if event_type == "on_chain_start":
-                        node_name = event_name
-                        
-                        # 根据节点名称发送相应的thinking事件
-                        if node_name == "es_fulltext":
-                            yield {
-                                "event": "thinking",
-                                "data": json.dumps(
-                                    {
-                                        "event": "thinking",
-                                        "data": {
-                                            "stage": "es_fulltext",
-                                            "message": "正在进行ES全文检索...",
-                                        },
-                                        "done": False,
-                                    },
-                                    ensure_ascii=False,
-                                ),
-                            }
-                        elif node_name == "sql_structured":
-                            yield {
-                                "event": "thinking",
-                                "data": json.dumps(
-                                    {
-                                        "event": "thinking",
-                                        "data": {
-                                            "stage": "sql_structured",
-                                            "message": "正在进行SQL结构化检索...",
-                                        },
-                                        "done": False,
-                                    },
-                                    ensure_ascii=False,
-                                ),
-                            }
-                        elif node_name == "merge_results":
-                            yield {
-                                "event": "thinking",
-                                "data": json.dumps(
-                                    {
-                                        "event": "thinking",
-                                        "data": {
-                                            "stage": "merge_results",
-                                            "message": "正在融合检索结果...",
-                                        },
-                                        "done": False,
-                                    },
-                                    ensure_ascii=False,
-                                ),
-                            }
-                        elif node_name == "refined_filter":
-                            yield {
-                                "event": "thinking",
-                                "data": json.dumps(
-                                    {
-                                        "event": "thinking",
-                                        "data": {
-                                            "stage": "refined_filter",
-                                            "message": "正在进行精细化筛选...",
-                                        },
-                                        "done": False,
-                                    },
-                                    ensure_ascii=False,
-                                ),
-                            }
-                        elif node_name == "generate_answer":
-                            yield {
-                                "event": "thinking",
-                                "data": json.dumps(
-                                    {
-                                        "event": "thinking",
-                                        "data": {
-                                            "stage": "generate",
-                                            "message": "正在生成答案...",
-                                        },
-                                        "done": False,
-                                    },
-                                    ensure_ascii=False,
-                                ),
-                            }
-                    
-                    # 节点执行完成，获取最终状态
-                    elif event_type == "on_chain_end":
-                        # 保存最终状态
-                        if event_name == "LangGraph":
-                            final_state = event.get("data", {}).get("output", {})
-                            print(f"[LangGraph] 获取到最终状态: {list(final_state.keys()) if final_state else 'None'}")
-                
-                # 如果没有获取到final_state，使用默认值
-                if final_state is None:
-                    print("[LangGraph] 警告: 没有获取到final_state")
-                    final_state = {}
+                        "done": False,
+                    },
+                    ensure_ascii=False,
+                ),
+            }
 
-                # 检查是否有歧义消息需要用户澄清
-                if final_state.get("ambiguity_message"):
-                    yield {
-                        "event": "ambiguity",
-                        "data": json.dumps(
-                            {
-                                "event": "ambiguity",
-                                "data": {"message": final_state["ambiguity_message"]},
-                                "done": True,
-                            },
-                            ensure_ascii=False,
-                        ),
-                    }
-                    return
+            # 使用astream_events流式处理LangGraph,通过config注入db和es_client
+            final_state = None
+            async for event in search_agent_app.astream_events(
+                initial_state,
+                config={"configurable": {"db": db, "es": es_client}},
+                version="v1",
+            ):
+                # 处理不同类型的事件
+                event_type = event.get("event")
+                event_name = event.get("name", "")
 
-                # 发送检索到的文档引用
-                final_results = final_state.get("final_results", [])
-                if final_results:
-                    references = []
-                    for i, doc in enumerate(final_results):
-                        references.append(
-                            {
-                                "document_id": doc.get("document_id", i),
-                                "title": doc.get("title", "未知文档"),
-                                "snippet": (
-                                    doc.get("content", "")[:200] + "..."
-                                    if doc.get("content")
-                                    else ""
-                                ),
-                                "score": 1.0,
-                            }
+                # 调试日志
+                print(f"[LangGraph Event] type={event_type}, name={event_name}")
+
+                # 节点开始执行
+                if event_type == "on_chain_start":
+                    node_name = event_name
+
+                    # 根据节点名称发送相应的thinking事件
+                    if node_name == "es_fulltext":
+                        yield {
+                            "event": "thinking",
+                            "data": json.dumps(
+                                {
+                                    "event": "thinking",
+                                    "data": {
+                                        "stage": "es_fulltext",
+                                        "message": "正在进行ES全文检索...",
+                                    },
+                                    "done": False,
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    elif node_name == "sql_structured":
+                        yield {
+                            "event": "thinking",
+                            "data": json.dumps(
+                                {
+                                    "event": "thinking",
+                                    "data": {
+                                        "stage": "sql_structured",
+                                        "message": "正在进行SQL结构化检索...",
+                                    },
+                                    "done": False,
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    elif node_name == "merge_results":
+                        yield {
+                            "event": "thinking",
+                            "data": json.dumps(
+                                {
+                                    "event": "thinking",
+                                    "data": {
+                                        "stage": "merge_results",
+                                        "message": "正在融合检索结果...",
+                                    },
+                                    "done": False,
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    elif node_name == "refined_filter":
+                        yield {
+                            "event": "thinking",
+                            "data": json.dumps(
+                                {
+                                    "event": "thinking",
+                                    "data": {
+                                        "stage": "refined_filter",
+                                        "message": "正在进行精细化筛选...",
+                                    },
+                                    "done": False,
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    elif node_name == "generate_answer":
+                        yield {
+                            "event": "thinking",
+                            "data": json.dumps(
+                                {
+                                    "event": "thinking",
+                                    "data": {
+                                        "stage": "generate",
+                                        "message": "正在生成答案...",
+                                    },
+                                    "done": False,
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+
+                # 节点执行完成，获取最终状态
+                elif event_type == "on_chain_end":
+                    # 保存最终状态
+                    if event_name == "LangGraph":
+                        final_state = event.get("data", {}).get("output", {})
+                        print(
+                            f"[LangGraph] 获取到最终状态: {list(final_state.keys()) if final_state else 'None'}"
                         )
 
-                    yield {
-                        "event": "references",
-                        "data": json.dumps(
-                            {
-                                "event": "references",
-                                "data": {"references": references},
-                                "done": False,
-                            },
-                            ensure_ascii=False,
-                        ),
-                    }
+            # 如果没有获取到final_state，使用默认值
+            if final_state is None:
+                print("[LangGraph] 警告: 没有获取到final_state")
+                final_state = {}
 
-                # 发送最终答案
-                answer = final_state.get("answer", "抱歉，我没有找到相关答案。")
+            # 检查是否有歧义消息需要用户澄清
+            if final_state.get("ambiguity_message"):
                 yield {
-                    "event": "answer",
+                    "event": "ambiguity",
                     "data": json.dumps(
                         {
-                            "event": "answer",
-                            "data": {"content": answer},
-                            "done": False,
-                        },
-                        ensure_ascii=False,
-                    ),
-                }
-
-                # 发送完成信号
-                yield {
-                    "event": "complete",
-                    "data": json.dumps(
-                        {
-                            "event": "complete",
-                            "data": {"message": "回答完成"},
+                            "event": "ambiguity",
+                            "data": {"message": final_state["ambiguity_message"]},
                             "done": True,
                         },
                         ensure_ascii=False,
                     ),
                 }
-            except:
-                traceback.print_exc()
+                return
 
-            finally:
-                # 关闭Elasticsearch客户端
-                await es_client.close()
+            # 发送检索到的文档引用
+            final_results = final_state.get("final_results", [])
+            if final_results:
+                references = []
+                for i, doc in enumerate(final_results):
+                    references.append(
+                        {
+                            "document_id": doc.get("document_id", i),
+                            "title": doc.get("title", "未知文档"),
+                            "snippet": (
+                                doc.get("content", "")[:200] + "..."
+                                if doc.get("content")
+                                else ""
+                            ),
+                            "score": 1.0,
+                        }
+                    )
+
+                yield {
+                    "event": "references",
+                    "data": json.dumps(
+                        {
+                            "event": "references",
+                            "data": {"references": references},
+                            "done": False,
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+
+            # 发送最终答案
+            answer = final_state.get("answer", "抱歉，我没有找到相关答案。")
+            yield {
+                "event": "answer",
+                "data": json.dumps(
+                    {
+                        "event": "answer",
+                        "data": {"content": answer},
+                        "done": False,
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+
+            # 发送完成信号
+            yield {
+                "event": "complete",
+                "data": json.dumps(
+                    {
+                        "event": "complete",
+                        "data": {"message": "回答完成"},
+                        "done": True,
+                    },
+                    ensure_ascii=False,
+                ),
+            }
 
         except Exception as e:
             # 发送错误事件
@@ -411,6 +395,9 @@ async def ask_question_agent_stream(
                     ensure_ascii=False,
                 ),
             }
+        finally:
+            # 关闭Elasticsearch客户端
+            await es_client.close()
 
     return EventSourceResponse(event_generator())
 

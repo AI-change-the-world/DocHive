@@ -1,25 +1,27 @@
 import json
+import time
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Any, AsyncGenerator, BinaryIO, Dict, List, Optional
+
+from loguru import logger
 from sqlalchemy import select
-from typing import Any, AsyncGenerator, Optional, BinaryIO, List, Dict
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing_extensions import deprecated
+
 from models.database_models import (
+    ClassTemplate,
     ClassTemplateConfigs,
     Document,
-    ClassTemplate,
     DocumentType,
     DocumentTypeField,
     TemplateDocumentMapping,
 )
 from schemas.api_schemas import DocumentCreate, DocumentUpdate, SSEEvent
-from utils.storage import storage_client
-from utils.parser import DocumentParser
-import uuid
-import time
-from pathlib import Path
-from sqlalchemy.ext.asyncio import AsyncSession
 from utils.llm_client import llm_client
-from loguru import logger
-from typing_extensions import deprecated
-from datetime import datetime
+from utils.parser import DocumentParser
+from utils.storage import storage_client
 
 EXTRACT_FIELES_PROMPT = """
 你是一名信息抽取专家。请从以下文档中提取指定字段的信息，并以 JSON 格式输出。
@@ -374,6 +376,7 @@ class DocumentService:
         # 将文档索引到Elasticsearch
         try:
             from utils.search_engine import get_search_client
+
             search_client = get_search_client()
 
             # 获取upload_time的值

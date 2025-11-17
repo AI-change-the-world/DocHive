@@ -1,15 +1,17 @@
+import logging
 import traceback
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from contextlib import asynccontextmanager
-from config import get_settings, init_nacos_config, close_nacos_config
-from database import init_db
-from api.router import api_v1_router
-from utils.search_engine import get_search_client
-import logging
 from loguru import logger
+
+from api.router import api_v1_router
+from config import close_nacos_config, get_settings, init_nacos_config
+from database import init_db
+from utils.search_engine import get_search_client
 
 settings = get_settings()
 

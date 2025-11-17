@@ -4,20 +4,21 @@
 """
 
 from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db, get_current_user
-from models.database_models import User, DocumentType, DocumentTypeField
+from api.deps import get_current_user, get_db
+from models.database_models import DocumentType, DocumentTypeField, User
 from schemas.api_schemas import (
-    ResponseBase,
     DocumentTypeCreate,
-    DocumentTypeUpdate,
-    DocumentTypeResponse,
     DocumentTypeFieldCreate,
-    DocumentTypeFieldUpdate,
     DocumentTypeFieldResponse,
     DocumentTypeFieldSchema,
+    DocumentTypeFieldUpdate,
+    DocumentTypeResponse,
+    DocumentTypeUpdate,
+    ResponseBase,
 )
 from services.document_type_service import DocumentTypeService
 

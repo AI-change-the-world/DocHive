@@ -2,13 +2,15 @@
 搜索引擎 - Elasticsearch
 """
 
-from typing import Dict, Any, Optional, List
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from elasticsearch import AsyncElasticsearch
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from models.database_models import TemplateDocumentMapping
-from elasticsearch import AsyncElasticsearch
 
 
 class SearchEngine:

@@ -4,9 +4,11 @@
 """
 
 import asyncio
+
 from sqlalchemy import text
-from database import engine
+
 from config import get_settings
+from database import engine
 
 settings = get_settings()
 

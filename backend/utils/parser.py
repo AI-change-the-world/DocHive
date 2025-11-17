@@ -1,9 +1,11 @@
-from typing import Optional
 import io
 from pathlib import Path
-import PyPDF2
+from typing import Optional
+
 import docx
+import PyPDF2
 from PIL import Image
+
 from config import get_settings
 
 settings = get_settings()

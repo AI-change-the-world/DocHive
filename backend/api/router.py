@@ -1,13 +1,14 @@
 from fastapi import APIRouter
+
 from api.v1 import (
     auth,
-    templates,
-    documents,
-    config,
     document_types,
-    qa,
+    documents,
     llm_logs,
+    qa,
     template_configs,
+    templates,
+    sys_config
 )
 
 # 创建 v1 版本路由
@@ -17,7 +18,7 @@ api_v1_router = APIRouter(prefix="/api/v1")
 api_v1_router.include_router(auth.router)
 api_v1_router.include_router(templates.router)
 api_v1_router.include_router(documents.router)
-api_v1_router.include_router(config.router)
+api_v1_router.include_router(sys_config.router)
 api_v1_router.include_router(
     document_types.router, prefix="/document-types", tags=["document-types"]
 )

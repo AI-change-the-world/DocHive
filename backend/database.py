@@ -1,13 +1,15 @@
+from typing import Optional
+
+from loguru import logger
 from sqlalchemy.ext.asyncio import (
-    create_async_engine,
+    AsyncEngine,
     AsyncSession,
     async_sessionmaker,
-    AsyncEngine,
+    create_async_engine,
 )
 from sqlalchemy.orm import declarative_base
+
 from config import get_settings
-from loguru import logger
-from typing import Optional
 
 settings = get_settings()
 

@@ -1,7 +1,9 @@
-from cryptography.fernet import Fernet
 from datetime import datetime, timedelta
 from typing import Optional
+
+from cryptography.fernet import Fernet
 from jose import JWTError, jwt
+
 from config import get_settings
 
 settings = get_settings()

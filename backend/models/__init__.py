@@ -1,12 +1,12 @@
 from models.database_models import (
-    User,
-    UserRole,
     ClassTemplate,
+    ClassTemplateConfigs,
     Document,
     ExtractionConfig,
     OperationLog,
     SystemConfig,
-    ClassTemplateConfigs,
+    User,
+    UserRole,
 )
 
 __all__ = [

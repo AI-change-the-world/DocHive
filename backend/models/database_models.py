@@ -1,19 +1,13 @@
-import time
-from loguru import logger
-from sqlalchemy import (
-    Column,
-    Integer,
-    String,
-    Text,
-    Boolean,
-    ForeignKey,
-    Enum as SQLEnum,
-    inspect,
-    event,
-)
-from datetime import datetime
-from database import Base
 import enum
+import time
+from datetime import datetime
+
+from loguru import logger
+from sqlalchemy import Boolean, Column
+from sqlalchemy import Enum as SQLEnum
+from sqlalchemy import ForeignKey, Integer, String, Text, event, inspect
+
+from database import Base
 
 
 def update_timestamp_before_update(mapper, connection, target):

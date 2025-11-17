@@ -1,20 +1,22 @@
 import traceback
+from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
-from typing import List
+
+from api.deps import get_current_user
 from database import get_db
+from models.database_models import User
 from schemas.api_schemas import (
     ClassTemplateCreate,
-    ClassTemplateUpdate,
     ClassTemplateResponse,
-    ResponseBase,
+    ClassTemplateUpdate,
     PaginatedResponse,
+    ResponseBase,
 )
 from services.template_service import TemplateService
-from api.deps import get_current_user
-from models.database_models import User
-from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/templates", tags=["分类模板管理"])
 

@@ -4,17 +4,19 @@
 """
 
 import traceback
-from typing import List, Optional, Dict, Any
-from sqlalchemy import select, and_
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from models.database_models import DocumentType, DocumentTypeField
 from schemas.api_schemas import (
     DocumentTypeCreate,
-    DocumentTypeUpdate,
     DocumentTypeFieldCreate,
-    DocumentTypeFieldUpdate,
     DocumentTypeFieldSchema,
+    DocumentTypeFieldUpdate,
+    DocumentTypeUpdate,
 )
-from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class DocumentTypeService:

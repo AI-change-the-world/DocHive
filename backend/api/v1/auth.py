@@ -1,18 +1,20 @@
 import traceback
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
+
+from api.deps import get_current_user
 from database import get_db
+from models.database_models import User
 from schemas.api_schemas import (
     LoginRequest,
+    ResponseBase,
     Token,
     UserCreate,
     UserResponse,
-    ResponseBase,
 )
 from services.auth_service import AuthService
-from api.deps import get_current_user
-from models.database_models import User
-from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/auth", tags=["认证与授权"])
 

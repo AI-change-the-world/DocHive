@@ -4,14 +4,15 @@
 """
 
 import asyncio
+from datetime import datetime
+
+from config import get_settings
 from utils.search_engine import (
-    get_search_engine,
+    ClickHouseEngine,
     DatabaseEngine,
     ElasticsearchEngine,
-    ClickHouseEngine,
+    get_search_engine,
 )
-from config import get_settings
-from datetime import datetime
 
 settings = get_settings()
 

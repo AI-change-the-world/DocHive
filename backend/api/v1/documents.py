@@ -1,24 +1,26 @@
+import json
 import traceback
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
-from sqlalchemy.orm import Session
 from typing import Optional
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
+from sse_starlette import EventSourceResponse
+
+from api.deps import get_current_user
+from config import get_settings
 from database import get_db
+from models.database_models import TemplateDocumentMapping, User
 from schemas.api_schemas import (
     DocumentCreate,
-    DocumentUpdate,
     DocumentResponse,
-    ResponseBase,
+    DocumentUpdate,
     PaginatedResponse,
+    ResponseBase,
 )
 from services.document_service import DocumentService
-from api.deps import get_current_user
-from models.database_models import User, TemplateDocumentMapping
-from config import get_settings
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from services.search_service import SearchService
-import json
-from sse_starlette import EventSourceResponse
 
 router = APIRouter(prefix="/documents", tags=["文档上传与管理"])
 settings = get_settings()

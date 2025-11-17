@@ -1,15 +1,17 @@
-from sqlalchemy import select
 from typing import Optional
+
+from loguru import logger
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from models.database_models import User, UserRole
+from schemas.api_schemas import UserCreate
 from utils.security import (
-    verify_password,
-    get_password_hash,
     create_access_token,
     create_refresh_token,
+    get_password_hash,
+    verify_password,
 )
-from schemas.api_schemas import UserCreate
-from loguru import logger
-from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class AuthService:

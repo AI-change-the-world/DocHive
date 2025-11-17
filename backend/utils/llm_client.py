@@ -1,9 +1,10 @@
-from loguru import logger
-from typing import Dict, Any, Optional, List
-from openai import OpenAI
-import time
 import json
+import time
 from contextlib import asynccontextmanager
+from typing import Any, Dict, List, Optional
+
+from loguru import logger
+from openai import OpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 

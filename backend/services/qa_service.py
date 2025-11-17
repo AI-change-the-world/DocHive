@@ -1,10 +1,12 @@
-from sqlalchemy.ext.asyncio import AsyncSession
+import json
+from typing import Any, AsyncGenerator, Dict, List, Optional
+
 from sqlalchemy import select
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from models.database_models import Document
 from utils.llm_client import llm_client
 from utils.search_engine import get_search_client
-import json
 
 
 class QAService:
@@ -181,6 +183,7 @@ class QAService:
 
             # 使用OpenAI客户端的流式API
             from openai import OpenAI
+
             from config import get_settings
 
             settings = get_settings()

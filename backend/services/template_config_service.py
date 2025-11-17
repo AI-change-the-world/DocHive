@@ -1,6 +1,8 @@
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from typing import List, Optional
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from models.database_models import ClassTemplateConfigs
 from schemas.api_schemas import TemplateConfigUpdate
 

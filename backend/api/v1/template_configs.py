@@ -1,16 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from database import get_db
-from schemas.api_schemas import (
-    TemplateConfigResponse,
-    TemplateConfigUpdate,
-    ResponseBase,
-)
-from services.template_config_service import TemplateConfigService
-from api.deps import get_current_user
-from models.database_models import User
 from typing import List
 
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from api.deps import get_current_user
+from database import get_db
+from models.database_models import User
+from schemas.api_schemas import (
+    ResponseBase,
+    TemplateConfigResponse,
+    TemplateConfigUpdate,
+)
+from services.template_config_service import TemplateConfigService
 
 router = APIRouter(prefix="/template-configs", tags=["模板配置管理"])
 

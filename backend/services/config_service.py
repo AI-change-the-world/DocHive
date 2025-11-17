@@ -1,8 +1,10 @@
-from sqlalchemy.orm import Session
-from sqlalchemy import select
 from typing import List, Optional
-from models.database_models import SystemConfig
+
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
+
+from models.database_models import SystemConfig
 
 
 class ConfigService:
