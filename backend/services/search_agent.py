@@ -5,6 +5,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from elasticsearch import AsyncElasticsearch
 from langgraph.graph import END, StateGraph
+from langchain_core.runnables import RunnableConfig
 
 from config import get_settings
 from models.database_models import (
@@ -32,13 +33,13 @@ class RetrievalState(TypedDict):
     3. 结果融合 -> 合并两路检索结果
     4. 精细化筛选 -> 基于文档类型特定字段进一步筛选
     5. 生成答案 -> RAG生成最终回答
+    
+    注意: db 和 es_client 不在 state 中，通过 config 注入
     """
 
     # === 必需输入 ===
     query: str  # 用户查询
     template_id: int  # 模板ID
-    db: AsyncSession  # 数据库会话 (注意: 不应序列化到存储)
-    es_client: AsyncElasticsearch  # ES 客户端 (注意: 不应序列化到存储)
     session_id: str  # 会话ID
 
     # === 节点 1 (ES全文检索) 产出 ===
@@ -71,7 +72,7 @@ class RetrievalState(TypedDict):
 
 
 # ==================== 节点 1: ES 全文检索 ====================
-async def es_fulltext_retrieval(state: RetrievalState) -> RetrievalState:
+async def es_fulltext_retrieval(state: RetrievalState, config: RunnableConfig) -> RetrievalState:
     """
     节点 1: ES 全文检索
     
@@ -83,6 +84,9 @@ async def es_fulltext_retrieval(state: RetrievalState) -> RetrievalState:
     - es_document_ids: 文档 ID 集合
     """
     logger.info("========== 节点 1: ES 全文检索 ==========")
+    
+    # 从 config 获取 es_client
+    es_client: AsyncElasticsearch = config.get("configurable", {}).get("es")  # type: ignore
     
     settings = get_settings()
     query = state["query"]
@@ -110,7 +114,7 @@ async def es_fulltext_retrieval(state: RetrievalState) -> RetrievalState:
     }
     
     try:
-        response = await state["es_client"].search(
+        response = await es_client.search(
             index=settings.ELASTICSEARCH_INDEX,
             body=es_query
         )
@@ -133,7 +137,7 @@ async def es_fulltext_retrieval(state: RetrievalState) -> RetrievalState:
 
 
 # ==================== 节点 2: SQL 结构化检索 ====================
-async def sql_structured_retrieval(state: RetrievalState) -> RetrievalState:
+async def sql_structured_retrieval(state: RetrievalState, config: RunnableConfig) -> RetrievalState:
     """
     节点 2: SQL 结构化检索
     
@@ -148,9 +152,12 @@ async def sql_structured_retrieval(state: RetrievalState) -> RetrievalState:
     """
     logger.info("========== 节点 2: SQL 结构化检索 ==========")
     
+    # 从 config 获取 db
+    db: AsyncSession = config.get("configurable", {}).get("db")  # type: ignore
+    
     # 1. 获取模板层级定义
     cls_template = await TemplateService.get_template(
-        state["db"], state["template_id"]
+        db, state["template_id"]
     )
     
     if not cls_template:
@@ -202,7 +209,7 @@ async def sql_structured_retrieval(state: RetrievalState) -> RetrievalState:
     """
     
     try:
-        llm_response = await llm_client.extract_json_response(prompt, db=state["db"])
+        llm_response = await llm_client.extract_json_response(prompt, db=db)
         logger.info(f"🤖 LLM 提取的结构化条件: {llm_response}")
         
         conditions = llm_response.get("conditions", [])
@@ -237,7 +244,7 @@ async def sql_structured_retrieval(state: RetrievalState) -> RetrievalState:
         stmt = stmt.where(or_(*conditions_clauses))
     
     try:
-        result = await state["db"].execute(stmt)
+        result = await db.execute(stmt)
         document_ids = [row[0] for row in result.all()]
         state["sql_document_ids"] = set(document_ids)
         
@@ -252,7 +259,7 @@ async def sql_structured_retrieval(state: RetrievalState) -> RetrievalState:
 
 
 # ==================== 节点 3: 结果融合 ====================
-async def merge_retrieval_results(state: RetrievalState) -> RetrievalState:
+async def merge_retrieval_results(state: RetrievalState, config: RunnableConfig) -> RetrievalState:
     """
     节点 3: 结果融合
     
@@ -270,6 +277,9 @@ async def merge_retrieval_results(state: RetrievalState) -> RetrievalState:
     - fusion_strategy: 使用的融合策略
     """
     logger.info("========== 节点 3: 结果融合 ==========")
+    
+    # 从 config 获取 db
+    db: AsyncSession = config.get("configurable", {}).get("db")  # type: ignore
     
     es_ids = state.get("es_document_ids", set())
     sql_ids = state.get("sql_document_ids", set())
@@ -328,7 +338,7 @@ async def merge_retrieval_results(state: RetrievalState) -> RetrievalState:
     # 从数据库加载文档对象
     if merged_ids:
         try:
-            docs_result = await state["db"].execute(
+            docs_result = await db.execute(
                 select(Document).where(Document.id.in_(merged_ids))
             )
             docs = list(docs_result.scalars().all())
@@ -351,7 +361,7 @@ async def merge_retrieval_results(state: RetrievalState) -> RetrievalState:
 
 
 # ==================== 节点 4: 精细化筛选 ====================
-async def refined_filtering(state: RetrievalState) -> RetrievalState:
+async def refined_filtering(state: RetrievalState, config: RunnableConfig) -> RetrievalState:
     """
     节点 4: 精细化筛选
     
@@ -365,6 +375,10 @@ async def refined_filtering(state: RetrievalState) -> RetrievalState:
     - final_results: 最终检索结果
     """
     logger.info("========== 节点 4: 精细化筛选 ==========")
+    
+    # 从 config 获取 db 和 es_client
+    db: AsyncSession = config.get("configurable", {}).get("db")  # type: ignore
+    es_client: AsyncElasticsearch = config.get("configurable", {}).get("es")  # type: ignore
     
     # 如果没有融合结果,直接跳过
     if not state.get("merged_documents"):
@@ -387,7 +401,7 @@ async def refined_filtering(state: RetrievalState) -> RetrievalState:
     
     # 1. 获取 DocumentType 和 DocumentTypeField
     try:
-        doc_types_result = await state["db"].execute(
+        doc_types_result = await db.execute(
             select(DocumentType).where(
                 DocumentType.template_id == state["template_id"],
                 DocumentType.type_code == category,
@@ -402,7 +416,7 @@ async def refined_filtering(state: RetrievalState) -> RetrievalState:
             state["final_results"] = _convert_docs_to_results(state["merged_documents"])
             return state
         
-        document_type_fields_result = await state["db"].execute(
+        document_type_fields_result = await db.execute(
             select(DocumentTypeField).where(
                 DocumentTypeField.doc_type_id.in_([dt.id for dt in doc_types])
             )
@@ -451,7 +465,7 @@ async def refined_filtering(state: RetrievalState) -> RetrievalState:
     """
     
     try:
-        llm_response = await llm_client.extract_json_response(prompt, db=state["db"])
+        llm_response = await llm_client.extract_json_response(prompt, db=db)
         logger.info(f"🤖 LLM 提取的精细化条件: {llm_response}")
         
         conditions = llm_response.get("conditions", {})
@@ -520,7 +534,7 @@ async def refined_filtering(state: RetrievalState) -> RetrievalState:
     # 5. 执行精细化 ES 查询
     try:
         settings = get_settings()
-        response = await state["es_client"].search(
+        response = await es_client.search(
             index=settings.ELASTICSEARCH_INDEX,
             body=final_es_query
         )
@@ -554,7 +568,7 @@ def _convert_docs_to_results(documents: List[Document]) -> List[Dict[str, Any]]:
 
 
 # ==================== 节点 5: 歧义处理 ====================
-async def handle_ambiguity(state: RetrievalState) -> RetrievalState:
+async def handle_ambiguity(state: RetrievalState, config: RunnableConfig) -> RetrievalState:
     """
     节点 5: 歧义处理
     
@@ -570,7 +584,7 @@ async def handle_ambiguity(state: RetrievalState) -> RetrievalState:
 
 
 # ==================== 节点 6: 生成最终答案 ====================
-async def generate_answer(state: RetrievalState) -> RetrievalState:
+async def generate_answer(state: RetrievalState, config: RunnableConfig) -> RetrievalState:
     """
     节点 6: 生成最终答案
     
@@ -580,6 +594,9 @@ async def generate_answer(state: RetrievalState) -> RetrievalState:
     - answer: 最终答案
     """
     logger.info("========== 节点 6: 生成最终答案 ==========")
+    
+    # 从 config 获取 db
+    db: AsyncSession = config.get("configurable", {}).get("db")  # type: ignore
     
     query = state["query"]
     results = state.get("final_results", [])
@@ -632,7 +649,7 @@ async def generate_answer(state: RetrievalState) -> RetrievalState:
     """
     
     try:
-        answer = await llm_client.chat_completion(prompt, db=state["db"])
+        answer = await llm_client.chat_completion(prompt, db=db)
         state["answer"] = answer
         logger.info(f"✅ 答案生成完成 (长度: {len(answer)} 字符)")
         

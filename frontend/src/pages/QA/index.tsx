@@ -54,8 +54,35 @@ export default function QAPage() {
     const [clarification, setClarification] = useState(''); // 澄清内容
     const [showClarificationModal, setShowClarificationModal] = useState(false); // 显示澄清模态框
 
-    const abortControllerRef = useRef<AbortController | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const abortControllerRef = useRef<AbortController | null>(null); // 用于中断请求
+
+    // 调试：监控messages变化
+    useEffect(() => {
+        console.log('[消息列表变化]', {
+            count: messages.length,
+            latest: messages[messages.length - 1] ? {
+                type: messages[messages.length - 1].type,
+                hasContent: !!messages[messages.length - 1].content,
+                contentLength: messages[messages.length - 1].content?.length || 0,
+            } : null,
+        });
+    }, [messages]);
+
+    // 调试：监控isStreaming变化
+    useEffect(() => {
+        console.log('[isStreaming变化]', isStreaming);
+    }, [isStreaming]);
+
+    // 调试：监控agentStages变化
+    useEffect(() => {
+        if (agentStages.length > 0) {
+            console.log('[agentStages变化]', {
+                count: agentStages.length,
+                stages: agentStages.map(s => ({ label: s.label, status: s.status })),
+            });
+        }
+    }, [agentStages]);
 
     // 获取模板列表
     const fetchTemplates = async () => {
@@ -189,6 +216,8 @@ export default function QAPage() {
                         case 'thinking':
                             const thinkingMsg = eventData.data?.message || '思考中...';
                             const stage = eventData.data?.stage || 'start';
+                            console.log('[收到thinking事件]', { stage, message: thinkingMsg });
+
                             setThinkingStatus(thinkingMsg);
 
                             // 更新Agent处理阶段
@@ -202,7 +231,8 @@ export default function QAPage() {
                                     'generate': 4,
                                 };
 
-                                const currentIdx = stageMap[stage] || 0;
+                                const currentIdx = stageMap[stage] ?? 0;
+                                console.log('[更新阶段]', { stage, index: currentIdx, totalStages: updated.length });
                                 setCurrentStageIndex(currentIdx);
 
                                 // 标记之前的阶段为完成
@@ -219,13 +249,26 @@ export default function QAPage() {
                                     updated[currentIdx].timestamp = new Date();
                                 }
 
+                                // 后续阶段保持wait状态
+                                for (let i = currentIdx + 1; i < updated.length; i++) {
+                                    if (updated[i]) {
+                                        updated[i].status = 'wait';
+                                    }
+                                }
+
+                                agentStagesRef.current = updated;
+                                console.log('[阶段状态更新]', updated.map(s => ({ label: s.label, status: s.status })));
+
                                 return updated;
                             });
                             break;
 
                         case 'references':
-                            setCurrentReferences(eventData.data?.references || []);
-                            currentReferencesRef.current = eventData.data?.references || [];  // 同步到ref
+                            const refs = eventData.data?.references || [];
+                            console.log('[收到references事件]', { count: refs.length });
+
+                            setCurrentReferences(refs);
+                            currentReferencesRef.current = refs;  // 同步到ref
                             setThinkingStatus('');
 
                             // 标记检索阶段完成
@@ -243,9 +286,12 @@ export default function QAPage() {
 
                         case 'answer':
                             const newContent = (eventData.data?.content || '');
+                            console.log('[收到answer事件]', { contentLength: newContent.length });
+
                             setCurrentAnswer(prev => {
                                 const updated = prev + newContent;
                                 currentAnswerRef.current = updated;  // 同步到ref
+                                console.log('[答案累积]', { totalLength: updated.length });
                                 return updated;
                             });
                             break;
@@ -262,6 +308,12 @@ export default function QAPage() {
                             break;
 
                         case 'complete':
+                            console.log('[收到complete事件]', {
+                                currentAnswer: currentAnswerRef.current,
+                                referencesCount: currentReferencesRef.current.length,
+                                stagesCount: agentStagesRef.current.length,
+                            });
+
                             // 标记所有阶段完成
                             setAgentStages(prev => {
                                 const updated = [...prev];
@@ -270,17 +322,24 @@ export default function QAPage() {
                                         stage.status = 'finish';
                                     }
                                 });
-                                agentStagesRef.current = updated;  // 同步到ref
+                                agentStagesRef.current = updated;
                                 return updated;
                             });
 
                             // 使用ref中的最新值添加助手消息
                             const finalAnswer = currentAnswerRef.current;
-                            const finalReferences = currentReferencesRef.current;
-                            const finalStages = agentStagesRef.current;
+                            const finalReferences = [...currentReferencesRef.current];  // 克隆数组
+                            const finalStages = [...agentStagesRef.current];  // 克隆一份
+
+                            console.log('[准备添加消息]', {
+                                hasAnswer: !!finalAnswer,
+                                answerLength: finalAnswer.length,
+                                referencesCount: finalReferences.length,
+                                stagesCount: finalStages.length,
+                            });
 
                             if (finalAnswer || finalReferences.length > 0) {
-                                setMessages(prev => [...prev, {
+                                const newMessage: Message = {
                                     id: Date.now().toString(),
                                     type: 'assistant',
                                     content: finalAnswer,
@@ -288,18 +347,31 @@ export default function QAPage() {
                                     timestamp: new Date(),
                                     agentStages: finalStages,
                                     showDetails: false,
-                                }]);
+                                };
+
+                                console.log('[添加消息]', newMessage);
+                                setMessages(prev => {
+                                    const updated = [...prev, newMessage];
+                                    console.log('[消息列表更新]', { count: updated.length });
+                                    return updated;
+                                });
+                            } else {
+                                console.warn('[跳过添加消息] 没有答案和引用');
                             }
 
-                            // 清理状态
-                            setCurrentAnswer('');
-                            setCurrentReferences([]);
-                            setThinkingStatus('');
-                            setAgentStages([]);
-                            currentAnswerRef.current = '';
-                            currentReferencesRef.current = [];
-                            agentStagesRef.current = [];
-                            setIsStreaming(false);
+                            // 延迟清理状态，确保消息先渲染
+                            setTimeout(() => {
+                                console.log('[开始清理状态]');
+                                setIsStreaming(false);
+                                setCurrentAnswer('');
+                                setCurrentReferences([]);
+                                setThinkingStatus('');
+                                setAgentStages([]);
+                                currentAnswerRef.current = '';
+                                currentReferencesRef.current = [];
+                                agentStagesRef.current = [];
+                                console.log('[状态清理完成]');
+                            }, 100);  // 延迟100ms，确保消息先添加到DOM
                             break;
 
                         case 'error':
@@ -639,7 +711,7 @@ export default function QAPage() {
                     </div>
                 ))}
 
-                {/* 当前流式回答 */}
+                {/* 当前流式回答 - 在streaming期间显示 */}
                 {isStreaming && (
                     <div className="flex justify-start">
                         <Card className="max-w-[80%] bg-white border-gray-200 shadow-md">
