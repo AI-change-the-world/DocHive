@@ -247,168 +247,192 @@ export default function QAPage() {
                 top_k: 5,
             };
 
+            // 参考fh_agent实现，直接使用fetch+ReadableStream，不用SSEClient
             const streamUrl = qaService.getAgentStreamUrl();
-            const { SSEClient } = await import('../../utils/sseClient');
-            const sseClient = new SSEClient(
-                streamUrl,
-                requestData,
-                (event) => {
-                    console.log('[SSEClient.onMessage 被调用]', event);
-                    const eventData = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-                    console.log('[收到SSE事件]', eventData.event, eventData);
+            const response = await fetch(streamUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+                },
+                body: JSON.stringify(requestData),
+                signal: abortController.signal,
+            });
 
-                    switch (eventData.event) {
-                        case 'thinking':
-                        case 'stage_start':
-                            const stage = eventData.data?.stage || 'start';
-                            const msg = eventData.data?.message || '处理中...';
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
 
-                            setAgentStages(prev => {
-                                const updated = [...prev];
-                                const stageIdx = updated.findIndex(s => s.stage === stage);
+            if (!response.body) {
+                throw new Error('响应体为空');
+            }
 
-                                if (stageIdx !== -1) {
-                                    // 之前的阶段标记为完成
-                                    for (let i = 0; i < stageIdx; i++) {
-                                        if (updated[i].status !== 'finish') {
-                                            updated[i].status = 'finish';
+            // 逐行读取SSE流
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || ''; // 保留最后不完整的行
+
+                for (const line of lines) {
+                    if (!line.trim() || !line.startsWith('data:')) continue;
+
+                    try {
+                        const jsonStr = line.substring(5).trim(); // 移除 "data: " 前缀
+                        const eventData = JSON.parse(jsonStr);
+                        console.log('[收到SSE事件]', eventData.event, eventData);
+
+                        switch (eventData.event) {
+                            case 'thinking':
+                            case 'stage_start':
+                                const stage = eventData.data?.stage || 'start';
+                                const msg = eventData.data?.message || '处理中...';
+
+                                setAgentStages(prev => {
+                                    const updated = [...prev];
+                                    const stageIdx = updated.findIndex(s => s.stage === stage);
+
+                                    if (stageIdx !== -1) {
+                                        // 之前的阶段标记为完成
+                                        for (let i = 0; i < stageIdx; i++) {
+                                            if (updated[i].status !== 'finish') {
+                                                updated[i].status = 'finish';
+                                            }
                                         }
+
+                                        // 当前阶段标记为进行中
+                                        updated[stageIdx].status = 'process';
+                                        updated[stageIdx].message = msg;
+                                        updated[stageIdx].timestamp = new Date();
+
+                                        setCurrentStageIndex(stageIdx);
                                     }
 
-                                    // 当前阶段标记为进行中
-                                    updated[stageIdx].status = 'process';
-                                    updated[stageIdx].message = msg;
-                                    updated[stageIdx].timestamp = new Date();
+                                    agentStagesRef.current = updated;
+                                    return updated;
+                                });
+                                break;
 
-                                    setCurrentStageIndex(stageIdx);
-                                }
+                            case 'stage_complete':
+                                const completedStage = eventData.data?.stage;
+                                const resultData = eventData.data?.result;
+                                const completeMsg = eventData.data?.message;
+                                console.log(`[阶段${completedStage}完成]`, { resultData, message: completeMsg });
 
-                                agentStagesRef.current = updated;
-                                return updated;
-                            });
-                            break;
+                                setAgentStages(prev => {
+                                    const updated = [...prev];
+                                    const idx = updated.findIndex(s => s.stage === completedStage);
 
-                        case 'stage_complete':
-                            const completedStage = eventData.data?.stage;
-                            const resultData = eventData.data?.result;
-                            const completeMsg = eventData.data?.message;
-                            console.log(`[阶段${completedStage}完成]`, { resultData, message: completeMsg });
+                                    if (idx !== -1) {
+                                        updated[idx].status = 'finish';
+                                        updated[idx].message = completeMsg;
+                                        updated[idx].result = resultData;
+                                        console.log(`[更新阶段${idx}]`, updated[idx]);
+                                    }
 
-                            setAgentStages(prev => {
-                                const updated = [...prev];
-                                const idx = updated.findIndex(s => s.stage === completedStage);
+                                    agentStagesRef.current = updated;
+                                    return updated;
+                                });
+                                break;
 
-                                if (idx !== -1) {
-                                    updated[idx].status = 'finish';
-                                    updated[idx].message = completeMsg;
-                                    updated[idx].result = resultData;
-                                    console.log(`[更新阶段${idx}]`, updated[idx]);
-                                }
+                            case 'references':
+                                const refs = eventData.data?.references || [];
+                                setCurrentReferences(refs);
+                                currentReferencesRef.current = refs;
+                                break;
 
-                                agentStagesRef.current = updated;
-                                return updated;
-                            });
-                            break;
+                            case 'answer':
+                                const newContent = (eventData.data?.content || '');
+                                setCurrentAnswer(prev => {
+                                    const updated = prev + newContent;
+                                    currentAnswerRef.current = updated;
+                                    return updated;
+                                });
+                                break;
 
-                        case 'references':
-                            const refs = eventData.data?.references || [];
-                            setCurrentReferences(refs);
-                            currentReferencesRef.current = refs;
-                            break;
-
-                        case 'answer':
-                            const newContent = (eventData.data?.content || '');
-                            setCurrentAnswer(prev => {
-                                const updated = prev + newContent;
-                                currentAnswerRef.current = updated;
-                                return updated;
-                            });
-                            break;
-
-                        case 'ambiguity':
-                            setAmbiguityMessage(eventData.data?.message || '');
-                            setShowClarificationModal(true);
-                            setIsStreaming(false);
-                            if (eventData.data?.session_id) {
-                                setSessionId(eventData.data.session_id);
-                            }
-                            break;
-
-                        case 'complete':
-                            console.log('[收到complete事件]', {
-                                currentAnswer: currentAnswerRef.current,
-                                referencesCount: currentReferencesRef.current.length,
-                                stagesCount: agentStagesRef.current.length,
-                            });
-
-                            // 从 ref 中获取最新的阶段数据，并标记为完成
-                            const completedStages = agentStagesRef.current.map(s => ({
-                                ...s,
-                                status: (s.status === 'error' ? 'error' : 'finish') as 'wait' | 'process' | 'finish' | 'error',
-                            }));
-
-                            // 获取最终数据
-                            const finalAnswer = currentAnswerRef.current;
-                            const finalReferences = [...currentReferencesRef.current];
-
-                            console.log('[准备添加消息]', {
-                                hasAnswer: !!finalAnswer,
-                                answerLength: finalAnswer.length,
-                                answer: finalAnswer,
-                                referencesCount: finalReferences.length,
-                                stagesCount: completedStages.length,
-                            });
-
-                            // 总是添加消息，即使没有答案也要显示
-                            const newMessage: Message = {
-                                id: Date.now().toString(),
-                                type: 'assistant',
-                                content: finalAnswer || '抱歉，没有找到相关答案。',
-                                references: finalReferences,
-                                timestamp: new Date(),
-                                agentStages: completedStages,
-                                showDetails: false,
-                            };
-
-                            console.log('[添加消息到列表]', newMessage);
-                            setMessages(prev => {
-                                const updated = [...prev, newMessage];
-                                console.log('[消息列表更新]', { count: updated.length });
-                                return updated;
-                            });
-
-                            // 延迟清理流式状态，确保消息先渲染
-                            setTimeout(() => {
+                            case 'ambiguity':
+                                setAmbiguityMessage(eventData.data?.message || '');
+                                setShowClarificationModal(true);
                                 setIsStreaming(false);
-                                setCurrentAnswer('');
-                                setCurrentReferences([]);
-                                setAgentStages([]);
-                                currentAnswerRef.current = '';
-                                currentReferencesRef.current = [];
-                                agentStagesRef.current = [];
-                                console.log('[流式状态已清理]');
-                            }, 200);
-                            break;
+                                if (eventData.data?.session_id) {
+                                    setSessionId(eventData.data.session_id);
+                                }
+                                break;
 
-                        case 'error':
-                            message.error(eventData.data?.message || '问答失败');
-                            setIsStreaming(false);
-                            break;
+                            case 'complete':
+                                console.log('[收到complete事件]', {
+                                    currentAnswer: currentAnswerRef.current,
+                                    referencesCount: currentReferencesRef.current.length,
+                                    stagesCount: agentStagesRef.current.length,
+                                });
+
+                                // 从 ref 中获取最新的阶段数据，并标记为完成
+                                const completedStages = agentStagesRef.current.map(s => ({
+                                    ...s,
+                                    status: (s.status === 'error' ? 'error' : 'finish') as 'wait' | 'process' | 'finish' | 'error',
+                                }));
+
+                                // 获取最终数据
+                                const finalAnswer = currentAnswerRef.current;
+                                const finalReferences = [...currentReferencesRef.current];
+
+                                console.log('[准备添加消息]', {
+                                    hasAnswer: !!finalAnswer,
+                                    answerLength: finalAnswer.length,
+                                    answer: finalAnswer,
+                                    referencesCount: finalReferences.length,
+                                    stagesCount: completedStages.length,
+                                });
+
+                                // 总是添加消息，即使没有答案也要显示
+                                const newMessage: Message = {
+                                    id: Date.now().toString(),
+                                    type: 'assistant',
+                                    content: finalAnswer || '抱歉，没有找到相关答案。',
+                                    references: finalReferences,
+                                    timestamp: new Date(),
+                                    agentStages: completedStages,
+                                    showDetails: false,
+                                };
+
+                                console.log('[添加消息到列表]', newMessage);
+                                setMessages(prev => {
+                                    const updated = [...prev, newMessage];
+                                    console.log('[消息列表更新]', { count: updated.length });
+                                    return updated;
+                                });
+
+                                // 延迟清理流式状态，确保消息先渲染
+                                setTimeout(() => {
+                                    setIsStreaming(false);
+                                    setCurrentAnswer('');
+                                    setCurrentReferences([]);
+                                    setAgentStages([]);
+                                    currentAnswerRef.current = '';
+                                    currentReferencesRef.current = [];
+                                    agentStagesRef.current = [];
+                                    console.log('[流式状态已清理]');
+                                }, 200);
+                                break;
+
+                            case 'error':
+                                message.error(eventData.data?.message || '问答失败');
+                                setIsStreaming(false);
+                                break;
+                        }
+                    } catch (parseError) {
+                        console.error('[解析SSE数据失败]', parseError, line);
                     }
-                },
-                (error) => {
-                    if (!abortController.signal.aborted) {
-                        message.error(`问答失败: ${error.message}`);
-                    }
-                    setIsStreaming(false);
-                },
-                () => {
-                    setIsStreaming(false);
                 }
-            );
+            }
 
-            (sseClient as any).options.signal = abortController.signal;
-            await sseClient.start();
+            // 清空输入框
             setQuestion('');
 
         } catch (error: any) {

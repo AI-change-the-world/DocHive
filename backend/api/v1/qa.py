@@ -459,6 +459,8 @@ async def ask_question_agent_stream(
                 ),
             }
 
+            await asyncio.sleep(0.5)
+
             # 发送完成信号
             yield {
                 "data": json.dumps(
