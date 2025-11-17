@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Set, TypedDict
 from elasticsearch import AsyncElasticsearch
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 from loguru import logger
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -742,7 +743,7 @@ workflow.add_edge("ask_user", END)  # 歧义处理后结束
 workflow.add_edge("generate_answer", END)  # 生成答案后结束
 
 # 7. 编译图
-app = workflow.compile()
+app : CompiledStateGraph = workflow.compile()
 
 logger.info("✅ LangGraph 智能体工作流编译完成")
 logger.info(

@@ -36,6 +36,7 @@ export class SSEClient {
     }
 
     async start() {
+        console.log('[SSEClient] 开始连接', this.url);
         try {
             const headers: Record<string, string> = {
                 'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
@@ -44,18 +45,16 @@ export class SSEClient {
             // 根据body类型设置相应的headers和body
             let body: FormData | string | undefined;
             if (this.options.body instanceof FormData) {
-                // FormData情况，不需要额外设置Content-Type，浏览器会自动设置
                 body = this.options.body;
             } else if (typeof this.options.body === 'object' && this.options.body !== null) {
-                // JSON对象情况
                 headers['Content-Type'] = 'application/json';
                 body = JSON.stringify(this.options.body);
             } else if (typeof this.options.body === 'string') {
-                // 字符串情况
                 headers['Content-Type'] = 'application/json';
                 body = this.options.body;
             }
 
+            console.log('[SSEClient] 发送请求...');
             const response = await fetch(this.url, {
                 method: this.options.method,
                 body: body,
@@ -63,6 +62,7 @@ export class SSEClient {
                 signal: this.options.signal,
             });
 
+            console.log('[SSEClient] 收到响应', response.status, response.ok);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
@@ -71,7 +71,9 @@ export class SSEClient {
                 throw new Error('SSE response has no body.');
             }
 
+            console.log('[SSEClient] 开始解析流...');
             await this.parseStream(response.body, this.options.signal);
+            console.log('[SSEClient] 流解析完成');
         } catch (error) {
             if (this.options.signal?.aborted) return;
             this.onError(error as Error);
@@ -88,21 +90,36 @@ export class SSEClient {
         const decoder = new TextDecoder('utf-8');
         const reader = stream.getReader();
         let buffer = '';
+        let chunkCount = 0;
 
+        console.log('[SSEClient] parseStream 开始');
         try {
             while (true) {
-                if (signal?.aborted) break;
+                if (signal?.aborted) {
+                    console.log('[SSEClient] Signal aborted');
+                    break;
+                }
 
+                console.log('[SSEClient] 准备读取chunk...');
                 const { value, done } = await reader.read();
-                if (done) break;
+                chunkCount++;
+                console.log(`[SSEClient] Chunk ${chunkCount}: done=${done}, bytes=${value?.length || 0}`);
+
+                if (done) {
+                    console.log('[SSEClient] Stream done, 退出循环');
+                    break;
+                }
 
                 buffer += decoder.decode(value, { stream: true });
+                console.log('[SSEClient] Buffer:', buffer.substring(0, 200));
 
                 // 按 \n\n 分割消息
                 const messages = buffer.split('\n\n');
-                buffer = messages.pop() || ''; // 留下可能不完整的消息
+                buffer = messages.pop() || '';
+                console.log(`[SSEClient] 分割到 ${messages.length} 个消息`);
 
                 for (const message of messages) {
+                    console.log('[SSEClient] 处理消息:', message.substring(0, 100));
                     const lines = message.split('\n');
 
                     for (const line of lines) {
@@ -110,10 +127,13 @@ export class SSEClient {
                         if (!trimmed || !trimmed.startsWith('data:')) continue;
 
                         const dataStr = trimmed.slice(5).trim();
+                        console.log('[SSEClient] 提取data:', dataStr.substring(0, 100));
 
                         try {
                             const event: SSEEvent = JSON.parse(dataStr);
+                            console.log('[SSEClient] 解析到事件，准备调用onMessage', event);
                             this.onMessage(event);
+                            console.log('[SSEClient] onMessage调用完成');
 
                             // 检测到完成标记，立即结束
                             if (event.done === true) {

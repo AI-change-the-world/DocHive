@@ -1,15 +1,51 @@
 import { useState, useRef, useEffect } from 'react';
-import { Input, Button, Card, Empty, Spin, message, Tag, Typography, Space, Divider, Modal, Select, Collapse, Steps, Badge, Alert } from 'antd';
-import { SendOutlined, StopOutlined, FileTextOutlined, RobotOutlined, LoadingOutlined, SearchOutlined, DatabaseOutlined, FilterOutlined, BulbOutlined, CheckCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import {
+    Input,
+    Button,
+    Card,
+    Empty,
+    Spin,
+    message,
+    Tag,
+    Typography,
+    Space,
+    Divider,
+    Modal,
+    Select,
+    Collapse,
+    Steps,
+    Badge,
+    Alert,
+    Table,
+    Tooltip,
+    List,
+} from 'antd';
+import {
+    SendOutlined,
+    StopOutlined,
+    FileTextOutlined,
+    RobotOutlined,
+    LoadingOutlined,
+    SearchOutlined,
+    DatabaseOutlined,
+    FilterOutlined,
+    BulbOutlined,
+    CheckCircleOutlined,
+    ClockCircleOutlined,
+    EyeOutlined,
+    MergeOutlined,
+    FileSearchOutlined,
+    InfoCircleOutlined,
+} from '@ant-design/icons';
 import type { QADocumentReference, QARequest, TemplateSelection } from '../../types';
 import { qaService } from '../../services/qa';
+import { documentService } from '../../services/document';
 import ReactMarkdown from 'react-markdown';
 
 const { TextArea } = Input;
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
 const { Panel } = Collapse;
-const { Step } = Steps;
 
 // Agent处理阶段定义
 interface AgentStage {
@@ -19,6 +55,17 @@ interface AgentStage {
     status: 'wait' | 'process' | 'finish' | 'error';
     message?: string;
     timestamp?: Date;
+    result?: StageResult;  // 新增：阶段结果
+}
+
+// 阶段结果数据结构
+interface StageResult {
+    document_ids?: number[];
+    count?: number;
+    documents?: any[];
+    category?: string;
+    conditions?: any[];
+    strategy?: string;
 }
 
 interface Message {
@@ -28,8 +75,8 @@ interface Message {
     references?: QADocumentReference[];
     thinking?: string;
     timestamp: Date;
-    agentStages?: AgentStage[];  // Agent处理阶段
-    showDetails?: boolean;  // 是否展开详情
+    agentStages?: AgentStage[];
+    showDetails?: boolean;
 }
 
 export default function QAPage() {
@@ -38,51 +85,39 @@ export default function QAPage() {
     const [isStreaming, setIsStreaming] = useState(false);
     const [currentAnswer, setCurrentAnswer] = useState('');
     const [currentReferences, setCurrentReferences] = useState<QADocumentReference[]>([]);
-    const [thinkingStatus, setThinkingStatus] = useState('');
-    const [agentStages, setAgentStages] = useState<AgentStage[]>([]);  // Agent当前处理阶段
-    const [currentStageIndex, setCurrentStageIndex] = useState(0);  // 当前阶段索引
+    const [agentStages, setAgentStages] = useState<AgentStage[]>([]);
+    const [currentStageIndex, setCurrentStageIndex] = useState(0);
 
-    // 使用ref保存最新的答案和引用，解决闭包问题
+    // 使用ref保存最新值
     const currentAnswerRef = useRef('');
     const currentReferencesRef = useRef<QADocumentReference[]>([]);
     const agentStagesRef = useRef<AgentStage[]>([]);
-    const [templateId, setTemplateId] = useState<number | undefined>(undefined); // 模板ID
-    const [templates, setTemplates] = useState<TemplateSelection[]>([]); // 模板列表
-    const [loadingTemplates, setLoadingTemplates] = useState(false); // 模板加载状态
-    const [sessionId, setSessionId] = useState<string>(''); // 会话ID，用于处理歧义
-    const [ambiguityMessage, setAmbiguityMessage] = useState<string>(''); // 歧义消息
-    const [clarification, setClarification] = useState(''); // 澄清内容
-    const [showClarificationModal, setShowClarificationModal] = useState(false); // 显示澄清模态框
+
+    const [templateId, setTemplateId] = useState<number | undefined>(undefined);
+    const [templates, setTemplates] = useState<TemplateSelection[]>([]);
+    const [loadingTemplates, setLoadingTemplates] = useState(false);
+    const [sessionId, setSessionId] = useState<string>('');
+    const [ambiguityMessage, setAmbiguityMessage] = useState<string>('');
+    const [clarification, setClarification] = useState('');
+    const [showClarificationModal, setShowClarificationModal] = useState(false);
+
+    // 文档预览相关
+    const [previewDocId, setPreviewDocId] = useState<number | null>(null);
+    const [showPreviewModal, setShowPreviewModal] = useState(false);
+    const [previewDocument, setPreviewDocument] = useState<any>(null);
+    const [loadingPreview, setLoadingPreview] = useState(false);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
-    const abortControllerRef = useRef<AbortController | null>(null); // 用于中断请求
+    const abortControllerRef = useRef<AbortController | null>(null);
 
-    // 调试：监控messages变化
-    useEffect(() => {
-        console.log('[消息列表变化]', {
-            count: messages.length,
-            latest: messages[messages.length - 1] ? {
-                type: messages[messages.length - 1].type,
-                hasContent: !!messages[messages.length - 1].content,
-                contentLength: messages[messages.length - 1].content?.length || 0,
-            } : null,
-        });
-    }, [messages]);
+    // 自动滚动
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    };
 
-    // 调试：监控isStreaming变化
     useEffect(() => {
-        console.log('[isStreaming变化]', isStreaming);
-    }, [isStreaming]);
-
-    // 调试：监控agentStages变化
-    useEffect(() => {
-        if (agentStages.length > 0) {
-            console.log('[agentStages变化]', {
-                count: agentStages.length,
-                stages: agentStages.map(s => ({ label: s.label, status: s.status })),
-            });
-        }
-    }, [agentStages]);
+        scrollToBottom();
+    }, [messages, currentAnswer]);
 
     // 获取模板列表
     const fetchTemplates = async () => {
@@ -91,7 +126,6 @@ export default function QAPage() {
             const response = await qaService.getAllTemplates();
             if (response.data) {
                 setTemplates(response.data);
-                // 如果还没有选择模板，默认选择第一个
                 if (!templateId && response.data.length > 0) {
                     setTemplateId(response.data[0].template_id);
                 }
@@ -103,19 +137,69 @@ export default function QAPage() {
         }
     };
 
-    // 自动滚动到底部
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    };
-
-    useEffect(() => {
-        scrollToBottom();
-    }, [messages, currentAnswer, thinkingStatus]);
-
-    // 组件挂载时获取模板列表
     useEffect(() => {
         fetchTemplates();
     }, []);
+
+    // 初始化阶段
+    const initializeStages = (): AgentStage[] => [
+        {
+            stage: 'start',
+            label: '开始处理',
+            icon: <ClockCircleOutlined />,
+            status: 'process',
+            message: '正在分析您的问题...',
+            timestamp: new Date(),
+        },
+        {
+            stage: 'es_fulltext',
+            label: 'ES全文检索',
+            icon: <SearchOutlined />,
+            status: 'wait',
+        },
+        {
+            stage: 'sql_structured',
+            label: 'SQL结构化检索',
+            icon: <DatabaseOutlined />,
+            status: 'wait',
+        },
+        {
+            stage: 'merge_results',
+            label: '结果融合',
+            icon: <MergeOutlined />,
+            status: 'wait',
+        },
+        {
+            stage: 'refined_filter',
+            label: '精细化筛选',
+            icon: <FilterOutlined />,
+            status: 'wait',
+        },
+        {
+            stage: 'generate',
+            label: '生成答案',
+            icon: <BulbOutlined />,
+            status: 'wait',
+        },
+    ];
+
+    // 预览文档
+    const handlePreviewDocument = async (docId: number) => {
+        setPreviewDocId(docId);
+        setShowPreviewModal(true);
+        setLoadingPreview(true);
+
+        try {
+            const response = await documentService.getDocument(docId);
+            if (response.data) {
+                setPreviewDocument(response.data);
+            }
+        } catch (error) {
+            message.error('获取文档详情失败');
+        } finally {
+            setLoadingPreview(false);
+        }
+    };
 
     // 发送问题
     const handleAsk = async () => {
@@ -141,167 +225,110 @@ export default function QAPage() {
         // 重置状态
         setCurrentAnswer('');
         setCurrentReferences([]);
-        setThinkingStatus('');
         setAmbiguityMessage('');
         setIsStreaming(true);
 
-        // 清理ref
         currentAnswerRef.current = '';
         currentReferencesRef.current = [];
         agentStagesRef.current = [];
 
-        // 初始化Agent处理阶段
-        const initialStages: AgentStage[] = [
-            {
-                stage: 'start',
-                label: '开始处理',
-                icon: <ClockCircleOutlined />,
-                status: 'process',
-                message: '正在分析您的问题...',
-                timestamp: new Date(),
-            },
-            {
-                stage: 'es_fulltext',
-                label: 'ES全文检索',
-                icon: <SearchOutlined />,
-                status: 'wait',
-            },
-            {
-                stage: 'sql_structured',
-                label: 'SQL结构化检索',
-                icon: <DatabaseOutlined />,
-                status: 'wait',
-            },
-            {
-                stage: 'merge_results',
-                label: '结果融合',
-                icon: <FilterOutlined />,
-                status: 'wait',
-            },
-            {
-                stage: 'generate',
-                label: '生成答案',
-                icon: <BulbOutlined />,
-                status: 'wait',
-            },
-        ];
+        const initialStages = initializeStages();
         setAgentStages(initialStages);
+        agentStagesRef.current = initialStages;
         setCurrentStageIndex(0);
 
-        // 创建AbortController用于中断请求
         const abortController = new AbortController();
         abortControllerRef.current = abortController;
 
         try {
-            // 构建请求数据
             const requestData: QARequest = {
                 question: question.trim(),
                 template_id: templateId,
                 top_k: 5,
             };
 
-            // 选择使用哪个API端点
             const streamUrl = qaService.getAgentStreamUrl();
-
-            // 使用SSE客户端，现在可以发送JSON对象
             const { SSEClient } = await import('../../utils/sseClient');
             const sseClient = new SSEClient(
                 streamUrl,
-                requestData, // 直接发送JSON对象
+                requestData,
                 (event) => {
-                    // 处理SSE事件
+                    console.log('[SSEClient.onMessage 被调用]', event);
                     const eventData = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+                    console.log('[收到SSE事件]', eventData.event, eventData);
 
                     switch (eventData.event) {
                         case 'thinking':
-                            const thinkingMsg = eventData.data?.message || '思考中...';
+                        case 'stage_start':
                             const stage = eventData.data?.stage || 'start';
-                            console.log('[收到thinking事件]', { stage, message: thinkingMsg });
+                            const msg = eventData.data?.message || '处理中...';
 
-                            setThinkingStatus(thinkingMsg);
-
-                            // 更新Agent处理阶段
                             setAgentStages(prev => {
                                 const updated = [...prev];
-                                const stageMap: Record<string, number> = {
-                                    'start': 0,
-                                    'es_fulltext': 1,
-                                    'sql_structured': 2,
-                                    'merge_results': 3,
-                                    'generate': 4,
-                                };
+                                const stageIdx = updated.findIndex(s => s.stage === stage);
 
-                                const currentIdx = stageMap[stage] ?? 0;
-                                console.log('[更新阶段]', { stage, index: currentIdx, totalStages: updated.length });
-                                setCurrentStageIndex(currentIdx);
-
-                                // 标记之前的阶段为完成
-                                for (let i = 0; i < currentIdx; i++) {
-                                    if (updated[i]) {
-                                        updated[i].status = 'finish';
+                                if (stageIdx !== -1) {
+                                    // 之前的阶段标记为完成
+                                    for (let i = 0; i < stageIdx; i++) {
+                                        if (updated[i].status !== 'finish') {
+                                            updated[i].status = 'finish';
+                                        }
                                     }
-                                }
 
-                                // 标记当前阶段为进行中
-                                if (updated[currentIdx]) {
-                                    updated[currentIdx].status = 'process';
-                                    updated[currentIdx].message = thinkingMsg;
-                                    updated[currentIdx].timestamp = new Date();
-                                }
+                                    // 当前阶段标记为进行中
+                                    updated[stageIdx].status = 'process';
+                                    updated[stageIdx].message = msg;
+                                    updated[stageIdx].timestamp = new Date();
 
-                                // 后续阶段保持wait状态
-                                for (let i = currentIdx + 1; i < updated.length; i++) {
-                                    if (updated[i]) {
-                                        updated[i].status = 'wait';
-                                    }
+                                    setCurrentStageIndex(stageIdx);
                                 }
 
                                 agentStagesRef.current = updated;
-                                console.log('[阶段状态更新]', updated.map(s => ({ label: s.label, status: s.status })));
+                                return updated;
+                            });
+                            break;
 
+                        case 'stage_complete':
+                            const completedStage = eventData.data?.stage;
+                            const resultData = eventData.data?.result;
+                            const completeMsg = eventData.data?.message;
+                            console.log(`[阶段${completedStage}完成]`, { resultData, message: completeMsg });
+
+                            setAgentStages(prev => {
+                                const updated = [...prev];
+                                const idx = updated.findIndex(s => s.stage === completedStage);
+
+                                if (idx !== -1) {
+                                    updated[idx].status = 'finish';
+                                    updated[idx].message = completeMsg;
+                                    updated[idx].result = resultData;
+                                    console.log(`[更新阶段${idx}]`, updated[idx]);
+                                }
+
+                                agentStagesRef.current = updated;
                                 return updated;
                             });
                             break;
 
                         case 'references':
                             const refs = eventData.data?.references || [];
-                            console.log('[收到references事件]', { count: refs.length });
-
                             setCurrentReferences(refs);
-                            currentReferencesRef.current = refs;  // 同步到ref
-                            setThinkingStatus('');
-
-                            // 标记检索阶段完成
-                            setAgentStages(prev => {
-                                const updated = [...prev];
-                                for (let i = 0; i <= 3; i++) {
-                                    if (updated[i]) {
-                                        updated[i].status = 'finish';
-                                    }
-                                }
-                                agentStagesRef.current = updated;  // 同步到ref
-                                return updated;
-                            });
+                            currentReferencesRef.current = refs;
                             break;
 
                         case 'answer':
                             const newContent = (eventData.data?.content || '');
-                            console.log('[收到answer事件]', { contentLength: newContent.length });
-
                             setCurrentAnswer(prev => {
                                 const updated = prev + newContent;
-                                currentAnswerRef.current = updated;  // 同步到ref
-                                console.log('[答案累积]', { totalLength: updated.length });
+                                currentAnswerRef.current = updated;
                                 return updated;
                             });
                             break;
 
                         case 'ambiguity':
-                            // 处理歧义消息
                             setAmbiguityMessage(eventData.data?.message || '');
                             setShowClarificationModal(true);
                             setIsStreaming(false);
-                            // 从响应中获取会话ID
                             if (eventData.data?.session_id) {
                                 setSessionId(eventData.data.session_id);
                             }
@@ -314,70 +341,58 @@ export default function QAPage() {
                                 stagesCount: agentStagesRef.current.length,
                             });
 
-                            // 标记所有阶段完成
-                            setAgentStages(prev => {
-                                const updated = [...prev];
-                                updated.forEach(stage => {
-                                    if (stage.status !== 'error') {
-                                        stage.status = 'finish';
-                                    }
-                                });
-                                agentStagesRef.current = updated;
-                                return updated;
-                            });
+                            // 从 ref 中获取最新的阶段数据，并标记为完成
+                            const completedStages = agentStagesRef.current.map(s => ({
+                                ...s,
+                                status: (s.status === 'error' ? 'error' : 'finish') as 'wait' | 'process' | 'finish' | 'error',
+                            }));
 
-                            // 使用ref中的最新值添加助手消息
+                            // 获取最终数据
                             const finalAnswer = currentAnswerRef.current;
-                            const finalReferences = [...currentReferencesRef.current];  // 克隆数组
-                            const finalStages = [...agentStagesRef.current];  // 克隆一份
+                            const finalReferences = [...currentReferencesRef.current];
 
                             console.log('[准备添加消息]', {
                                 hasAnswer: !!finalAnswer,
                                 answerLength: finalAnswer.length,
+                                answer: finalAnswer,
                                 referencesCount: finalReferences.length,
-                                stagesCount: finalStages.length,
+                                stagesCount: completedStages.length,
                             });
 
-                            if (finalAnswer || finalReferences.length > 0) {
-                                const newMessage: Message = {
-                                    id: Date.now().toString(),
-                                    type: 'assistant',
-                                    content: finalAnswer,
-                                    references: finalReferences,
-                                    timestamp: new Date(),
-                                    agentStages: finalStages,
-                                    showDetails: false,
-                                };
+                            // 总是添加消息，即使没有答案也要显示
+                            const newMessage: Message = {
+                                id: Date.now().toString(),
+                                type: 'assistant',
+                                content: finalAnswer || '抱歉，没有找到相关答案。',
+                                references: finalReferences,
+                                timestamp: new Date(),
+                                agentStages: completedStages,
+                                showDetails: false,
+                            };
 
-                                console.log('[添加消息]', newMessage);
-                                setMessages(prev => {
-                                    const updated = [...prev, newMessage];
-                                    console.log('[消息列表更新]', { count: updated.length });
-                                    return updated;
-                                });
-                            } else {
-                                console.warn('[跳过添加消息] 没有答案和引用');
-                            }
+                            console.log('[添加消息到列表]', newMessage);
+                            setMessages(prev => {
+                                const updated = [...prev, newMessage];
+                                console.log('[消息列表更新]', { count: updated.length });
+                                return updated;
+                            });
 
-                            // 延迟清理状态，确保消息先渲染
+                            // 延迟清理流式状态，确保消息先渲染
                             setTimeout(() => {
-                                console.log('[开始清理状态]');
                                 setIsStreaming(false);
                                 setCurrentAnswer('');
                                 setCurrentReferences([]);
-                                setThinkingStatus('');
                                 setAgentStages([]);
                                 currentAnswerRef.current = '';
                                 currentReferencesRef.current = [];
                                 agentStagesRef.current = [];
-                                console.log('[状态清理完成]');
-                            }, 100);  // 延迟100ms，确保消息先添加到DOM
+                                console.log('[流式状态已清理]');
+                            }, 200);
                             break;
 
                         case 'error':
                             message.error(eventData.data?.message || '问答失败');
                             setIsStreaming(false);
-                            setThinkingStatus('');
                             break;
                     }
                 },
@@ -386,19 +401,13 @@ export default function QAPage() {
                         message.error(`问答失败: ${error.message}`);
                     }
                     setIsStreaming(false);
-                    setThinkingStatus('');
                 },
                 () => {
-                    // 完成回调 - 不再在这里添加消息，由complete事件处理
                     setIsStreaming(false);
-                    setThinkingStatus('');
                 }
             );
 
-            // 添加signal到SSEClient
             (sseClient as any).options.signal = abortController.signal;
-
-            // 启动SSE流
             await sseClient.start();
             setQuestion('');
 
@@ -407,101 +416,6 @@ export default function QAPage() {
                 message.error(`问答失败: ${error.message}`);
             }
             setIsStreaming(false);
-            setThinkingStatus('');
-        }
-    };
-
-    // 处理澄清问题
-    const handleClarify = async () => {
-        if (!clarification.trim()) {
-            message.warning('请输入澄清内容');
-            return;
-        }
-
-        setShowClarificationModal(false);
-        setIsStreaming(true);
-        setCurrentAnswer('');
-        setCurrentReferences([]);
-        setThinkingStatus('正在处理您的澄清...');
-
-        try {
-            // 构建请求数据
-            const requestData: QARequest = {
-                question: question.trim(),
-                template_id: templateId,
-                top_k: 5,
-            };
-
-            // 调用澄清API
-            const response = await qaService.clarifyAgentQuestion(requestData, clarification, sessionId);
-
-            // 处理SSE流
-            const reader = response.body?.getReader();
-            const decoder = new TextDecoder();
-
-            if (!reader) {
-                throw new Error('无法读取响应流');
-            }
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                const chunk = decoder.decode(value, { stream: true });
-                // 解析SSE事件
-                const lines = chunk.split('\n');
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        try {
-                            const eventData = JSON.parse(line.slice(6));
-                            switch (eventData.event) {
-                                case 'thinking':
-                                    setThinkingStatus(eventData.data?.message || '思考中...');
-                                    break;
-
-                                case 'references':
-                                    setCurrentReferences(eventData.data?.references || []);
-                                    setThinkingStatus('');
-                                    break;
-
-                                case 'answer':
-                                    setCurrentAnswer(prev => prev + (eventData.data?.content || ''));
-                                    break;
-
-                                case 'complete':
-                                    // 添加助手消息
-                                    const assistantMessage: Message = {
-                                        id: Date.now().toString(),
-                                        type: 'assistant',
-                                        content: currentAnswer,
-                                        references: currentReferences,
-                                        timestamp: new Date(),
-                                    };
-                                    setMessages(prev => [...prev, assistantMessage]);
-                                    setCurrentAnswer('');
-                                    setCurrentReferences([]);
-                                    setThinkingStatus('');
-                                    setIsStreaming(false);
-                                    setClarification('');
-                                    break;
-
-                                case 'error':
-                                    message.error(eventData.data?.message || '问答失败');
-                                    setIsStreaming(false);
-                                    setThinkingStatus('');
-                                    break;
-                            }
-                        } catch (e) {
-                            console.error('解析SSE事件失败:', e);
-                        }
-                    }
-                }
-            }
-
-        } catch (error: any) {
-            message.error(`问答失败: ${error.message}`);
-            setIsStreaming(false);
-            setThinkingStatus('');
         }
     };
 
@@ -512,7 +426,6 @@ export default function QAPage() {
             abortControllerRef.current = null;
         }
         setIsStreaming(false);
-        setThinkingStatus('');
         message.info('已中断问答');
     };
 
@@ -521,23 +434,118 @@ export default function QAPage() {
         setMessages([]);
         setCurrentAnswer('');
         setCurrentReferences([]);
-        setThinkingStatus('');
         setAmbiguityMessage('');
         setClarification('');
         setAgentStages([]);
         setCurrentStageIndex(0);
-
-        // 清理ref
         currentAnswerRef.current = '';
         currentReferencesRef.current = [];
         agentStagesRef.current = [];
     };
 
-    // 切换消息详情展示
-    const toggleMessageDetails = (messageId: string) => {
-        setMessages(prev => prev.map(msg =>
-            msg.id === messageId ? { ...msg, showDetails: !msg.showDetails } : msg
-        ));
+    // 渲染阶段结果详情
+    const renderStageResult = (stage: AgentStage) => {
+        if (!stage.result) return null;
+
+        const { document_ids, count, documents, category, conditions, strategy } = stage.result;
+
+        return (
+            <div className="mt-2 p-3 bg-gray-50 rounded border border-gray-200">
+                <Space direction="vertical" className="w-full" size="small">
+                    {/* 文档ID列表 */}
+                    {document_ids && document_ids.length > 0 && (
+                        <div>
+                            <Text strong className="text-xs text-gray-600">
+                                <FileSearchOutlined className="mr-1" />
+                                召回文档 ({count || document_ids.length} 篇):
+                            </Text>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                                {document_ids.map((id, idx) => (
+                                    <Tag
+                                        key={idx}
+                                        color="blue"
+                                        className="cursor-pointer"
+                                        onClick={() => handlePreviewDocument(id)}
+                                    >
+                                        <EyeOutlined className="mr-1" />
+                                        文档 #{id}
+                                    </Tag>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 分类信息 */}
+                    {category && category !== '*' && (
+                        <div>
+                            <Text strong className="text-xs text-gray-600">分类: </Text>
+                            <Tag color="green">{category}</Tag>
+                        </div>
+                    )}
+
+                    {/* 提取条件 */}
+                    {conditions && conditions.length > 0 && (
+                        <div>
+                            <Text strong className="text-xs text-gray-600">提取条件:</Text>
+                            <div className="mt-1">
+                                {conditions.map((cond, idx) => (
+                                    <Tag key={idx} color="purple" className="mb-1">
+                                        {cond.code}: {cond.value}
+                                    </Tag>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 融合策略 */}
+                    {strategy && (
+                        <div>
+                            <Text strong className="text-xs text-gray-600">融合策略: </Text>
+                            <Tag color="orange">{strategy}</Tag>
+                        </div>
+                    )}
+
+                    {/* 文档详情 */}
+                    {documents && documents.length > 0 && (
+                        <Collapse
+                            ghost
+                            size="small"
+                            items={[{
+                                key: 'docs',
+                                label: <Text className="text-xs">查看文档详情 ({documents.length})</Text>,
+                                children: (
+                                    <List
+                                        size="small"
+                                        dataSource={documents}
+                                        renderItem={(doc: any, idx: number) => (
+                                            <List.Item
+                                                key={idx}
+                                                className="cursor-pointer hover:bg-blue-50"
+                                                onClick={() => handlePreviewDocument(doc.document_id)}
+                                            >
+                                                <List.Item.Meta
+                                                    avatar={<FileTextOutlined className="text-blue-500" />}
+                                                    title={
+                                                        <Text className="text-xs">
+                                                            #{doc.document_id} {doc.title}
+                                                        </Text>
+                                                    }
+                                                    description={
+                                                        <Text className="text-xs text-gray-500" ellipsis>
+                                                            {doc.content?.substring(0, 100)}...
+                                                        </Text>
+                                                    }
+                                                />
+                                            </List.Item>
+                                        )}
+                                    />
+                                ),
+                            }]}
+                        />
+                    )}
+                </Space>
+            </div>
+        );
     };
 
     return (
@@ -564,14 +572,6 @@ export default function QAPage() {
                         description={
                             <div className="text-center">
                                 <Text type="secondary">请输入您的问题，我会基于文档库为您解答</Text>
-                                <div className="mt-4 text-left max-w-2xl mx-auto">
-                                    <Text type="secondary" className="block mb-2">示例问题：</Text>
-                                    <ul className="text-gray-500 space-y-1">
-                                        <li>• 文档库中有哪些关于项目管理的内容？</li>
-                                        <li>• 总结一下技术规范文档的要点</li>
-                                        <li>• 最近上传的文档主要讲了什么？</li>
-                                    </ul>
-                                </div>
                             </div>
                         }
                     />
@@ -602,7 +602,7 @@ export default function QAPage() {
                                         <Paragraph className="!mb-0">{msg.content}</Paragraph>
                                     ) : (
                                         <>
-                                            {/* Agent处理阶段展示 */}
+                                            {/* Agent处理阶段 */}
                                             {msg.agentStages && msg.agentStages.length > 0 && (
                                                 <Collapse
                                                     ghost
@@ -624,26 +624,39 @@ export default function QAPage() {
                                                             </div>
                                                         ),
                                                         children: (
-                                                            <Steps
-                                                                size="small"
-                                                                direction="vertical"
-                                                                current={msg.agentStages.findIndex(s => s.status === 'process')}
-                                                                items={msg.agentStages.map(stage => ({
-                                                                    title: stage.label,
-                                                                    status: stage.status,
-                                                                    icon: stage.icon,
-                                                                    description: stage.message && (
-                                                                        <Text type="secondary" className="text-xs">
-                                                                            {stage.message}
-                                                                            {stage.timestamp && (
-                                                                                <span className="ml-2">
-                                                                                    {stage.timestamp.toLocaleTimeString()}
-                                                                                </span>
+                                                            <Space direction="vertical" className="w-full">
+                                                                {msg.agentStages.map((stage, idx) => (
+                                                                    <Card
+                                                                        key={idx}
+                                                                        size="small"
+                                                                        className={`${stage.status === 'finish' ? 'bg-green-50 border-green-200' :
+                                                                            stage.status === 'process' ? 'bg-blue-50 border-blue-200' :
+                                                                                'bg-gray-50 border-gray-200'
+                                                                            }`}
+                                                                    >
+                                                                        <div className="flex items-start justify-between">
+                                                                            <div className="flex items-center space-x-2">
+                                                                                {stage.icon}
+                                                                                <div>
+                                                                                    <Text strong className="text-sm">{stage.label}</Text>
+                                                                                    {stage.message && (
+                                                                                        <div className="text-xs text-gray-500 mt-1">
+                                                                                            {stage.message}
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {renderStageResult(stage)}
+                                                                                </div>
+                                                                            </div>
+                                                                            {stage.status === 'finish' && (
+                                                                                <CheckCircleOutlined className="text-green-500" />
                                                                             )}
-                                                                        </Text>
-                                                                    ),
-                                                                }))}
-                                                            />
+                                                                            {stage.status === 'process' && (
+                                                                                <LoadingOutlined className="text-blue-500" />
+                                                                            )}
+                                                                        </div>
+                                                                    </Card>
+                                                                ))}
+                                                            </Space>
                                                         ),
                                                     }]}
                                                 />
@@ -668,29 +681,23 @@ export default function QAPage() {
                                                                 <Card
                                                                     key={idx}
                                                                     size="small"
-                                                                    className="bg-gray-50 hover:bg-gray-100 transition-colors"
+                                                                    className="bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer"
+                                                                    onClick={() => handlePreviewDocument(ref.document_id)}
                                                                 >
                                                                     <div className="flex items-start justify-between">
                                                                         <div className="flex-1">
                                                                             <div className="flex items-center space-x-2">
-                                                                                <Badge
-                                                                                    count={idx + 1}
-                                                                                    style={{ backgroundColor: '#1890ff' }}
-                                                                                />
-                                                                                <Text strong className="text-sm">
-                                                                                    {ref.title}
-                                                                                </Text>
+                                                                                <Badge count={idx + 1} style={{ backgroundColor: '#1890ff' }} />
+                                                                                <Text strong className="text-sm">{ref.title}</Text>
+                                                                                <EyeOutlined className="text-blue-500" />
                                                                             </div>
-                                                                            <Paragraph
-                                                                                className="!mb-0 mt-2 text-xs text-gray-600"
-                                                                                ellipsis={{ rows: 2 }}
-                                                                            >
+                                                                            <Paragraph className="!mb-0 mt-2 text-xs text-gray-600" ellipsis={{ rows: 2 }}>
                                                                                 {ref.snippet}
                                                                             </Paragraph>
                                                                         </div>
                                                                         {ref.score !== undefined && (
                                                                             <Tag color="blue" className="ml-2">
-                                                                                相关度 {(ref.score * 100).toFixed(0)}%
+                                                                                {(ref.score * 100).toFixed(0)}%
                                                                             </Tag>
                                                                         )}
                                                                     </div>
@@ -711,7 +718,7 @@ export default function QAPage() {
                     </div>
                 ))}
 
-                {/* 当前流式回答 - 在streaming期间显示 */}
+                {/* 流式回答 */}
                 {isStreaming && (
                     <div className="flex justify-start">
                         <Card className="max-w-[80%] bg-white border-gray-200 shadow-md">
@@ -735,25 +742,39 @@ export default function QAPage() {
                                                     style={{ backgroundColor: '#1890ff' }}
                                                 />
                                             </div>
-                                            <Steps
-                                                size="small"
-                                                current={currentStageIndex}
-                                                items={agentStages.map(stage => ({
-                                                    title: stage.label,
-                                                    status: stage.status,
-                                                    icon: stage.icon,
-                                                }))}
-                                            />
-                                            {thinkingStatus && (
-                                                <Alert
-                                                    message={thinkingStatus}
-                                                    type="info"
-                                                    showIcon
-                                                    icon={<LoadingOutlined />}
-                                                    className="mt-2"
-                                                    banner
-                                                />
-                                            )}
+                                            <Space direction="vertical" className="w-full">
+                                                {agentStages.map((stage, idx) => (
+                                                    <Card
+                                                        key={idx}
+                                                        size="small"
+                                                        className={`${stage.status === 'finish' ? 'bg-green-50 border-green-200' :
+                                                            stage.status === 'process' ? 'bg-white border-blue-300' :
+                                                                'bg-gray-50 border-gray-200'
+                                                            }`}
+                                                    >
+                                                        <div className="flex items-start justify-between">
+                                                            <div className="flex items-center space-x-2 flex-1">
+                                                                {stage.icon}
+                                                                <div className="flex-1">
+                                                                    <Text strong className="text-sm">{stage.label}</Text>
+                                                                    {stage.message && (
+                                                                        <div className="text-xs text-gray-500 mt-1">
+                                                                            {stage.message}
+                                                                        </div>
+                                                                    )}
+                                                                    {renderStageResult(stage)}
+                                                                </div>
+                                                            </div>
+                                                            {stage.status === 'finish' && (
+                                                                <CheckCircleOutlined className="text-green-500" />
+                                                            )}
+                                                            {stage.status === 'process' && (
+                                                                <LoadingOutlined className="text-blue-500" />
+                                                            )}
+                                                        </div>
+                                                    </Card>
+                                                ))}
+                                            </Space>
                                         </div>
                                     )}
 
@@ -771,23 +792,17 @@ export default function QAPage() {
                                                     <Card
                                                         key={idx}
                                                         size="small"
-                                                        className="bg-gradient-to-r from-gray-50 to-blue-50 border-blue-200 hover:shadow-md transition-shadow"
+                                                        className="bg-gradient-to-r from-gray-50 to-blue-50 border-blue-200 hover:shadow-md transition-shadow cursor-pointer"
+                                                        onClick={() => handlePreviewDocument(ref.document_id)}
                                                     >
                                                         <div className="flex items-start justify-between">
                                                             <div className="flex-1">
                                                                 <div className="flex items-center space-x-2">
-                                                                    <Badge
-                                                                        count={idx + 1}
-                                                                        style={{ backgroundColor: '#52c41a' }}
-                                                                    />
-                                                                    <Text strong className="text-sm">
-                                                                        {ref.title}
-                                                                    </Text>
+                                                                    <Badge count={idx + 1} style={{ backgroundColor: '#52c41a' }} />
+                                                                    <Text strong className="text-sm">{ref.title}</Text>
+                                                                    <EyeOutlined className="text-blue-500" />
                                                                 </div>
-                                                                <Paragraph
-                                                                    className="!mb-0 mt-2 text-xs text-gray-600"
-                                                                    ellipsis={{ rows: 2 }}
-                                                                >
+                                                                <Paragraph className="!mb-0 mt-2 text-xs text-gray-600" ellipsis={{ rows: 2 }}>
                                                                     {ref.snippet}
                                                                 </Paragraph>
                                                             </div>
@@ -830,7 +845,6 @@ export default function QAPage() {
             {/* 输入区域 */}
             <Card className="shadow-md">
                 <div className="space-y-3">
-                    {/* 模板选择放在输入区域内部 */}
                     <div className="flex items-center space-x-2">
                         <span className="text-sm text-gray-600">模板:</span>
                         <Select
@@ -857,9 +871,7 @@ export default function QAPage() {
                         autoSize={{ minRows: 2, maxRows: 6 }}
                         disabled={isStreaming}
                         onPressEnter={(e) => {
-                            if (e.shiftKey) {
-                                return; // Shift+Enter 换行
-                            }
+                            if (e.shiftKey) return;
                             e.preventDefault();
                             handleAsk();
                         }}
@@ -870,13 +882,7 @@ export default function QAPage() {
                         </Text>
                         <Space>
                             {isStreaming ? (
-                                <Button
-                                    type="primary"
-                                    danger
-                                    icon={<StopOutlined />}
-                                    onClick={handleStop}
-                                    size="small"
-                                >
+                                <Button type="primary" danger icon={<StopOutlined />} onClick={handleStop} size="small">
                                     停止生成
                                 </Button>
                             ) : (
@@ -895,12 +901,75 @@ export default function QAPage() {
                 </div>
             </Card>
 
+            {/* 文档预览模态框 */}
+            <Modal
+                title={
+                    <div className="flex items-center space-x-2">
+                        <FileTextOutlined className="text-blue-500" />
+                        <span>文档预览</span>
+                    </div>
+                }
+                open={showPreviewModal}
+                onCancel={() => {
+                    setShowPreviewModal(false);
+                    setPreviewDocument(null);
+                }}
+                footer={null}
+                width={800}
+            >
+                {loadingPreview ? (
+                    <div className="text-center py-8">
+                        <Spin />
+                    </div>
+                ) : previewDocument ? (
+                    <div className="space-y-4">
+                        <div>
+                            <Text strong>文档ID:</Text> <Tag color="blue">#{previewDocument.id}</Tag>
+                        </div>
+                        <div>
+                            <Text strong>标题:</Text>
+                            <div className="mt-1">
+                                <Text>{previewDocument.title}</Text>
+                            </div>
+                        </div>
+                        <div>
+                            <Text strong>文件名:</Text>
+                            <div className="mt-1">
+                                <Text type="secondary">{previewDocument.file_name}</Text>
+                            </div>
+                        </div>
+                        <Divider />
+                        <div>
+                            <Text strong>内容:</Text>
+                            <div className="mt-2 p-3 bg-gray-50 rounded max-h-96 overflow-y-auto">
+                                <pre className="whitespace-pre-wrap text-sm">{previewDocument.content}</pre>
+                            </div>
+                        </div>
+                        {previewDocument.metadata && Object.keys(previewDocument.metadata).length > 0 && (
+                            <>
+                                <Divider />
+                                <div>
+                                    <Text strong>元数据:</Text>
+                                    <div className="mt-2">
+                                        <pre className="text-xs bg-gray-50 p-2 rounded">
+                                            {JSON.stringify(previewDocument.metadata, null, 2)}
+                                        </pre>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                ) : (
+                    <Empty description="无法加载文档" />
+                )}
+            </Modal>
+
             {/* 澄清问题模态框 */}
             <Modal
                 title="需要更多信息"
                 open={showClarificationModal}
                 onCancel={() => setShowClarificationModal(false)}
-                onOk={handleClarify}
+                onOk={() => {/* TODO: 实现澄清逻辑 */ }}
                 okText="提交"
                 cancelText="取消"
             >
