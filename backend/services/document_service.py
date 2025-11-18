@@ -144,13 +144,12 @@ class DocumentService:
         if hasattr(file_data, "seek"):
             file_data.seek(0)
 
-        # 2️⃣ 模拟上传（此处省略实际上传）
+        # 2️⃣ TODO 模拟上传（暂时没有实现上传到s3的逻辑）
         file_path = f"{object_name}"
         event.data = "[info] 上传文件成功"
         yield event.model_dump_json(ensure_ascii=False)
 
         # 3️⃣ 解析文本内容
-        # ⚠️ 注意这里不要再 .read()，因为流已经读过，直接用 file_bytes
         doc = await DocumentParser.parse_file(file_bytes, file_extension)
 
         # 4️⃣ 获取模板

@@ -30,75 +30,76 @@ graph_state_storage: Dict[str, Dict[str, Any]] = {}
 
 # ==================== 文档去重工具函数 ====================
 
+
 def normalize_text(text: str) -> str:
     """
     文本标准化：去除HTML/Markdown标签、标点、多余空格等
-    
+
     用于后续的哈希计算和相似度比对
     """
     if not text:
         return ""
-    
+
     # 移除HTML标签
-    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r"<[^>]+>", "", text)
     # 移除Markdown标题标记
-    text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r"^#+\s+", "", text, flags=re.MULTILINE)
     # 移除Markdown链接
-    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
     # 转小写
     text = text.lower()
     # 折叠多余空白符
-    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r"\s+", " ", text)
     # 只保留中英文、数字
-    text = re.sub(r'[^\w\u4e00-\u9fa5]+', '', text)
-    
+    text = re.sub(r"[^\w\u4e00-\u9fa5]+", "", text)
+
     return text.strip()
 
 
 def compute_strong_hash(text: str) -> str:
     """
     计算文本的强哈希值（SHA256）
-    
+
     用于检测完全相同的文档
     """
-    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def compute_simhash(text: str, hashbits: int = 64) -> int:
     """
     计算SimHash（局部敏感哈希）
-    
+
     用于检测高度相似的文档
     算法：对文本分词后，使用每个词的hash进行加权求和
     """
     if not text:
         return 0
-    
+
     # 简单分词（按空格）
     tokens = text.split()
     if not tokens:
         return 0
-    
+
     # 初始化特征向量
     v = [0] * hashbits
-    
+
     for token in tokens:
         # 计算token的hash
-        h = int(hashlib.md5(token.encode('utf-8')).hexdigest(), 16)
-        
+        h = int(hashlib.md5(token.encode("utf-8")).hexdigest(), 16)
+
         # 对每一位进行加权
         for i in range(hashbits):
             if h & (1 << i):
                 v[i] += 1
             else:
                 v[i] -= 1
-    
+
     # 生成SimHash指纹
     fingerprint = 0
     for i in range(hashbits):
         if v[i] > 0:
-            fingerprint |= (1 << i)
-    
+            fingerprint |= 1 << i
+
     return fingerprint
 
 
@@ -117,16 +118,16 @@ def hamming_distance(hash1: int, hash2: int) -> int:
 def compute_shingles(text: str, k: int = 5) -> Set[str]:
     """
     生成k-shingles（滑动窗口字符串集合）
-    
+
     用于Jaccard相似度计算
     """
     if len(text) < k:
         return {text}
-    
+
     shingles = set()
     for i in range(len(text) - k + 1):
-        shingles.add(text[i:i+k])
-    
+        shingles.add(text[i : i + k])
+
     return shingles
 
 
@@ -136,63 +137,73 @@ def jaccard_similarity(set1: Set[str], set2: Set[str]) -> float:
     """
     if not set1 or not set2:
         return 0.0
-    
+
     intersection = len(set1 & set2)
     union = len(set1 | set2)
-    
+
     return intersection / union if union > 0 else 0.0
 
 
-def should_remove_duplicate(doc_a: Dict[str, Any], doc_b: Dict[str, Any]) -> Optional[int]:
+def should_remove_duplicate(
+    doc_a: Dict[str, Any], doc_b: Dict[str, Any]
+) -> Optional[int]:
     """
     判断两个文档是否重复，返回应该移除的文档ID
-    
+
     返回值：
     - None: 不重复
     - document_id: 应该移除的文档ID（保留内容更长、时间更新的）
-    
+
     Args:
         doc_a: 文档A的dict，包含 normalized, strong_hash, simhash, shingles, document_id, content
         doc_b: 文档B的dict
     """
     # 阶段1: 强哈希完全相同
-    if doc_a['strong_hash'] == doc_b['strong_hash']:
-        logger.debug(f"文档 {doc_a['document_id']} 和 {doc_b['document_id']} 强哈希相同（完全重复）")
+    if doc_a["strong_hash"] == doc_b["strong_hash"]:
+        logger.debug(
+            f"文档 {doc_a['document_id']} 和 {doc_b['document_id']} 强哈希相同（完全重复）"
+        )
         # 保留内容更长的
-        if len(doc_a['content']) < len(doc_b['content']):
-            return doc_a['document_id']
+        if len(doc_a["content"]) < len(doc_b["content"]):
+            return doc_a["document_id"]
         else:
-            return doc_b['document_id']
-    
+            return doc_b["document_id"]
+
     # 阶段2: SimHash汉明距离很小（高度相似）
-    hamming_dist = hamming_distance(doc_a['simhash'], doc_b['simhash'])
+    hamming_dist = hamming_distance(doc_a["simhash"], doc_b["simhash"])
     if hamming_dist <= 3:  # 阈值可调
-        logger.debug(f"文档 {doc_a['document_id']} 和 {doc_b['document_id']} SimHash距离={hamming_dist}（高度相似）")
-        if len(doc_a['content']) < len(doc_b['content']):
-            return doc_a['document_id']
+        logger.debug(
+            f"文档 {doc_a['document_id']} 和 {doc_b['document_id']} SimHash距离={hamming_dist}（高度相似）"
+        )
+        if len(doc_a["content"]) < len(doc_b["content"]):
+            return doc_a["document_id"]
         else:
-            return doc_b['document_id']
-    
+            return doc_b["document_id"]
+
     # 阶段3: Jaccard相似度很高
-    jac_sim = jaccard_similarity(doc_a['shingles'], doc_b['shingles'])
+    jac_sim = jaccard_similarity(doc_a["shingles"], doc_b["shingles"])
     if jac_sim > 0.75:  # 阈值可调
-        logger.debug(f"文档 {doc_a['document_id']} 和 {doc_b['document_id']} Jaccard={jac_sim:.3f}（内容重叠高）")
-        if len(doc_a['content']) < len(doc_b['content']):
-            return doc_a['document_id']
+        logger.debug(
+            f"文档 {doc_a['document_id']} 和 {doc_b['document_id']} Jaccard={jac_sim:.3f}（内容重叠高）"
+        )
+        if len(doc_a["content"]) < len(doc_b["content"]):
+            return doc_a["document_id"]
         else:
-            return doc_b['document_id']
-    
+            return doc_b["document_id"]
+
     # 阶段4: 只对Jaccard在0.5-0.75之间的做精细difflib比对（避免O(n²)开销）
     if 0.5 < jac_sim <= 0.75:
         # difflib比对（较慢，只对候选执行）
-        ratio = SequenceMatcher(None, doc_a['normalized'], doc_b['normalized']).ratio()
+        ratio = SequenceMatcher(None, doc_a["normalized"], doc_b["normalized"]).ratio()
         if ratio > 0.80:  # 阈值可调
-            logger.debug(f"文档 {doc_a['document_id']} 和 {doc_b['document_id']} difflib={ratio:.3f}（精细比对重复）")
-            if len(doc_a['content']) < len(doc_b['content']):
-                return doc_a['document_id']
+            logger.debug(
+                f"文档 {doc_a['document_id']} 和 {doc_b['document_id']} difflib={ratio:.3f}（精细比对重复）"
+            )
+            if len(doc_a["content"]) < len(doc_b["content"]):
+                return doc_a["document_id"]
             else:
-                return doc_b['document_id']
-    
+                return doc_b["document_id"]
+
     return None
 
 
@@ -819,15 +830,11 @@ async def deduplicate_documents(
 
             if remove_id is not None:
                 removed_ids.add(remove_id)
-                logger.info(
-                    f"✖️  文档 {remove_id} 被标记为重复，将被移除"
-                )
+                logger.info(f"✖️  文档 {remove_id} 被标记为重复，将被移除")
 
     # 过滤重复文档
     deduplicated_results = [
-        doc
-        for doc in results
-        if doc.get("document_id") not in removed_ids
+        doc for doc in results if doc.get("document_id") not in removed_ids
     ]
 
     logger.info(
@@ -1012,7 +1019,7 @@ workflow.add_edge("ask_user", END)  # 歧义处理后结束
 workflow.add_edge("generate_answer", END)  # 生成答案后结束
 
 # 7. 编译图
-app : CompiledStateGraph = workflow.compile()
+app: CompiledStateGraph = workflow.compile()
 
 logger.info("✅ LangGraph 智能体工作流编译完成")
 logger.info(

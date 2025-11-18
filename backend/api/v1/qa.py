@@ -13,7 +13,7 @@ from api.deps import get_current_user
 from config import get_settings
 from database import get_db
 from models.database_models import User
-from schemas.api_schemas import QARequest, QAResponse, ResponseBase
+from schemas.api_schemas import QARequest, QAResponse, ResponseBase, SSEEvent
 from services.qa_service import QAService
 from loguru import logger
 
@@ -145,11 +145,11 @@ async def ask_question_agent_stream(
     async def event_generator():
         """SSE事件生成器"""
         es_client = None  # 初始化
+        # 生成会话/任务ID（整个流程使用同一个UUID）
+        task_id = str(uuid.uuid4())
         try:
             # 生成会话ID
             session_id = str(uuid.uuid4())
-
-            # 获取配置
             settings = get_settings()
 
             # 初始化Elasticsearch客户端
@@ -189,19 +189,15 @@ async def ask_question_agent_stream(
             logger.info(f"[LangGraph initial_state] {initial_state}")
 
             # 发送开始处理消息
-            yield {
-                "data": json.dumps(
-                    {
-                        "event": "thinking",
-                        "data": {
-                            "stage": "start",
-                            "message": "开始处理您的问题...",
-                        },
-                        "done": False,
-                    },
-                    ensure_ascii=False,
-                ),
-            }
+            yield SSEEvent(
+                event="thinking",
+                data={
+                    "stage": "start",
+                    "message": "开始处理您的问题...",
+                },
+                id=task_id,
+                done=False,
+            ).model_dump_json()
 
             # 使用astream方式异步流式处理LangGraph（修复：异步节点必须用异步stream）
             state_data = None  # 初始化，用于保存最终状态
@@ -212,7 +208,7 @@ async def ask_question_agent_stream(
                 logger.info(f"[LangGraph step_result.keys()] {step_result.keys()}")
                 # 获取节点名称和状态数据
                 node_name = list(step_result.keys())[0]
-                
+
                 state_data = step_result[node_name]
 
                 print(f"[LangGraph Node] {node_name}")
@@ -220,20 +216,16 @@ async def ask_question_agent_stream(
                 # 根据节点发送相应事件（参考fh_agent实现，每个节点发送开始和完成两个事件）
                 if node_name == "es_fulltext":
                     # 先发送stage_start事件
-                    yield {
-                        "data": json.dumps(
-                            {
-                                "event": "stage_start",
-                                "data": {
-                                    "stage": "es_fulltext",
-                                    "message": "正在进行ES全文检索...",
-                                },
-                                "done": False,
-                            },
-                            ensure_ascii=False,
-                        ),
-                    }
-                    
+                    yield SSEEvent(
+                        event="stage_start",
+                        data={
+                            "stage": "es_fulltext",
+                            "message": "正在进行ES全文检索...",
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
+
                     # 再发送stage_complete事件
                     es_doc_ids = list(state_data.get("es_document_ids", set()))
                     es_results = state_data.get("es_fulltext_results", [])[:10]
@@ -241,180 +233,156 @@ async def ask_question_agent_stream(
                         {
                             "document_id": doc.get("document_id"),
                             "title": doc.get("title", ""),
-                            "snippet": doc.get("content", "")[:100] + "..." if doc.get("content") else "",
+                            "snippet": (
+                                doc.get("content", "")[:100] + "..."
+                                if doc.get("content")
+                                else ""
+                            ),
                         }
                         for doc in es_results
                     ]
-                    yield {
-                        "data": json.dumps(
-                            {
-                                "event": "stage_complete",
-                                "data": {
-                                    "stage": "es_fulltext",
-                                    "message": f"ES检索完成，召回 {len(es_doc_ids)} 篇文档",
-                                    "result": {
-                                        "document_ids": es_doc_ids,
-                                        "count": len(es_doc_ids),
-                                        "documents": doc_summaries,
-                                    },
-                                },
-                                "done": False,
+                    yield SSEEvent(
+                        event="stage_complete",
+                        data={
+                            "stage": "es_fulltext",
+                            "message": f"ES检索完成，召回 {len(es_doc_ids)} 篇文档",
+                            "result": {
+                                "document_ids": es_doc_ids,
+                                "count": len(es_doc_ids),
+                                "documents": doc_summaries,
                             },
-                            ensure_ascii=False,
-                        ),
-                    }
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
 
                 elif node_name == "sql_structured":
                     # 先发送stage_start事件
-                    yield {
-                        "data": json.dumps(
-                            {
-                                "event": "stage_start",
-                                "data": {
-                                    "stage": "sql_structured",
-                                    "message": "正在进行SQL结构化检索...",
-                                },
-                                "done": False,
-                            },
-                            ensure_ascii=False,
-                        ),
-                    }
-                    
+                    yield SSEEvent(
+                        event="stage_start",
+                        data={
+                            "stage": "sql_structured",
+                            "message": "正在进行SQL结构化检索...",
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
+
                     # 再发送stage_complete事件
                     sql_doc_ids = list(state_data.get("sql_document_ids", set()))
-                    yield {
-                        "data": json.dumps(
-                            {
-                                "event": "stage_complete",
-                                "data": {
-                                    "stage": "sql_structured",
-                                    "message": f"SQL检索完成，召回 {len(sql_doc_ids)} 篇文档",
-                                    "result": {
-                                        "document_ids": sql_doc_ids,
-                                        "count": len(sql_doc_ids),
-                                        "category": state_data.get("category", "*"),
-                                        "conditions": state_data.get("sql_extracted_conditions", []),
-                                    },
-                                },
-                                "done": False,
+                    yield SSEEvent(
+                        event="stage_complete",
+                        data={
+                            "stage": "sql_structured",
+                            "message": f"SQL检索完成，召回 {len(sql_doc_ids)} 篇文档",
+                            "result": {
+                                "document_ids": sql_doc_ids,
+                                "count": len(sql_doc_ids),
+                                "category": state_data.get("category", "*"),
+                                "conditions": state_data.get(
+                                    "sql_extracted_conditions", []
+                                ),
                             },
-                            ensure_ascii=False,
-                        ),
-                    }
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
 
                 elif node_name == "merge_results":
                     # 先发送stage_start事件
-                    yield {
-                        "data": json.dumps(
-                            {
-                                "event": "stage_start",
-                                "data": {
-                                    "stage": "merge_results",
-                                    "message": "正在融合检索结果...",
-                                },
-                                "done": False,
-                            },
-                            ensure_ascii=False,
-                        ),
-                    }
-                    
+                    yield SSEEvent(
+                        event="stage_start",
+                        data={
+                            "stage": "merge_results",
+                            "message": "正在融合检索结果...",
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
+
                     # 再发送stage_complete事件
                     merged_ids = state_data.get("merged_document_ids", [])
-                    yield {
-                        "data": json.dumps(
-                            {
-                                "event": "stage_complete",
-                                "data": {
-                                    "stage": "merge_results",
-                                    "message": f"结果融合完成，融合后 {len(merged_ids)} 篇文档",
-                                    "result": {
-                                        "document_ids": merged_ids,
-                                        "count": len(merged_ids),
-                                        "strategy": state_data.get("fusion_strategy", "none"),
-                                    },
-                                },
-                                "done": False,
+                    yield SSEEvent(
+                        event="stage_complete",
+                        data={
+                            "stage": "merge_results",
+                            "message": f"结果融合完成，融合后 {len(merged_ids)} 篇文档",
+                            "result": {
+                                "document_ids": merged_ids,
+                                "count": len(merged_ids),
+                                "strategy": state_data.get("fusion_strategy", "none"),
                             },
-                            ensure_ascii=False,
-                        ),
-                    }
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
 
                 elif node_name == "refined_filter":
                     # 先发送stage_start事件
-                    yield {
-                        "data": json.dumps(
-                            {
-                                "event": "stage_start",
-                                "data": {
-                                    "stage": "refined_filter",
-                                    "message": "正在进行精细化筛选...",
-                                },
-                                "done": False,
-                            },
-                            ensure_ascii=False,
-                        ),
-                    }
-                    
+                    yield SSEEvent(
+                        event="stage_start",
+                        data={
+                            "stage": "refined_filter",
+                            "message": "正在进行精细化筛选...",
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
+
                     # 再发送stage_complete事件
                     final_results = state_data.get("final_results", [])
                     result_summaries = [
                         {
                             "document_id": doc.get("document_id"),
                             "title": doc.get("title", ""),
-                            "snippet": doc.get("content", "")[:100] + "..." if doc.get("content") else "",
+                            "snippet": (
+                                doc.get("content", "")[:100] + "..."
+                                if doc.get("content")
+                                else ""
+                            ),
                         }
                         for doc in final_results
                     ]
-                    yield {
-                        "data": json.dumps(
-                            {
-                                "event": "stage_complete",
-                                "data": {
-                                    "stage": "refined_filter",
-                                    "message": f"精细化筛选完成,最终 {len(final_results)} 篇文档",
-                                    "result": {
-                                        "document_ids": [doc.get("document_id") for doc in final_results],
-                                        "count": len(final_results),
-                                        "documents": result_summaries,
-                                    },
-                                },
-                                "done": False,
+                    yield SSEEvent(
+                        event="stage_complete",
+                        data={
+                            "stage": "refined_filter",
+                            "message": f"精细化筛选完成,最终 {len(final_results)} 篇文档",
+                            "result": {
+                                "document_ids": [
+                                    doc.get("document_id") for doc in final_results
+                                ],
+                                "count": len(final_results),
+                                "documents": result_summaries,
                             },
-                            ensure_ascii=False,
-                        ),
-                    }
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
 
                 elif node_name == "generate_answer":
                     # 发送生成答案的开始事件
-                    yield {
-                        "data": json.dumps(
-                            {
-                                "event": "stage_start",
-                                "data": {
-                                    "stage": "generate",
-                                    "message": "正在生成答案...",
-                                },
-                                "done": False,
-                            },
-                            ensure_ascii=False,
-                        ),
-                    }
+                    yield SSEEvent(
+                        event="stage_start",
+                        data={
+                            "stage": "generate",
+                            "message": "正在生成答案...",
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
 
             # 获取最终状态
             final_state = state_data if state_data is not None else {}
 
             # 检查是否有歧义消息需要用户澄清
             if final_state.get("ambiguity_message"):
-                yield {
-                    "data": json.dumps(
-                        {
-                            "event": "ambiguity",
-                            "data": {"message": final_state["ambiguity_message"]},
-                            "done": True,
-                        },
-                        ensure_ascii=False,
-                    ),
-                }
+                yield SSEEvent(
+                    event="ambiguity",
+                    data={"message": final_state["ambiguity_message"]},
+                    id=task_id,
+                    done=True,
+                ).model_dump_json()
                 return
 
             # 发送检索到的文档引用
@@ -435,56 +403,40 @@ async def ask_question_agent_stream(
                         }
                     )
 
-                yield {
-                    "data": json.dumps(
-                        {
-                            "event": "references",
-                            "data": {"references": references},
-                            "done": False,
-                        },
-                        ensure_ascii=False,
-                    ),
-                }
+                yield SSEEvent(
+                    event="references",
+                    data={"references": references},
+                    id=task_id,
+                    done=False,
+                ).model_dump_json()
 
             # 发送最终答案
             answer = final_state.get("answer", "抱歉，我没有找到相关答案。")
-            yield {
-                "data": json.dumps(
-                    {
-                        "event": "answer",
-                        "data": {"content": answer},
-                        "done": False,
-                    },
-                    ensure_ascii=False,
-                ),
-            }
+            yield SSEEvent(
+                event="answer",
+                data={"content": answer},
+                id=task_id,
+                done=False,
+            ).model_dump_json()
 
             await asyncio.sleep(0.5)
 
             # 发送完成信号
-            yield {
-                "data": json.dumps(
-                    {
-                        "event": "complete",
-                        "data": {"message": "回答完成"},
-                        "done": True,
-                    },
-                    ensure_ascii=False,
-                ),
-            }
+            yield SSEEvent(
+                event="complete",
+                data={"message": "回答完成"},
+                id=task_id,
+                done=True,
+            ).model_dump_json()
 
         except Exception as e:
             traceback.print_exc()
-            yield {
-                "data": json.dumps(
-                    {
-                        "event": "error",
-                        "data": {"message": f"智能体问答失败: {str(e)}"},
-                        "done": True,
-                    },
-                    ensure_ascii=False,
-                ),
-            }
+            yield SSEEvent(
+                event="error",
+                data={"message": f"智能体问答失败: {str(e)}"},
+                id=task_id,
+                done=True,
+            ).model_dump_json()
         finally:
             # 关闭Elasticsearch客户端
             if es_client:
@@ -527,6 +479,9 @@ async def clarify_question_agent(
 
     async def event_generator():
         """SSE事件生成器"""
+        es_client = None  # 初始化
+        # 生成会话/任务ID（整个流程使用同一个UUID）
+        task_id = str(uuid.uuid4())
         try:
             # 检查会话ID是否存在
             if session_id not in graph_state_storage:
@@ -552,98 +507,77 @@ async def clarify_question_agent(
             )
             stored_state["es_client"] = es_client
 
-            try:
-                # 发送开始处理消息
-                yield {
-                    "data": json.dumps(
+            # 发送开始处理消息
+            yield SSEEvent(
+                event="thinking",
+                data={
+                    "stage": "start",
+                    "message": "正在处理您的澄清...",
+                },
+                id=task_id,
+                done=False,
+            ).model_dump_json()
+
+            # 继续运行智能体图
+            final_state = await search_agent_app.ainvoke(dict(stored_state))  # type: ignore
+
+            # 发送检索到的文档引用
+            final_results = final_state.get("final_results", [])
+            if final_results:
+                references = []
+                for i, doc in enumerate(final_results):
+                    references.append(
                         {
-                            "event": "thinking",
-                            "data": {
-                                "stage": "start",
-                                "message": "正在处理您的澄清...",
-                            },
-                            "done": False,
-                        },
-                        ensure_ascii=False,
-                    ),
-                }
+                            "document_id": doc.get("document_id", i),
+                            "title": doc.get("title", "未知文档"),
+                            "snippet": (
+                                doc.get("content", "")[:200] + "..."
+                                if doc.get("content")
+                                else ""
+                            ),
+                            "score": 1.0,
+                        }
+                    )
 
-                # 继续运行智能体图
-                final_state = await search_agent_app.ainvoke(dict(stored_state))  # type: ignore
+                yield SSEEvent(
+                    event="references",
+                    data={"references": references},
+                    id=task_id,
+                    done=False,
+                ).model_dump_json()
 
-                # 发送检索到的文档引用
-                final_results = final_state.get("final_results", [])
-                if final_results:
-                    references = []
-                    for i, doc in enumerate(final_results):
-                        references.append(
-                            {
-                                "document_id": doc.get("document_id", i),
-                                "title": doc.get("title", "未知文档"),
-                                "snippet": (
-                                    doc.get("content", "")[:200] + "..."
-                                    if doc.get("content")
-                                    else ""
-                                ),
-                                "score": 1.0,
-                            }
-                        )
+            # 发送最终答案
+            answer = final_state.get("answer", "抱歉，我没有找到相关答案。")
+            yield SSEEvent(
+                event="answer",
+                data={"content": answer},
+                id=task_id,
+                done=False,
+            ).model_dump_json()
 
-                    yield {
-                        "data": json.dumps(
-                            {
-                                "event": "references",
-                                "data": {"references": references},
-                                "done": False,
-                            },
-                            ensure_ascii=False,
-                        ),
-                    }
+            # 发送完成信号
+            yield SSEEvent(
+                event="complete",
+                data={"message": "回答完成"},
+                id=task_id,
+                done=True,
+            ).model_dump_json()
 
-                # 发送最终答案
-                answer = final_state.get("answer", "抱歉，我没有找到相关答案。")
-                yield {
-                    "data": json.dumps(
-                        {
-                            "event": "answer",
-                            "data": {"content": answer},
-                            "done": False,
-                        },
-                        ensure_ascii=False,
-                    ),
-                }
-
-                # 发送完成信号
-                yield {
-                    "data": json.dumps(
-                        {
-                            "event": "complete",
-                            "data": {"message": "回答完成"},
-                            "done": True,
-                        },
-                        ensure_ascii=False,
-                    ),
-                }
-
-                # 清除存储的状态
-                if session_id in graph_state_storage:
-                    del graph_state_storage[session_id]
-
-            finally:
-                # 关闭Elasticsearch客户端
-                await es_client.close()
+            # 清除存储的状态
+            if session_id in graph_state_storage:
+                del graph_state_storage[session_id]
 
         except Exception as e:
             # 发送错误事件
-            yield {
-                "data": json.dumps(
-                    {
-                        "event": "error",
-                        "data": {"message": f"智能体问答失败: {str(e)}"},
-                        "done": True,
-                    },
-                    ensure_ascii=False,
-                ),
-            }
+            yield SSEEvent(
+                event="error",
+                data={"message": f"智能体问答失败: {str(e)}"},
+                id=task_id,
+                done=True,
+            ).model_dump_json()
+        finally:
+            # 关闭Elasticsearch客户端
+            if es_client:
+                await es_client.close()
 
     return EventSourceResponse(event_generator())

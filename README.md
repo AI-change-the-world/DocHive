@@ -49,7 +49,7 @@ DocHive 是一个智能文档分类分级系统，通过大语言模型实现文
 
 1. 克隆项目代码:
 ```bash
-git clone https://github.com/your-username/DocHive.git
+git clone https://github.com/AI-change-the-world/DocHive.git
 cd DocHive
 ```
 

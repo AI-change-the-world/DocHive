@@ -8,7 +8,7 @@ from api.v1 import (
     qa,
     template_configs,
     templates,
-    sys_config
+    sys_config,
 )
 
 # 创建 v1 版本路由

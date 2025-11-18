@@ -9,9 +9,11 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 class SSEEvent(BaseModel):
     """SSE事件"""
 
+    model_config = ConfigDict(from_attributes=True)
+
     event: str = Field(..., description="事件名称")
     data: Optional[Any] = Field(None, description="事件数据")
-    id: Optional[str] = Field(None, description="事件ID")
+    id: Optional[str] = Field(None, description="会话/任务ID（一个任务的所有事件共用）")
     done: Optional[bool] = Field(False, description="是否完成")
 
 
