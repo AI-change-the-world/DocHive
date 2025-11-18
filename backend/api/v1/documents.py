@@ -355,3 +355,110 @@ async def get_document_status(
             "processed_time": getattr(mapping, "processed_time"),
         },
     )
+
+
+@router.post("/create-manually")
+async def create_document_manually(
+    file: UploadFile = File(..., description="上传的文档文件"),
+    template_id: int = Form(..., description="分类模板ID"),
+    doc_type_id: int = Form(..., description="文档类型ID"),
+    class_code: str = Form(..., description="分类编码"),
+    title: Optional[str] = Form(None, description="文档标题（可选，不填则自动提取）"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    手动创建文档（流式传输，用户指定分类信息）
+
+    - **file**: 文档文件
+    - **title**: 文档标题
+    - **template_id**: 关联的分类模板ID
+    - **doc_type_id**: 文档类型ID
+    - **class_code**: 分类编码（用户手动指定）
+    """
+    # 验证文件类型
+    file_extension = (
+        file.filename.split(".")[-1].lower()
+        if file.filename and "." in file.filename
+        else ""
+    )
+    if file_extension not in settings.allowed_extensions_list:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"不支持的文件格式，允许的格式: {', '.join(settings.allowed_extensions_list)}",
+        )
+
+    # 验证文件大小
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+
+    if file_size > settings.MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"文件大小超过限制（最大 {settings.MAX_UPLOAD_SIZE / 1024 / 1024}MB）",
+        )
+
+    # 使用流式创建
+    return EventSourceResponse(
+        DocumentService.create_document_manually(
+            db,
+            file.file,
+            file.filename or "Untitled",
+            title,
+            template_id,
+            doc_type_id,
+            class_code,
+            getattr(current_user, "id"),
+        )
+    )
+
+
+@router.get("/class-codes/{template_id}", response_model=ResponseBase)
+async def get_class_codes(
+    template_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    获取指定模板下所有已存在的分类编码
+
+    - **template_id**: 模板ID
+    """
+    try:
+        class_codes = await DocumentService.get_available_class_codes(db, template_id)
+        return ResponseBase(
+            message="获取分类编码成功",
+            data=class_codes,
+        )
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取分类编码失败: {str(e)}",
+        )
+
+
+@router.get("/template-levels/{template_id}", response_model=ResponseBase)
+async def get_template_levels(
+    template_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    获取模板的层级结构定义（用于构建分类编码选择器）
+
+    - **template_id**: 模板ID
+    """
+    try:
+        levels = await DocumentService.get_template_levels(db, template_id)
+        return ResponseBase(
+            message="获取模板层级成功",
+            data=levels,
+        )
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取模板层级失败: {str(e)}",
+        )

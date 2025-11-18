@@ -642,6 +642,242 @@ class DocumentService:
         return storage_client.get_presigned_url(object_name)
 
     @staticmethod
+    async def create_document_manually(
+        db: AsyncSession,
+        file_data: BinaryIO,
+        filename: str,
+        title: Optional[str],
+        template_id: int,
+        doc_type_id: int,
+        class_code: str,
+        user_id: int,
+    ) -> AsyncGenerator[str, Any]:
+        """
+        手动创建文档（流式处理，用户指定分类信息）
+
+        Args:
+            db: 数据库会话
+            file_data: 文件数据流
+            filename: 原始文件名
+            title: 文档标题（可选，为None则从文档内容中提取）
+            template_id: 模板ID
+            doc_type_id: 文档类型ID
+            class_code: 分类编码（用户手动指定）
+            user_id: 上传用户ID
+
+        Yields:
+            SSE事件流
+        """
+        _id = str(uuid.uuid4())
+
+        event = SSEEvent(
+            event="create document manually", data=None, id=_id, done=False
+        )
+
+        file_extension = Path(filename).suffix
+        object_name = f"{uuid.uuid4()}{file_extension}"
+
+        # 1️⃣ 读取文件内容
+        file_bytes = file_data.read()
+        if hasattr(file_data, "seek"):
+            file_data.seek(0)
+
+        # 2️⃣ 模拟上传（暂时没有实现上传到s3的逻辑）
+        file_path = f"{object_name}"
+        event.data = "[info] 上传文件成功"
+        yield event.model_dump_json(ensure_ascii=False)
+
+        # 3️⃣ 解析文本内容
+        event.data = "[info] 解析文档内容中..."
+        yield event.model_dump_json(ensure_ascii=False)
+        doc = await DocumentParser.parse_file(file_bytes, file_extension)
+
+        # 4️⃣ 如果没有提供标题，使用文件名
+        if not title:
+            # 去掉文件扩展名作为标题
+            title = filename.rsplit('.', 1)[0] if '.' in filename else filename
+            event.data = f"[info] 使用文件名作为标题: {title}"
+            yield event.model_dump_json(ensure_ascii=False)
+
+        # 5️⃣ 查询文档类型字段定义
+        event.data = "[info] 获取文档类型字段配置..."
+        yield event.model_dump_json(ensure_ascii=False)
+        
+        doc_type_fields_result = await db.execute(
+            select(DocumentTypeField).where(
+                DocumentTypeField.doc_type_id == doc_type_id
+            )
+        )
+        doc_type_fields = doc_type_fields_result.scalars().all()
+
+        _extracted_data = {}
+
+        if not doc_type_fields:
+            event.data = "[info] 文档类型字段不存在,不提取内容"
+            yield event.model_dump_json(ensure_ascii=False)
+        else:
+            event.data = "[info] 开始使用AI提取字段信息..."
+            yield event.model_dump_json(ensure_ascii=False)
+
+            _fields = [i.to_dict() for i in doc_type_fields]
+            field_definitions = "\n".join(
+                f"{i+1}. {f['field_name']}（{f['field_type']}）：{f['description']}"
+                for i, f in enumerate(_fields)
+            )
+            prompt = EXTRACT_FIELES_PROMPT.replace(
+                "{{field_definitions}}", field_definitions
+            ).replace("{{document_content}}", doc)
+            
+            _extracted_data = await llm_client.extract_json_response(prompt, db=db)
+            event.data = f"[info] 字段提取完成: {json.dumps(_extracted_data, ensure_ascii=False)}"
+            yield event.model_dump_json(ensure_ascii=False)
+
+        # 6️⃣ 保存文档信息
+        event.data = "[info] 保存文档信息..."
+        yield event.model_dump_json(ensure_ascii=False)
+        
+        document = Document(
+            title=title,
+            original_filename=filename,
+            file_path=file_path,
+            file_type=file_extension.lstrip("."),
+            file_size=len(file_bytes),
+            template_id=template_id,
+            doc_metadata={},
+            uploader_id=user_id,
+            content_text=doc,
+            doc_type_id=doc_type_id,
+        )
+
+        db.add(document)
+        await db.flush()  # 获取文档ID
+
+        # 7️⃣ 创建模板和文档的映射记录
+        mapping = TemplateDocumentMapping(
+            template_id=template_id,
+            document_id=document.id,
+            class_code=class_code,
+            status="completed",
+            processed_time=int(time.time()),
+            extracted_data=(
+                json.dumps(_extracted_data, ensure_ascii=False)
+                if _extracted_data
+                else None
+            ),
+        )
+        db.add(mapping)
+
+        await db.commit()
+
+        # 8️⃣ 将文档索引到Elasticsearch
+        event.data = "[info] 索引文档到搜索引擎..."
+        yield event.model_dump_json(ensure_ascii=False)
+        
+        try:
+            from utils.search_engine import get_search_client
+
+            search_client = get_search_client()
+
+            # 获取upload_time的值
+            upload_time = getattr(document, "upload_time", None)
+
+            document_data_for_es = {
+                "document_id": document.id,
+                "title": document.title,
+                "content": doc,
+                "summary": doc[:500] if len(doc) > 500 else doc,
+                "template_id": document.template_id,
+                "file_type": document.file_type,
+                "upload_time": (
+                    datetime.fromtimestamp(upload_time).isoformat()
+                    if upload_time
+                    else None
+                ),
+                "metadata": _extracted_data,  # 将extracted_data存储在metadata字段中
+            }
+            await search_client.index_document(document_data_for_es)
+            logger.info(f"文档 {document.id} 已成功索引到Elasticsearch")
+            event.data = "[info] 文档索引成功"
+            yield event.model_dump_json(ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"文档 {document.id} 索引到Elasticsearch失败: {e}")
+            event.data = f"[warning] 文档索引失败: {str(e)}"
+            yield event.model_dump_json(ensure_ascii=False)
+
+        event.data = "[info] 文档创建成功"
+        event.done = True
+        yield event.model_dump_json(ensure_ascii=False)
+
+    @staticmethod
+    async def get_available_class_codes(
+        db: AsyncSession,
+        template_id: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        获取指定模板下所有已存在的分类编码
+
+        Args:
+            db: 数据库会话
+            template_id: 模板ID
+
+        Returns:
+            分类编码列表
+        """
+        result = await db.execute(
+            select(TemplateDocumentMapping.class_code)
+            .where(
+                TemplateDocumentMapping.template_id == template_id,
+                TemplateDocumentMapping.class_code.isnot(None),
+            )
+            .distinct()
+        )
+        class_codes = result.scalars().all()
+
+        return [{"value": code, "label": code} for code in class_codes if code]
+
+    @staticmethod
+    async def get_template_levels(
+        db: AsyncSession,
+        template_id: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        获取模板的层级结构定义（不包含文档类型层）
+
+        Args:
+            db: 数据库会话
+            template_id: 模板ID
+
+        Returns:
+            层级定义列表，每个层级包含 name, code, level, extraction_prompt 等信息
+        """
+        # 获取模板
+        result = await db.execute(
+            select(ClassTemplate).where(ClassTemplate.id == template_id)
+        )
+        template = result.scalar_one_or_none()
+
+        if not template:
+            return []
+
+        # 获取模板的层级定义
+        template_json_list: List[Dict[str, Any]] = getattr(template, "levels") or []
+
+        # 过滤掉 is_doc_type=True 的层级（文档类型层）
+        level_list = []
+        for level_def in template_json_list:
+            if not level_def.get("is_doc_type", False):
+                level_list.append({
+                    "level": level_def.get("level"),
+                    "name": level_def.get("name"),
+                    "code": level_def.get("code"),
+                    "description": level_def.get("description"),
+                    "extraction_prompt": level_def.get("extraction_prompt"),
+                    "placeholder_example": level_def.get("placeholder_example"),
+                })
+
+        return level_list
+
+    @staticmethod
     def _get_content_type(file_extension: str) -> str:
         """获取文件 MIME 类型"""
         content_types = {

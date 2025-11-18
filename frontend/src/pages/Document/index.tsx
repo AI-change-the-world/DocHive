@@ -12,6 +12,7 @@ import {
     Tag,
     Card,
     Drawer,
+    Radio,
 } from 'antd';
 import {
     UploadOutlined,
@@ -20,7 +21,8 @@ import {
     DownloadOutlined,
 } from '@ant-design/icons';
 import { documentService, templateService, classificationService } from '../../services';
-import type { Document, ClassTemplate } from '../../types';
+import { getDocumentTypesByTemplate } from '../../services/documentType';
+import type { Document, ClassTemplate, DocumentType } from '../../types';
 import type { SSEEvent } from '../../utils/sseClient';
 
 const DocumentPage: React.FC = () => {
@@ -36,6 +38,12 @@ const DocumentPage: React.FC = () => {
     const [form] = Form.useForm();
     const [uploadStatus, setUploadStatus] = useState<string>('');
     const [isUploading, setIsUploading] = useState(false);
+    const [uploadMode, setUploadMode] = useState<'auto' | 'manual'>('auto'); // 'auto' | 'manual'
+    const [documentTypes, setDocumentTypes] = useState<DocumentType[]>([]);
+    const [classCodes, setClassCodes] = useState<Array<{ value: string; label: string }>>([]);
+    const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
+    const [templateLevels, setTemplateLevels] = useState<Array<any>>([]);
+    const [levelValues, setLevelValues] = useState<Record<number, string>>({});
 
     useEffect(() => {
         fetchDocuments();
@@ -68,47 +76,147 @@ const DocumentPage: React.FC = () => {
     };
 
     const handleUpload = async (values: any) => {
-        setIsUploading(true);
-        const { file, template_id } = values;
+        if (uploadMode === 'auto') {
+            // AI自动解析模式
+            setIsUploading(true);
+            const { file, template_id } = values;
 
-        const formData = new FormData();
-        formData.append('file', file[0].originFileObj);
-        if (template_id) {
-            formData.append('template_id', template_id);
-        }
+            const formData = new FormData();
+            formData.append('file', file[0].originFileObj);
+            if (template_id) {
+                formData.append('template_id', template_id);
+            }
 
-        setUploadStatus('上传中...');
+            setUploadStatus('上传中...');
 
-        try {
-            documentService.uploadDocumentSSE(
-                formData,
-                (event: SSEEvent) => {
-                    // 只负责显示消息
-                    if (event.data) {
-                        setUploadStatus(event.data);
-                        message.info(event.data);
+            try {
+                documentService.uploadDocumentSSE(
+                    formData,
+                    (event: SSEEvent) => {
+                        if (event.data) {
+                            setUploadStatus(event.data);
+                            message.info(event.data);
+                        }
+                    },
+                    (error: Error) => {
+                        message.error('上传失败: ' + error.message);
+                        setUploadStatus('上传失败');
+                        setIsUploading(false);
+                    },
+                    () => {
+                        message.success('文档上传并处理完成');
+                        setUploadVisible(false);
+                        setUploadStatus('');
+                        form.resetFields();
+                        fetchDocuments();
+                        setIsUploading(false);
                     }
-                },
-                (error: Error) => {
-                    // 错误处理
-                    message.error('上传失败: ' + error.message);
-                    setUploadStatus('上传失败');
-                    setIsUploading(false);
-                },
-                () => {
-                    // 流结束回调，统一处理完成逻辑
-                    message.success('文档上传并处理完成');
-                    setUploadVisible(false);
-                    setUploadStatus('');
-                    form.resetFields();
-                    fetchDocuments();
-                    setIsUploading(false);
+                );
+            } catch (error) {
+                message.error('上传失败');
+                setUploadStatus('上传失败');
+                setIsUploading(false);
+            }
+        } else {
+            // 手动创建模式（流式处理）
+            setIsUploading(true);
+            const { file, title, template_id, doc_type_id, class_code } = values;
+
+            const formData = new FormData();
+            formData.append('file', file[0].originFileObj);
+            formData.append('title', title);
+            formData.append('template_id', template_id);
+            formData.append('doc_type_id', doc_type_id);
+            formData.append('class_code', class_code);
+
+            setUploadStatus('创建中...');
+
+            try {
+                documentService.createDocumentManuallySSE(
+                    formData,
+                    (event: SSEEvent) => {
+                        if (event.data) {
+                            setUploadStatus(event.data);
+                            message.info(event.data);
+                        }
+                    },
+                    (error: Error) => {
+                        message.error('创建失败: ' + error.message);
+                        setUploadStatus('创建失败');
+                        setIsUploading(false);
+                    },
+                    () => {
+                        message.success('文档创建完成');
+                        setUploadVisible(false);
+                        setUploadStatus('');
+                        form.resetFields();
+                        fetchDocuments();
+                        setIsUploading(false);
+                    }
+                );
+            } catch (error) {
+                message.error('创建失败');
+                setUploadStatus('创建失败');
+                setIsUploading(false);
+            }
+        }
+    };
+
+    // 处理模板选择变化
+    const handleTemplateChange = async (templateId: number) => {
+        setSelectedTemplateId(templateId);
+        form.setFieldsValue({ doc_type_id: undefined, class_code: undefined });
+        setLevelValues({});
+
+        if (uploadMode === 'manual' && templateId) {
+            // 加载文档类型
+            try {
+                const response = await getDocumentTypesByTemplate(templateId);
+                if (response.data) {
+                    setDocumentTypes(response.data as any);
                 }
-            );
-        } catch (error) {
-            message.error('上传失败');
-            setUploadStatus('上传失败');
-            setIsUploading(false);
+            } catch (error) {
+                message.error('获取文档类型失败');
+            }
+
+            // 加载模板层级结构
+            try {
+                const response = await documentService.getTemplateLevels(templateId);
+                if (response.data) {
+                    setTemplateLevels(response.data as any);
+                }
+            } catch (error) {
+                message.error('获取模板层级失败');
+            }
+        }
+    };
+
+    // 处理层级值变化，动态构建分类编码
+    const handleLevelChange = (level: number, value: string) => {
+        const newLevelValues = { ...levelValues, [level]: value };
+        setLevelValues(newLevelValues);
+
+        // 构建分类编码
+        const sortedLevels = templateLevels.sort((a, b) => a.level - b.level);
+        const classCode = sortedLevels
+            .map(lvl => newLevelValues[lvl.level] || '')
+            .filter(v => v)
+            .join('-');
+
+        form.setFieldValue('class_code', classCode);
+    };
+
+    // 处理上传模式切换
+    const handleUploadModeChange = (e: any) => {
+        const mode = e.target.value;
+        setUploadMode(mode);
+        form.resetFields(['doc_type_id', 'class_code', 'title']);
+        setDocumentTypes([]);
+        setClassCodes([]);
+
+        // 如果切换到手动模式且已选择模板，则加载相关数据
+        if (mode === 'manual' && selectedTemplateId) {
+            handleTemplateChange(selectedTemplateId);
         }
     };
 
@@ -307,25 +415,40 @@ const DocumentPage: React.FC = () => {
                 {/* 上传文档模态框 */}
                 <Modal
                     title="上传文档"
-
                     open={uploadVisible}
                     onCancel={() => {
                         setUploadVisible(false);
                         setUploadStatus('');
+                        form.resetFields();
+                        setUploadMode('auto');
                     }}
                     footer={null}
+                    width={600}
                 >
                     <Form
                         form={form}
                         layout="vertical"
                         onFinish={handleUpload}
                     >
+                        {/* 上传模式选择 */}
+                        <Form.Item label="上传模式">
+                            <Radio.Group value={uploadMode} onChange={handleUploadModeChange}>
+                                <Radio value="auto">AI自动解析</Radio>
+                                <Radio value="manual">手动创建</Radio>
+                            </Radio.Group>
+                        </Form.Item>
 
-                        <Form.Item required={true}
+                        {/* 分类模板 */}
+                        <Form.Item
+                            required={true}
                             name="template_id"
                             label="分类模板"
+                            rules={[{ required: true, message: '请选择分类模板' }]}
                         >
-                            <Select placeholder="选择分类模板（可选）" allowClear>
+                            <Select
+                                placeholder="选择分类模板"
+                                onChange={handleTemplateChange}
+                            >
                                 {templates.map((template) => (
                                     <Select.Option key={template.id} value={template.id}>
                                         {template.name}
@@ -334,6 +457,59 @@ const DocumentPage: React.FC = () => {
                             </Select>
                         </Form.Item>
 
+                        {/* 手动模式下的额外字段 */}
+                        {uploadMode === 'manual' && (
+                            <>
+                                {/* 文档标题 - 可选 */}
+                                <Form.Item
+                                    name="title"
+                                    label="文档标题"
+                                >
+                                    <Input placeholder="可选，不填则自动提取" />
+                                </Form.Item>
+
+                                {/* 文档类型 */}
+                                <Form.Item
+                                    name="doc_type_id"
+                                    label="文档类型"
+                                    rules={[{ required: true, message: '请选择文档类型' }]}
+                                >
+                                    <Select placeholder="选择文档类型" disabled={!selectedTemplateId}>
+                                        {documentTypes.map((type: any) => (
+                                            <Select.Option key={type.id} value={type.id}>
+                                                {type.type_name}
+                                            </Select.Option>
+                                        ))}
+                                    </Select>
+                                </Form.Item>
+
+                                {/* 根据模板层级动态生成分类编码选择器 */}
+                                {templateLevels.map((level) => (
+                                    <Form.Item
+                                        key={level.level}
+                                        label={level.name}
+                                        extra={level.placeholder_example ? `示例: ${level.placeholder_example}` : null}
+                                    >
+                                        <Input
+                                            placeholder={`请输入${level.name}`}
+                                            value={levelValues[level.level] || ''}
+                                            onChange={(e) => handleLevelChange(level.level, e.target.value)}
+                                        />
+                                    </Form.Item>
+                                ))}
+
+                                {/* 分类编码（自动生成） */}
+                                <Form.Item
+                                    name="class_code"
+                                    label="分类编码"
+                                    rules={[{ required: true, message: '请填写上面的层级信息生成编码' }]}
+                                >
+                                    <Input placeholder="根据上面层级自动生成" disabled />
+                                </Form.Item>
+                            </>
+                        )}
+
+                        {/* 文件上传 */}
                         <Form.Item
                             name="file"
                             label="文档文件"
@@ -363,11 +539,13 @@ const DocumentPage: React.FC = () => {
                         <Form.Item>
                             <Space>
                                 <Button type="primary" htmlType="submit" loading={isUploading}>
-                                    上传
+                                    {uploadMode === 'auto' ? '上传' : '创建'}
                                 </Button>
                                 <Button onClick={() => {
                                     setUploadVisible(false);
                                     setUploadStatus('');
+                                    form.resetFields();
+                                    setUploadMode('auto');
                                 }}>
                                     取消
                                 </Button>
