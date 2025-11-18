@@ -178,7 +178,8 @@ class DocumentService:
             return
 
         # 6️⃣ 获取模板的层级定义
-        template_json_list: List[Dict[str, Any]] = getattr(template, "levels") or []
+        template_json_list: List[Dict[str, Any]
+                                 ] = getattr(template, "levels") or []
 
         # 7️⃣ 检查并生成编码提取提示
         class_template_config_result = await db.execute(
@@ -274,7 +275,8 @@ class DocumentService:
         # 确保列表中的元素是字典类型
         dict_items = [item for item in code_json if isinstance(item, dict)]
         sorted_code_json = sorted(
-            dict_items, key=lambda x: x.get("level", 0) if isinstance(x, dict) else 0
+            dict_items, key=lambda x: x.get(
+                "level", 0) if isinstance(x, dict) else 0
         )
 
         logger.info(
@@ -314,7 +316,8 @@ class DocumentService:
         # 13️⃣ 查询类型字段定义
         doc_type_fields_result = await db.execute(
             select(DocumentTypeField).where(
-                DocumentTypeField.doc_type_id == (doc_type.id if doc_type else None)
+                DocumentTypeField.doc_type_id == (
+                    doc_type.id if doc_type else None)
             )
         )
         doc_type_fields = doc_type_fields_result.scalars().all()
@@ -471,7 +474,8 @@ class DocumentService:
             # 更新映射表中的错误信息
             result = await db.execute(
                 select(TemplateDocumentMapping).where(
-                    TemplateDocumentMapping.document_id == getattr(document, "id")
+                    TemplateDocumentMapping.document_id == getattr(
+                        document, "id")
                 )
             )
             mapping = result.scalar_one_or_none()
@@ -521,10 +525,12 @@ class DocumentService:
             content_text = await DocumentParser.parse_file(file_data, file_extension)
 
             # 提取元信息
-            metadata = DocumentParser.extract_metadata(file_data, file_extension)
+            metadata = DocumentParser.extract_metadata(
+                file_data, file_extension)
 
             # 生成摘要（这里简化处理，实际应该调用 LLM）
-            summary = content_text[:500] if len(content_text) > 500 else content_text
+            summary = content_text[:500] if len(
+                content_text) > 500 else content_text
 
             # 更新文档
             setattr(document, "content_text", content_text)
@@ -571,7 +577,8 @@ class DocumentService:
 
         if template_id:
             query = query.where(Document.template_id == template_id)
-            count_query = count_query.where(Document.template_id == template_id)
+            count_query = count_query.where(
+                Document.template_id == template_id)
 
         if status:
             query = query.where(Document.status == status)
@@ -581,7 +588,8 @@ class DocumentService:
             query = query.where(Document.uploader_id == user_id)
             count_query = count_query.where(Document.uploader_id == user_id)
 
-        query = query.order_by(Document.upload_time.desc()).offset(skip).limit(limit)
+        query = query.order_by(Document.upload_time.desc()
+                               ).offset(skip).limit(limit)
 
         result = await db.execute(query)
         documents = result.scalars().all()
@@ -620,7 +628,8 @@ class DocumentService:
 
         # 从对象存储删除文件
         file_path = getattr(document, "file_path")
-        object_name = file_path.split("/", 1)[1] if "/" in file_path else file_path
+        object_name = file_path.split(
+            "/", 1)[1] if "/" in file_path else file_path
         await storage_client.delete_file(object_name)
 
         # 从数据库删除
@@ -637,7 +646,8 @@ class DocumentService:
 
         # 提取对象名
         file_path = getattr(document, "file_path")
-        object_name = file_path.split("/", 1)[1] if "/" in file_path else file_path
+        object_name = file_path.split(
+            "/", 1)[1] if "/" in file_path else file_path
 
         return storage_client.get_presigned_url(object_name)
 
@@ -702,7 +712,7 @@ class DocumentService:
         # 5️⃣ 查询文档类型字段定义
         event.data = "[info] 获取文档类型字段配置..."
         yield event.model_dump_json(ensure_ascii=False)
-        
+
         doc_type_fields_result = await db.execute(
             select(DocumentTypeField).where(
                 DocumentTypeField.doc_type_id == doc_type_id
@@ -727,7 +737,7 @@ class DocumentService:
             prompt = EXTRACT_FIELES_PROMPT.replace(
                 "{{field_definitions}}", field_definitions
             ).replace("{{document_content}}", doc)
-            
+
             _extracted_data = await llm_client.extract_json_response(prompt, db=db)
             event.data = f"[info] 字段提取完成: {json.dumps(_extracted_data, ensure_ascii=False)}"
             yield event.model_dump_json(ensure_ascii=False)
@@ -735,7 +745,7 @@ class DocumentService:
         # 6️⃣ 保存文档信息
         event.data = "[info] 保存文档信息..."
         yield event.model_dump_json(ensure_ascii=False)
-        
+
         document = Document(
             title=title,
             original_filename=filename,
@@ -772,7 +782,7 @@ class DocumentService:
         # 8️⃣ 将文档索引到Elasticsearch
         event.data = "[info] 索引文档到搜索引擎..."
         yield event.model_dump_json(ensure_ascii=False)
-        
+
         try:
             from utils.search_engine import get_search_client
 
@@ -841,7 +851,7 @@ class DocumentService:
         template_id: int,
     ) -> Dict[str, Any]:
         """
-        获取模板的层级结构定义和值域选项
+        获取模板的层级结构定义和值域选项（包含文档类型层）
 
         Args:
             db: 数据库会话
@@ -859,24 +869,50 @@ class DocumentService:
         if not template:
             return {"levels": [], "level_options": {}}
 
-        # 获取模板的层级定义
-        template_json_list: List[Dict[str, Any]] = getattr(template, "levels") or []
+        # 获取模板的层级定义（包括文档类型层）
+        template_json_list: List[Dict[str, Any]
+                                 ] = getattr(template, "levels") or []
 
-        # 过滤掉 is_doc_type=True 的层级（文档类型层）
+        # 构建所有层级列表，按 level 排序
         level_list = []
-        for level_def in template_json_list:
-            if not level_def.get("is_doc_type", False):
-                level_list.append({
-                    "level": level_def.get("level"),
-                    "name": level_def.get("name"),
-                    "code": level_def.get("code"),
-                    "description": level_def.get("description"),
-                    "extraction_prompt": level_def.get("extraction_prompt"),
-                    "placeholder_example": level_def.get("placeholder_example"),
-                })
+        for level_def in sorted(template_json_list, key=lambda x: x.get("level", 0)):
+            level_list.append({
+                "level": level_def.get("level"),
+                "name": level_def.get("name"),
+                "code": level_def.get("code"),
+                "description": level_def.get("description"),
+                "extraction_prompt": level_def.get("extraction_prompt"),
+                "placeholder_example": level_def.get("placeholder_example"),
+                # 标记是否为文档类型层
+                "is_doc_type": level_def.get("is_doc_type", False),
+            })
 
         # 获取预处理的值域选项
         level_options = getattr(template, "level_options") or {}
+
+        # 如果有文档类型层，需要从 DocumentType 表获取实际的文档类型选项
+        for level_def in level_list:
+            if level_def.get("is_doc_type"):
+                # 查询该模板下的所有文档类型
+                doc_types_result = await db.execute(
+                    select(DocumentType).where(
+                        DocumentType.template_id == template_id,
+                        DocumentType.is_active == True
+                    )
+                )
+                doc_types = doc_types_result.scalars().all()
+
+                # 构建文档类型选项（使用与其他层级相同的格式）
+                level_code = level_def.get("code")
+                if level_code:
+                    level_options[level_code] = [
+                        {
+                            "name": doc_type.type_code,
+                            "description": doc_type.type_name,
+                            "doc_type_id": doc_type.id  # 额外返回 doc_type_id 供后续使用
+                        }
+                        for doc_type in doc_types
+                    ]
 
         return {
             "levels": level_list,

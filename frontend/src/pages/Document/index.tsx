@@ -39,11 +39,11 @@ const DocumentPage: React.FC = () => {
     const [uploadStatus, setUploadStatus] = useState<string>('');
     const [isUploading, setIsUploading] = useState(false);
     const [uploadMode, setUploadMode] = useState<'auto' | 'manual'>('auto'); // 'auto' | 'manual'
-    const [documentTypes, setDocumentTypes] = useState<DocumentType[]>([]);
     const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
     const [templateLevels, setTemplateLevels] = useState<Array<any>>([]);
     const [levelOptions, setLevelOptions] = useState<Record<string, string[]>>({});
     const [levelValues, setLevelValues] = useState<Record<number, string>>({});
+    const [docTypeId, setDocTypeId] = useState<number | null>(null); // 存储选中的文档类型ID
 
     useEffect(() => {
         fetchDocuments();
@@ -167,24 +167,17 @@ const DocumentPage: React.FC = () => {
         setSelectedTemplateId(templateId);
         form.setFieldsValue({ doc_type_id: undefined, class_code: undefined });
         setLevelValues({});
+        setDocTypeId(null);
 
         if (uploadMode === 'manual' && templateId) {
-            // 加载文档类型
-            try {
-                const response = await getDocumentTypesByTemplate(templateId);
-                if (response.data) {
-                    setDocumentTypes(response.data as any);
-                }
-            } catch (error) {
-                message.error('获取文档类型失败');
-            }
-
-            // 加载模板层级结构和值域选项
+            // 加载模板层级结构和值域选项（包括文档类型）
             try {
                 const response = await documentService.getTemplateLevels(templateId);
                 if (response.data) {
                     const data = response.data as any;
-                    setTemplateLevels(data.levels || []);
+                    // 按 level 排序
+                    const sortedLevels = (data.levels || []).sort((a: any, b: any) => a.level - b.level);
+                    setTemplateLevels(sortedLevels);
                     setLevelOptions(data.level_options || {});
                 }
             } catch (error) {
@@ -194,12 +187,18 @@ const DocumentPage: React.FC = () => {
     };
 
     // 处理层级值变化，动态构建分类编码
-    const handleLevelChange = (level: number, value: string) => {
+    const handleLevelChange = (level: number, value: string, isDocType: boolean = false, docTypeId?: number) => {
         const newLevelValues = { ...levelValues, [level]: value };
         setLevelValues(newLevelValues);
 
-        // 构建分类编码
-        const sortedLevels = templateLevels.sort((a, b) => a.level - b.level);
+        // 如果是文档类型层，记录 doc_type_id
+        if (isDocType && docTypeId) {
+            setDocTypeId(docTypeId);
+            form.setFieldValue('doc_type_id', docTypeId);
+        }
+
+        // 构建分类编码（按 level 顺序）
+        const sortedLevels = [...templateLevels].sort((a, b) => a.level - b.level);
         const classCode = sortedLevels
             .map(lvl => newLevelValues[lvl.level] || '')
             .filter(v => v)
@@ -213,10 +212,10 @@ const DocumentPage: React.FC = () => {
         const mode = e.target.value;
         setUploadMode(mode);
         form.resetFields(['doc_type_id', 'class_code', 'title']);
-        setDocumentTypes([]);
         setTemplateLevels([]);
         setLevelOptions({});
         setLevelValues({});
+        setDocTypeId(null);
 
         // 如果切换到手动模式且已选择模板，则加载相关数据
         if (mode === 'manual' && selectedTemplateId) {
@@ -472,68 +471,95 @@ const DocumentPage: React.FC = () => {
                                     <Input placeholder="可选，不填则自动提取" />
                                 </Form.Item>
 
-                                {/* 文档类型 */}
-                                <Form.Item
-                                    name="doc_type_id"
-                                    label="文档类型"
-                                    rules={[{ required: true, message: '请选择文档类型' }]}
-                                >
-                                    <Select placeholder="选择文档类型" disabled={!selectedTemplateId}>
-                                        {documentTypes.map((type: any) => (
-                                            <Select.Option key={type.id} value={type.id}>
-                                                {type.type_name}
-                                            </Select.Option>
-                                        ))}
-                                    </Select>
+                                {/* 隐藏的 doc_type_id 字段 */}
+                                <Form.Item name="doc_type_id" hidden>
+                                    <Input type="hidden" />
                                 </Form.Item>
 
-                                {/* 根据模板层级动态生成分类编码选择器 */}
-                                {templateLevels.map((level) => {
-                                    const levelCode = level.code;
-                                    const options = levelOptions[levelCode];
+                                {/* 根据模板层级动态生成分类编码选择器 - 水平布局，不换行 */}
+                                {templateLevels.length > 0 && (
+                                    <Form.Item label="分类编码构建">
+                                        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', flexWrap: 'nowrap', overflowX: 'auto' }}>
+                                            {templateLevels.map((level, index) => {
+                                                const levelCode = level.code;
+                                                const options = levelOptions[levelCode];
+                                                const isInputType = !options || options === null;
+                                                const showSeparator = index < templateLevels.length - 1;
+                                                const isDocType = level.is_doc_type;
 
-                                    // 如果 options 为 null 或不存在，显示输入框（适用于时间类型或无预设值）
-                                    const isInputType = !options || options === null;
-
-                                    return (
-                                        <Form.Item
-                                            key={level.level}
-                                            label={level.name}
-                                            extra={level.placeholder_example ? `示例: ${level.placeholder_example}` : null}
-                                        >
-                                            {isInputType ? (
-                                                <Input
-                                                    placeholder={`请输入${level.name}`}
-                                                    value={levelValues[level.level] || ''}
-                                                    onChange={(e) => handleLevelChange(level.level, e.target.value)}
-                                                />
-                                            ) : (
-                                                <Select
-                                                    placeholder={`请选择${level.name}`}
-                                                    value={levelValues[level.level] || undefined}
-                                                    onChange={(value) => handleLevelChange(level.level, value)}
-                                                    showSearch
-                                                    allowClear
-                                                    optionFilterProp="children"
-                                                >
-                                                    {Array.isArray(options) && options.map((option: any) => (
-                                                        <Select.Option key={option.name} value={option.name}>
-                                                            {option.description ? `${option.name} - ${option.description}` : option.name}
-                                                        </Select.Option>
-                                                    ))}
-                                                </Select>
-                                            )}
-                                        </Form.Item>
-                                    );
-                                })}
+                                                return (
+                                                    <React.Fragment key={level.level}>
+                                                        <div style={{ flex: '1 1 auto', minWidth: '150px', maxWidth: '250px' }}>
+                                                            <div style={{ marginBottom: '4px', fontSize: '12px', color: '#666', whiteSpace: 'nowrap' }}>
+                                                                {level.name}
+                                                            </div>
+                                                            {isInputType ? (
+                                                                <Input
+                                                                    placeholder={level.placeholder_example || `请输入${level.name}`}
+                                                                    value={levelValues[level.level] || ''}
+                                                                    onChange={(e) => handleLevelChange(level.level, e.target.value, isDocType)}
+                                                                    style={{ width: '100%' }}
+                                                                />
+                                                            ) : (
+                                                                <Select
+                                                                    placeholder={`选择${level.name}`}
+                                                                    value={levelValues[level.level] || undefined}
+                                                                    onChange={(value) => {
+                                                                        // 如果是文档类型层,需要查找对应的 doc_type_id
+                                                                        let docTypeId: number | undefined;
+                                                                        if (isDocType && Array.isArray(options)) {
+                                                                            const selectedOption: any = options.find((opt: any) => opt.name === value);
+                                                                            docTypeId = selectedOption?.doc_type_id;
+                                                                        }
+                                                                        handleLevelChange(level.level, value, isDocType, docTypeId);
+                                                                    }}
+                                                                    showSearch
+                                                                    allowClear
+                                                                    optionFilterProp="children"
+                                                                    style={{ width: '100%' }}
+                                                                >
+                                                                    {Array.isArray(options) && options.map((option: any) => (
+                                                                        <Select.Option key={option.name} value={option.name}>
+                                                                            {option.description ? `${option.name} - ${option.description}` : option.name}
+                                                                        </Select.Option>
+                                                                    ))}
+                                                                </Select>
+                                                            )}
+                                                        </div>
+                                                        {showSeparator && (
+                                                            <div style={{
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                paddingBottom: '2px',
+                                                                fontSize: '16px',
+                                                                color: '#999',
+                                                                fontWeight: 'bold',
+                                                                flexShrink: 0
+                                                            }}>
+                                                                -
+                                                            </div>
+                                                        )}
+                                                    </React.Fragment>
+                                                );
+                                            })}
+                                        </div>
+                                    </Form.Item>
+                                )}
 
                                 {/* 分类编码（自动生成） */}
                                 <Form.Item
                                     name="class_code"
-                                    label="分类编码"
-                                    rules={[{ required: true, message: '请填写上面的层级信息生成编码' }]}
+                                    label="最终编码"
                                 >
-                                    <Input placeholder="根据上面层级自动生成" disabled />
+                                    <Input
+                                        placeholder="根据上面层级自动生成"
+                                        disabled
+                                        style={{
+                                            fontWeight: 'bold',
+                                            fontSize: '14px',
+                                            color: '#1890ff'
+                                        }}
+                                    />
                                 </Form.Item>
                             </>
                         )}
