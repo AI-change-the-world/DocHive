@@ -839,16 +839,16 @@ class DocumentService:
     async def get_template_levels(
         db: AsyncSession,
         template_id: int,
-    ) -> List[Dict[str, Any]]:
+    ) -> Dict[str, Any]:
         """
-        获取模板的层级结构定义（不包含文档类型层）
+        获取模板的层级结构定义和值域选项
 
         Args:
             db: 数据库会话
             template_id: 模板ID
 
         Returns:
-            层级定义列表，每个层级包含 name, code, level, extraction_prompt 等信息
+            包含 levels 和 level_options 的字典
         """
         # 获取模板
         result = await db.execute(
@@ -857,7 +857,7 @@ class DocumentService:
         template = result.scalar_one_or_none()
 
         if not template:
-            return []
+            return {"levels": [], "level_options": {}}
 
         # 获取模板的层级定义
         template_json_list: List[Dict[str, Any]] = getattr(template, "levels") or []
@@ -875,7 +875,13 @@ class DocumentService:
                     "placeholder_example": level_def.get("placeholder_example"),
                 })
 
-        return level_list
+        # 获取预处理的值域选项
+        level_options = getattr(template, "level_options") or {}
+
+        return {
+            "levels": level_list,
+            "level_options": level_options,
+        }
 
     @staticmethod
     def _get_content_type(file_extension: str) -> str:

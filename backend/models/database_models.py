@@ -68,6 +68,9 @@ class ClassTemplate(Base, ToDictMixin):
     _levels = Column(
         "levels", Text, nullable=False
     )  # 层级定义：[{"level": 1, "name": "年份", "code": "YEAR"}, ...]
+    _level_options = Column(
+        "level_options", Text
+    )  # 预处理的层级值域选项：{"YEAR": ["2023", "2024", "2025"], "DEPT": ["TECH", "HR"]}
     version = Column(String(20), default="1.0")
     is_active = Column(Boolean, default=True)
     creator_id = Column(Integer, index=True)  # 关联 users.id，无外键约束
@@ -93,18 +96,52 @@ class ClassTemplate(Base, ToDictMixin):
         else:
             self._levels = value
 
+    @property
+    def level_options(self):
+        """自动将 JSON 字符串转为 dict"""
+        import json
+
+        if self._level_options is not None:
+            return (
+                json.loads(self._level_options)
+                if isinstance(self._level_options, str)
+                else self._level_options
+            )
+        return {}
+
+    @level_options.setter
+    def level_options(self, value):
+        """自动将 dict 转为 JSON 字符串"""
+        import json
+
+        if value is None:
+            self._level_options = None
+        elif isinstance(value, (dict, list)):
+            self._level_options = json.dumps(value, ensure_ascii=False)
+        else:
+            self._level_options = value
+
     def to_dict(self):
-        """重写 to_dict，确保 levels 返回 list"""
+        """重写 to_dict，确保 levels 和 level_options 返回解析后的值"""
         result = super().to_dict()
+        import json
+
         # 将 _levels 的 key 改为 levels，并解析为 JSON
         if "_levels" in result:
-            import json
-
             result["levels"] = (
                 json.loads(result.pop("_levels"))
                 if isinstance(result.get("_levels"), str)
                 else result.pop("_levels")
             )
+        
+        # 将 _level_options 的 key 改为 level_options，并解析为 JSON
+        if "_level_options" in result:
+            result["level_options"] = (
+                json.loads(result.pop("_level_options"))
+                if isinstance(result.get("_level_options"), str)
+                else result.pop("_level_options")
+            ) if result.get("_level_options") else {}
+        
         return result
 
 

@@ -40,9 +40,9 @@ const DocumentPage: React.FC = () => {
     const [isUploading, setIsUploading] = useState(false);
     const [uploadMode, setUploadMode] = useState<'auto' | 'manual'>('auto'); // 'auto' | 'manual'
     const [documentTypes, setDocumentTypes] = useState<DocumentType[]>([]);
-    const [classCodes, setClassCodes] = useState<Array<{ value: string; label: string }>>([]);
     const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
     const [templateLevels, setTemplateLevels] = useState<Array<any>>([]);
+    const [levelOptions, setLevelOptions] = useState<Record<string, string[]>>({});
     const [levelValues, setLevelValues] = useState<Record<number, string>>({});
 
     useEffect(() => {
@@ -179,11 +179,13 @@ const DocumentPage: React.FC = () => {
                 message.error('获取文档类型失败');
             }
 
-            // 加载模板层级结构
+            // 加载模板层级结构和值域选项
             try {
                 const response = await documentService.getTemplateLevels(templateId);
                 if (response.data) {
-                    setTemplateLevels(response.data as any);
+                    const data = response.data as any;
+                    setTemplateLevels(data.levels || []);
+                    setLevelOptions(data.level_options || {});
                 }
             } catch (error) {
                 message.error('获取模板层级失败');
@@ -212,7 +214,9 @@ const DocumentPage: React.FC = () => {
         setUploadMode(mode);
         form.resetFields(['doc_type_id', 'class_code', 'title']);
         setDocumentTypes([]);
-        setClassCodes([]);
+        setTemplateLevels([]);
+        setLevelOptions({});
+        setLevelValues({});
 
         // 如果切换到手动模式且已选择模板，则加载相关数据
         if (mode === 'manual' && selectedTemplateId) {
@@ -484,19 +488,44 @@ const DocumentPage: React.FC = () => {
                                 </Form.Item>
 
                                 {/* 根据模板层级动态生成分类编码选择器 */}
-                                {templateLevels.map((level) => (
-                                    <Form.Item
-                                        key={level.level}
-                                        label={level.name}
-                                        extra={level.placeholder_example ? `示例: ${level.placeholder_example}` : null}
-                                    >
-                                        <Input
-                                            placeholder={`请输入${level.name}`}
-                                            value={levelValues[level.level] || ''}
-                                            onChange={(e) => handleLevelChange(level.level, e.target.value)}
-                                        />
-                                    </Form.Item>
-                                ))}
+                                {templateLevels.map((level) => {
+                                    const levelCode = level.code;
+                                    const options = levelOptions[levelCode];
+
+                                    // 如果 options 为 null 或不存在，显示输入框（适用于时间类型或无预设值）
+                                    const isInputType = !options || options === null;
+
+                                    return (
+                                        <Form.Item
+                                            key={level.level}
+                                            label={level.name}
+                                            extra={level.placeholder_example ? `示例: ${level.placeholder_example}` : null}
+                                        >
+                                            {isInputType ? (
+                                                <Input
+                                                    placeholder={`请输入${level.name}`}
+                                                    value={levelValues[level.level] || ''}
+                                                    onChange={(e) => handleLevelChange(level.level, e.target.value)}
+                                                />
+                                            ) : (
+                                                <Select
+                                                    placeholder={`请选择${level.name}`}
+                                                    value={levelValues[level.level] || undefined}
+                                                    onChange={(value) => handleLevelChange(level.level, value)}
+                                                    showSearch
+                                                    allowClear
+                                                    optionFilterProp="children"
+                                                >
+                                                    {Array.isArray(options) && options.map((option: any) => (
+                                                        <Select.Option key={option.name} value={option.name}>
+                                                            {option.description ? `${option.name} - ${option.description}` : option.name}
+                                                        </Select.Option>
+                                                    ))}
+                                                </Select>
+                                            )}
+                                        </Form.Item>
+                                    );
+                                })}
 
                                 {/* 分类编码（自动生成） */}
                                 <Form.Item
