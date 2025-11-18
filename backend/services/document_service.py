@@ -307,11 +307,48 @@ class DocumentService:
             )
             for i in sorted_code_json
         )
-        logger.info("✅ 编码结果：" + file_code_id_prefix)
-        event.data = f"[info] 编码结果： {file_code_id_prefix}"
+        logger.info("✅ 编码前缀：" + file_code_id_prefix)
+        event.data = f"[info] 编码前缀： {file_code_id_prefix}"
         yield event.model_dump_json(ensure_ascii=False)
 
-        final_code_id = file_code_id_prefix + "-" + str(uuid.uuid4())
+        # 生成数字序号：查询该前缀下的最大序号
+        event.data = "[info] 生成文档序号..."
+        yield event.model_dump_json(ensure_ascii=False)
+
+        # 查询该模板下所有以该前缀开头的编码
+        result = await db.execute(
+            select(TemplateDocumentMapping.class_code)
+            .where(
+                TemplateDocumentMapping.template_id == document_data.template_id,
+                TemplateDocumentMapping.class_code.like(
+                    f"{file_code_id_prefix}-%")
+            )
+        )
+        existing_codes = result.scalars().all()
+
+        # 提取所有数字序号（兼容UUID格式）
+        max_seq = 0
+        for code in existing_codes:
+            if code:
+                # 提取最后一段（序号部分）
+                parts = code.split("-")
+                if parts:
+                    last_part = parts[-1]
+                    # 尝试解析为数字，如果是UUID则跳过
+                    try:
+                        seq = int(last_part)
+                        max_seq = max(max_seq, seq)
+                    except ValueError:
+                        # UUID格式，忽略
+                        pass
+
+        # 新序号 = 最大序号 + 1（不限长度，自动扩展）
+        next_seq = max_seq + 1
+        final_code_id = f"{file_code_id_prefix}-{next_seq}"
+
+        logger.info(f"✅ 最终编码：{final_code_id} (序号: {next_seq})")
+        event.data = f"[info] 最终编码： {final_code_id}"
+        yield event.model_dump_json(ensure_ascii=False)
 
         # 13️⃣ 查询类型字段定义
         doc_type_fields_result = await db.execute(
@@ -709,7 +746,45 @@ class DocumentService:
             event.data = f"[info] 使用文件名作为标题: {title}"
             yield event.model_dump_json(ensure_ascii=False)
 
-        # 5️⃣ 查询文档类型字段定义
+        # 5️⃣ 为分类编码补充数字序号
+        event.data = "[info] 生成文档序号..."
+        yield event.model_dump_json(ensure_ascii=False)
+
+        # 查询该模板下所有以该前缀开头的编码
+        result = await db.execute(
+            select(TemplateDocumentMapping.class_code)
+            .where(
+                TemplateDocumentMapping.template_id == template_id,
+                TemplateDocumentMapping.class_code.like(f"{class_code}-%")
+            )
+        )
+        existing_codes = result.scalars().all()
+
+        # 提取所有数字序号（兼容UUID格式）
+        max_seq = 0
+        for code in existing_codes:
+            if code:
+                # 提取最后一段（序号部分）
+                parts = code.split("-")
+                if parts:
+                    last_part = parts[-1]
+                    # 尝试解析为数字，如果是UUID则跳过
+                    try:
+                        seq = int(last_part)
+                        max_seq = max(max_seq, seq)
+                    except ValueError:
+                        # UUID格式，忽略
+                        pass
+
+        # 新序号 = 最大序号 + 1（不限长度，自动扩展）
+        next_seq = max_seq + 1
+        final_class_code = f"{class_code}-{next_seq}"
+
+        logger.info(f"✅ 最终编码：{final_class_code} (序号: {next_seq})")
+        event.data = f"[info] 最终编码： {final_class_code}"
+        yield event.model_dump_json(ensure_ascii=False)
+
+        # 6️⃣ 查询文档类型字段定义
         event.data = "[info] 获取文档类型字段配置..."
         yield event.model_dump_json(ensure_ascii=False)
 
@@ -766,7 +841,7 @@ class DocumentService:
         mapping = TemplateDocumentMapping(
             template_id=template_id,
             document_id=document.id,
-            class_code=class_code,
+            class_code=final_class_code,  # 使用带序号的最终编码
             status="completed",
             processed_time=int(time.time()),
             extracted_data=(
