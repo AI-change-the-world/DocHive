@@ -80,4 +80,19 @@ export const documentService = {
     // 搜索文档
     searchDocuments: (data: DocumentSearchRequest) =>
         request.post<ApiResponse<PaginatedResponse<Document>>>('/search/', data),
+
+    // 更新文档分类编码
+    updateClassCode: (documentId: number, newClassCode: string) => {
+        const formData = new FormData();
+        formData.append('new_class_code', newClassCode);
+        return request.put<ApiResponse<{ document_id: number; new_class_code: string }>>(
+            `/documents/update-class-code/${documentId}`,
+            formData,
+            {
+                headers: {
+                    'Content-Type': 'multipart/form-data',
+                },
+            }
+        );
+    },
 };

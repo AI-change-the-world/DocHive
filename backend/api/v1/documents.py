@@ -462,3 +462,39 @@ async def get_template_levels(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"获取模板层级失败: {str(e)}",
         )
+
+
+@router.put("/update-class-code/{document_id}", response_model=ResponseBase)
+async def update_document_class_code(
+    document_id: int,
+    new_class_code: str = Form(..., description="新的分类编码前缀（不含序号）"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    更新文档的分类编码（只更新前缀部分，保留原有序号）
+
+    - **document_id**: 文档ID
+    - **new_class_code**: 新的分类编码前缀（不包含最后的数字/UUID序号）
+    """
+    try:
+        success = await DocumentService.update_class_code(db, document_id, new_class_code)
+
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="文档不存在或编码格式错误",
+            )
+
+        return ResponseBase(
+            message="分类编码更新成功",
+            data={"document_id": document_id},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"更新分类编码失败: {str(e)}",
+        )

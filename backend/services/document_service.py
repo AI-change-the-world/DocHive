@@ -899,26 +899,104 @@ class DocumentService:
         template_id: int,
     ) -> List[Dict[str, Any]]:
         """
-        获取指定模板下所有已存在的分类编码
+        获取指定模板下所有已存在的分类编码（带详细信息）
 
         Args:
             db: 数据库会话
             template_id: 模板ID
 
         Returns:
-            分类编码列表
+            分类编码列表，包含编码、文档ID、文档标题等信息
         """
+        # 查询该模板下所有文档映射关系
         result = await db.execute(
-            select(TemplateDocumentMapping.class_code)
+            select(
+                TemplateDocumentMapping.class_code,
+                TemplateDocumentMapping.document_id,
+                Document.title,
+                Document.original_filename,
+                TemplateDocumentMapping.created_at,
+            )
+            .join(Document, TemplateDocumentMapping.document_id == Document.id)
             .where(
                 TemplateDocumentMapping.template_id == template_id,
                 TemplateDocumentMapping.class_code.isnot(None),
             )
-            .distinct()
+            .order_by(TemplateDocumentMapping.class_code.desc())
         )
-        class_codes = result.scalars().all()
 
-        return [{"value": code, "label": code} for code in class_codes if code]
+        mappings = result.all()
+
+        return [
+            {
+                "class_code": mapping.class_code,
+                "document_id": mapping.document_id,
+                "title": mapping.title,
+                "filename": mapping.original_filename,
+                "created_at": mapping.created_at,
+            }
+            for mapping in mappings
+            if mapping.class_code
+        ]
+
+    @staticmethod
+    async def update_class_code(
+        db: AsyncSession,
+        document_id: int,
+        new_class_code_prefix: str,
+    ) -> bool:
+        """
+        更新文档的分类编码（只更新前缀部分，保留原有序号）
+
+        Args:
+            db: 数据库会话
+            document_id: 文档ID
+            new_class_code_prefix: 新的分类编码前缀（不包含最后的序号）
+
+        Returns:
+            是否更新成功
+        """
+        # 查询文档映射关系
+        result = await db.execute(
+            select(TemplateDocumentMapping).where(
+                TemplateDocumentMapping.document_id == document_id
+            )
+        )
+        mapping = result.scalar_one_or_none()
+
+        if not mapping:
+            return False
+
+        # 获取原有编码
+        original_code = mapping.class_code or ''
+        if not original_code:
+            return False
+
+        # 分割原编码，提取序号部分
+        code_parts = original_code.split('-')
+        if len(code_parts) < 2:
+            # 编码格式不正确
+            return False
+
+        # 提取原编码的前缀和序号
+        original_prefix = '-'.join(code_parts[:-1])
+        original_suffix = code_parts[-1]
+
+        # 校验：如果前缀没有变化，不需要更新
+        if original_prefix == new_class_code_prefix:
+            logger.info(f"文档 {document_id} 的分类编码前缀未变化，无需更新")
+            return True  # 返回成功，但不做修改
+
+        # 拼接新编码：新前缀 + 原序号
+        final_code = f"{new_class_code_prefix}-{original_suffix}"
+
+        # 更新编码
+        mapping.class_code = final_code
+        await db.commit()
+
+        logger.info(
+            f"文档 {document_id} 的分类编码已更新: {original_code} -> {final_code}")
+        return True
 
     @staticmethod
     async def get_template_levels(
