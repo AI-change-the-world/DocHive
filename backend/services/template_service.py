@@ -24,9 +24,7 @@ class TemplateService:
         db: AsyncSession, template_data: ClassTemplateCreate, creator_id: int
     ) -> ClassTemplate:
         """创建分类模板"""
-        levels_data = [
-            level.model_dump() for level in template_data.levels
-        ]
+        levels_data = [level.model_dump() for level in template_data.levels]
 
         template = ClassTemplate(
             name=template_data.name,
@@ -81,8 +79,7 @@ class TemplateService:
 
         # 获取分页数据
         query = (
-            query.order_by(ClassTemplate.created_at.desc()
-                           ).offset(skip).limit(limit)
+            query.order_by(ClassTemplate.created_at.desc()).offset(skip).limit(limit)
         )
         result = await db.execute(query)
         templates = list(result.scalars().all())
@@ -122,9 +119,7 @@ class TemplateService:
         # 处理 levels 字段：直接传入 list，setter 会自动转为 JSON 字符串
         levels_data = None
         if "levels" in update_data and template_data.levels:
-            levels_data = [
-                level.model_dump() for level in template_data.levels
-            ]
+            levels_data = [level.model_dump() for level in template_data.levels]
             update_data["levels"] = levels_data
 
         for field, value in update_data.items():
@@ -179,8 +174,7 @@ class TemplateService:
     ) -> None:
         """处理模板中的文档类型层级，自动创建/更新 DocumentType"""
         # 获取 levels 列表（通过 property getter 自动从JSON转换）
-        levels_list = template.levels if isinstance(
-            template.levels, list) else []
+        levels_list = template.levels if isinstance(template.levels, list) else []
 
         # 查找 is_doc_type 层级
         doc_type_level: Optional[Dict[str, Any]] = None
@@ -208,7 +202,9 @@ class TemplateService:
             # template.id 是 Column 类型，需要通过属性访问获取实际值
             for type_data in doc_types_data:
                 # type: ignore
-                await TemplateService._create_or_update_doc_type(db, template.id, type_data)
+                await TemplateService._create_or_update_doc_type(
+                    db, template.id, type_data
+                )
 
         except Exception as e:
             print(f"警告：文档类型自动创建失败: {str(e)}")
@@ -271,8 +267,7 @@ class TemplateService:
         if existing:
             # 更新现有记录
             existing.type_name = type_data.get("type_name", existing.type_name)
-            existing.description = type_data.get(
-                "description", existing.description)
+            existing.description = type_data.get("description", existing.description)
         else:
             # 创建新记录（不创建字段，字段由用户在前端手动配置）
             new_doc_type = DocumentType(
@@ -293,8 +288,7 @@ class TemplateService:
         """使用大模型生成层级值域选项"""
         # 过滤掉 is_doc_type 的层级
         normal_levels = [
-            level for level in levels_data
-            if not level.get("is_doc_type", False)
+            level for level in levels_data if not level.get("is_doc_type", False)
         ]
 
         if not normal_levels:
@@ -334,7 +328,9 @@ class TemplateService:
 5. 如果层级没有明确值域且不是时间类型，也设为 null
 6. description 可以为空字符串（如果没有详细说明）
 7. 只输出 JSON，不要添加任何解释
-""".replace("{levels_json}", json.dumps(normal_levels, ensure_ascii=False, indent=2))
+""".replace(
+                "{levels_json}", json.dumps(normal_levels, ensure_ascii=False, indent=2)
+            )
 
             # 调用 LLM 生成值域选项
             level_options = await llm_client.extract_json_response(prompt, db=db)

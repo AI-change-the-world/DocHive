@@ -20,6 +20,10 @@ from models.database_models import (
     DocumentTypeField,
     TemplateDocumentMapping,
 )
+from services.intent_router import (
+    function_calling_router,
+    format_tool_result_as_answer,
+)
 from services.template_service import TemplateService
 from utils.llm_client import llm_client
 
@@ -212,6 +216,7 @@ class RetrievalState(TypedDict):
     优化后的 RAG 智能体状态机
 
     工作流程:
+    0. 意图路由 -> 判断是工具调用还是文档检索
     1. ES全文检索 -> 基于关键词快速召回候选文档
     2. SQL结构化检索 -> 基于模板层级提取结构化条件
     3. 结果融合 -> 合并两路检索结果
@@ -225,6 +230,12 @@ class RetrievalState(TypedDict):
     query: str  # 用户查询
     template_id: int  # 模板ID
     session_id: str  # 会话ID
+
+    # === 节点 0 (意图路由) 产出 ===
+    need_tool: bool  # 是否需要工具调用
+    tool_calls: List[Dict[str, Any]]  # LLM 返回的工具调用列表
+    tool_results: List[Dict[str, Any]]  # 工具执行结果列表
+    need_retrieval: bool  # 是否需要文档检索
 
     # === 节点 1 (ES全文检索) 产出 ===
     es_fulltext_results: List[Dict[str, Any]]  # ES全文检索的初步结果
@@ -257,6 +268,104 @@ class RetrievalState(TypedDict):
     answer: Optional[str]  # 最终RAG答案
 
 
+# ==================== 节点 0: Function Calling 路由 ====================
+async def intent_routing(
+    state: RetrievalState, config: RunnableConfig
+) -> RetrievalState:
+    """
+    节点 0: Function Calling 路由
+
+    让 LLM 自主决定是否调用工具以及调用哪个工具。
+
+    输出:
+    - need_tool: 是否需要工具调用
+    - tool_calls: LLM 返回的工具调用列表
+    - tool_results: 工具执行结果列表
+    - need_retrieval: 是否需要文档检索
+    """
+    logger.info("========== 节点 0: Function Calling 路由 ==========")
+
+    # 从 config 获取 db
+    db: AsyncSession = config.get("configurable", {}).get("db")  # type: ignore
+
+    query = state["query"]
+    template_id = state["template_id"]
+
+    try:
+        # 调用 Function Calling 路由器
+        routing_result = await function_calling_router(query, template_id, db)
+
+        logger.info(f"🧠 Function Calling 结果:")
+        logger.info(f"   需要工具: {routing_result.get('need_tool', False)}")
+        logger.info(f"   工具数量: {len(routing_result.get('tool_calls', []))}")
+        logger.info(f"   需要检索: {routing_result.get('need_retrieval', False)}")
+
+        # 更新状态
+        state["need_tool"] = routing_result.get("need_tool", False)
+        state["tool_calls"] = routing_result.get("tool_calls", [])
+        state["tool_results"] = routing_result.get("tool_results", [])
+        state["need_retrieval"] = routing_result.get("need_retrieval", False)
+
+        if state["need_tool"]:
+            tool_names = [
+                tc.get("function", {}).get("name") for tc in state["tool_calls"]
+            ]
+            logger.info(f"✅ LLM 选择调用工具: {tool_names}")
+        else:
+            logger.info("✅ LLM 决定走文档检索流程")
+
+    except Exception as e:
+        logger.error(f"❌ Function Calling 路由失败: {e}")
+        # 默认走文档检索
+        state["need_tool"] = False
+        state["tool_calls"] = []
+        state["tool_results"] = []
+        state["need_retrieval"] = True
+
+    return state
+
+
+# ==================== 节点: 工具调用答案生成 ====================
+async def generate_tool_answer(
+    state: RetrievalState, config: RunnableConfig
+) -> RetrievalState:
+    """
+    工具调用答案生成节点
+
+    将工具调用结果格式化为自然语言答案。
+
+    输出:
+    - answer: 格式化后的答案
+    """
+    logger.info("========== 工具调用答案生成 ==========")
+
+    # 从 config 获取 db
+    db: AsyncSession = config.get("configurable", {}).get("db")  # type: ignore
+
+    tool_results = state.get("tool_results", [])
+    query = state["query"]
+
+    try:
+        # 整合所有工具结果
+        combined_results = {
+            "tools_called": len(tool_results),
+            "results": tool_results,
+        }
+
+        # 使用 LLM 将工具结果转换为自然语言
+        answer = await format_tool_result_as_answer(combined_results, query, db)
+        state["answer"] = answer
+        logger.info(f"✅ 生成工具调用答案: {answer[:100]}...")
+    except Exception as e:
+        logger.error(f"❌ 格式化工具结果失败: {e}")
+        # 降级处理
+        state["answer"] = (
+            f"查询结果：\n{json.dumps(tool_results, ensure_ascii=False, indent=2)}"
+        )
+
+    return state
+
+
 # ==================== 节点 1: ES 全文检索 ====================
 async def es_fulltext_retrieval(
     state: RetrievalState, config: RunnableConfig
@@ -274,7 +383,9 @@ async def es_fulltext_retrieval(
     logger.info("========== 节点 1: ES 全文检索 ==========")
 
     # 从 config 获取 es_client
-    es_client: AsyncElasticsearch = config.get("configurable", {}).get("es")  # type: ignore
+    es_client: AsyncElasticsearch = config.get("configurable", {}).get(
+        "es"
+    )  # type: ignore
 
     settings = get_settings()
     query = state["query"]
@@ -567,7 +678,9 @@ async def refined_filtering(
 
     # 从 config 获取 db 和 es_client
     db: AsyncSession = config.get("configurable", {}).get("db")  # type: ignore
-    es_client: AsyncElasticsearch = config.get("configurable", {}).get("es")  # type: ignore
+    es_client: AsyncElasticsearch = config.get("configurable", {}).get(
+        "es"
+    )  # type: ignore
 
     # 如果没有融合结果,直接跳过
     if not state.get("merged_documents"):
@@ -947,6 +1060,22 @@ async def generate_answer(
 
 
 # ==================== 决策函数 ====================
+def should_use_tool(state: RetrievalState) -> str:
+    """
+    决策函数: 判断是使用工具还是文档检索
+
+    Returns:
+        'tool_answer': 使用工具调用结果生成答案
+        'retrieval': 走文档检索流程
+    """
+    if state.get("need_tool"):
+        logger.info("🔀 决策: 使用工具调用 -> tool_answer")
+        return "tool_answer"
+    else:
+        logger.info("🔀 决策: 走文档检索 -> retrieval")
+        return "retrieval"
+
+
 def should_ask_user(state: RetrievalState) -> str:
     """
     决策函数: 判断是否需要向用户提问澄清
@@ -967,6 +1096,12 @@ def should_ask_user(state: RetrievalState) -> str:
 """
 优化后的工作流程：
 
+0. 意图路由 (intent_routing)
+   ↓
+   [决策] 是否使用工具? (should_use_tool)
+   ├─ tool_answer: 工具调用答案生成 (generate_tool_answer) → END
+   └─ retrieval: 走文档检索流程
+       ↓
 1. ES全文检索 (es_fulltext_retrieval)
    ↓
 2. SQL结构化检索 (sql_structured_retrieval) 
@@ -975,7 +1110,7 @@ def should_ask_user(state: RetrievalState) -> str:
    ↓
 4. 精细化筛选 (refined_filtering)
    ↓
-4.5. 文档去重 (deduplicate_documents) ← 新增
+4.5. 文档去重 (deduplicate_documents)
    ↓
 5. [决策] 是否有歧义? (should_ask_user)
    ├─ ask_user: 歧义处理 (handle_ambiguity) → END
@@ -986,25 +1121,36 @@ def should_ask_user(state: RetrievalState) -> str:
 workflow = StateGraph(RetrievalState)
 
 # 2. 添加所有节点
+workflow.add_node("intent_routing", intent_routing)  # 节点0: 意图路由
+workflow.add_node("tool_answer", generate_tool_answer)  # 工具调用答案生成
 workflow.add_node("es_fulltext", es_fulltext_retrieval)  # 节点1: ES全文检索
 workflow.add_node("sql_structured", sql_structured_retrieval)  # 节点2: SQL结构化检索
 workflow.add_node("merge_results", merge_retrieval_results)  # 节点3: 结果融合
 workflow.add_node("refined_filter", refined_filtering)  # 节点4: 精细化筛选
-workflow.add_node("deduplicate", deduplicate_documents)  # 节点4.5: 文档去重 ← 新增
+workflow.add_node("deduplicate", deduplicate_documents)  # 节点4.5: 文档去重
 workflow.add_node("ask_user", handle_ambiguity)  # 节点5a: 歧义处理
 workflow.add_node("generate_answer", generate_answer)  # 节点5b: 生成答案
 
-# 3. 设置图的入口点
-workflow.set_entry_point("es_fulltext")
+# 3. 设置图的入口点（从意图路由开始）
+workflow.set_entry_point("intent_routing")
 
-# 4. 添加线性边 (Sequential Edges)
+# 4. 添加条件边：意图路由后决定走向
+workflow.add_conditional_edges(
+    "intent_routing",  # 源节点
+    should_use_tool,  # 决策函数
+    {
+        "tool_answer": "tool_answer",  # 使用工具 → 工具答案生成
+        "retrieval": "es_fulltext",  # 文档检索 → ES全文检索
+    },
+)
+
+# 5. 添加文档检索流程的线性边
 workflow.add_edge("es_fulltext", "sql_structured")  # ES全文 → SQL结构化
 workflow.add_edge("sql_structured", "merge_results")  # SQL结构化 → 结果融合
 workflow.add_edge("merge_results", "refined_filter")  # 结果融合 → 精细化筛选
-workflow.add_edge("refined_filter", "deduplicate")  # 精细化筛选 → 文档去重 ← 新增
+workflow.add_edge("refined_filter", "deduplicate")  # 精细化筛选 → 文档去重
 
-# 5. 添加条件边 (Conditional Edge)
-#    在去重后，判断是否有歧义
+# 6. 添加条件边：在去重后，判断是否有歧义
 workflow.add_conditional_edges(
     "deduplicate",  # 源节点
     should_ask_user,  # 决策函数
@@ -1014,14 +1160,13 @@ workflow.add_conditional_edges(
     },
 )
 
-# 6. 设置图的终点
+# 7. 设置图的终点
+workflow.add_edge("tool_answer", END)  # 工具答案生成后结束
 workflow.add_edge("ask_user", END)  # 歧义处理后结束
 workflow.add_edge("generate_answer", END)  # 生成答案后结束
 
-# 7. 编译图
+# 8. 编译图
 app: CompiledStateGraph = workflow.compile()
 
 logger.info("✅ LangGraph 智能体工作流编译完成")
-logger.info(
-    "📊 工作流程: ES全文检索 → SQL结构化检索 → 结果融合 → 精细化筛选 → 文档去重 → 生成答案/歧义处理"
-)
+logger.info("📊 工作流程: 意图路由 → [工具调用 | 文档检索流程] → 生成答案/歧义处理")

@@ -36,6 +36,8 @@ const DocumentPage: React.FC = () => {
     const [filters, setFilters] = useState<any>({});
     const [form] = Form.useForm();
     const [uploadStatus, setUploadStatus] = useState<string>('');
+    const [uploadStage, setUploadStage] = useState<string>(''); // 当前阶段
+    const [uploadDetails, setUploadDetails] = useState<any>(null); // 阶段详情
     const [isUploading, setIsUploading] = useState(false);
     const [uploadMode, setUploadMode] = useState<'auto' | 'manual'>('auto'); // 'auto' | 'manual'
     const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null); // 用于上传的模板
@@ -104,25 +106,67 @@ const DocumentPage: React.FC = () => {
             }
 
             setUploadStatus('上传中...');
+            setUploadStage('uploading');
+            setUploadDetails(null);
 
             try {
                 documentService.uploadDocumentSSE(
                     formData,
                     (event: SSEEvent) => {
-                        if (event.data) {
+                        // 处理 SSE 事件
+                        if (event.event === 'stage_complete') {
+                            const stage = event.data?.stage;
+                            const stageMessage = event.data?.message;
+                            const result = event.data?.result;
+
+                            // 更新状态显示
+                            if (stage === 'function_calling') {
+                                setUploadStage('function_calling');
+                                setUploadStatus(`🧠 ${stageMessage}`);
+                                setUploadDetails(result);
+
+                                if (result?.need_tool) {
+                                    const toolNames = result.tools_called?.join(', ') || '未知工具';
+                                    message.info(`LLM 决策调用工具: ${toolNames}`);
+                                } else {
+                                    message.info('LLM 决策进行文档检索');
+                                }
+                            } else if (stage === 'tool_answer') {
+                                setUploadStage('tool_answer');
+                                setUploadStatus(`✅ ${stageMessage}`);
+                                setUploadDetails(result);
+                                message.success(`工具调用完成，共调用 ${result?.tools_count || 0} 个工具`);
+                            } else if (stage === 'upload') {
+                                setUploadStage('upload');
+                                setUploadStatus(`💾 ${stageMessage}`);
+                            } else if (stage === 'extract') {
+                                setUploadStage('extract');
+                                setUploadStatus(`🔍 ${stageMessage}`);
+                            } else if (stage === 'vectorize') {
+                                setUploadStage('vectorize');
+                                setUploadStatus(`🧠 ${stageMessage}`);
+                            } else if (stage === 'complete') {
+                                setUploadStage('complete');
+                                setUploadStatus('✅ 处理完成');
+                            }
+                        } else if (event.event === 'thinking') {
+                            setUploadStatus(`🤔 ${event.data?.message || '思考中...'}`);
+                        } else if (event.data) {
                             setUploadStatus(event.data);
-                            message.info(event.data);
                         }
                     },
                     (error: Error) => {
                         message.error('上传失败: ' + error.message);
-                        setUploadStatus('上传失败');
+                        setUploadStatus('❌ 上传失败');
+                        setUploadStage('error');
                         setIsUploading(false);
                     },
                     () => {
                         message.success('文档上传并处理完成');
                         setUploadVisible(false);
                         setUploadStatus('');
+                        setUploadStage('');
+                        setUploadDetails(null);
                         form.resetFields();
                         if (viewTemplateId) {
                             fetchDocumentsByTemplate();
@@ -132,7 +176,8 @@ const DocumentPage: React.FC = () => {
                 );
             } catch (error) {
                 message.error('上传失败');
-                setUploadStatus('上传失败');
+                setUploadStatus('❌ 上传失败');
+                setUploadStage('error');
                 setIsUploading(false);
             }
         } else {
@@ -148,25 +193,47 @@ const DocumentPage: React.FC = () => {
             formData.append('class_code', class_code);
 
             setUploadStatus('创建中...');
+            setUploadStage('creating');
+            setUploadDetails(null);
 
             try {
                 documentService.createDocumentManuallySSE(
                     formData,
                     (event: SSEEvent) => {
-                        if (event.data) {
+                        // 处理 SSE 事件
+                        if (event.event === 'stage_complete') {
+                            const stage = event.data?.stage;
+                            const stageMessage = event.data?.message;
+
+                            if (stage === 'upload') {
+                                setUploadStage('upload');
+                                setUploadStatus(`💾 ${stageMessage}`);
+                            } else if (stage === 'extract') {
+                                setUploadStage('extract');
+                                setUploadStatus(`🔍 ${stageMessage}`);
+                            } else if (stage === 'vectorize') {
+                                setUploadStage('vectorize');
+                                setUploadStatus(`🧠 ${stageMessage}`);
+                            } else if (stage === 'complete') {
+                                setUploadStage('complete');
+                                setUploadStatus('✅ 处理完成');
+                            }
+                        } else if (event.data) {
                             setUploadStatus(event.data);
-                            message.info(event.data);
                         }
                     },
                     (error: Error) => {
                         message.error('创建失败: ' + error.message);
-                        setUploadStatus('创建失败');
+                        setUploadStatus('❌ 创建失败');
+                        setUploadStage('error');
                         setIsUploading(false);
                     },
                     () => {
                         message.success('文档创建完成');
                         setUploadVisible(false);
                         setUploadStatus('');
+                        setUploadStage('');
+                        setUploadDetails(null);
                         form.resetFields();
                         if (viewTemplateId) {
                             fetchDocumentsByTemplate();
@@ -176,7 +243,8 @@ const DocumentPage: React.FC = () => {
                 );
             } catch (error) {
                 message.error('创建失败');
-                setUploadStatus('创建失败');
+                setUploadStatus('❌ 创建失败');
+                setUploadStage('error');
                 setIsUploading(false);
             }
         }
@@ -567,6 +635,8 @@ const DocumentPage: React.FC = () => {
                     onCancel={() => {
                         setUploadVisible(false);
                         setUploadStatus('');
+                        setUploadStage('');
+                        setUploadDetails(null);
                         form.resetFields();
                         setUploadMode('auto');
                     }}
@@ -732,7 +802,54 @@ const DocumentPage: React.FC = () => {
 
                         {uploadStatus && (
                             <div className="mb-4">
-                                <div className="text-sm text-gray-600 mb-1">{uploadStatus}</div>
+                                <div className="p-3 bg-blue-50 rounded-md border border-blue-200">
+                                    <div className="text-sm font-medium text-blue-800 mb-2">{uploadStatus}</div>
+
+                                    {/* Function Calling 决策详情 */}
+                                    {uploadStage === 'function_calling' && uploadDetails && (
+                                        <div className="mt-2 p-2 bg-white rounded text-xs space-y-1">
+                                            <div className="font-medium text-gray-700">LLM 决策详情：</div>
+                                            <div>
+                                                <span className="text-gray-600">需要工具：</span>
+                                                <span className={uploadDetails.need_tool ? 'text-green-600' : 'text-gray-500'}>
+                                                    {uploadDetails.need_tool ? '是' : '否'}
+                                                </span>
+                                            </div>
+                                            {uploadDetails.need_tool && uploadDetails.tools_called && (
+                                                <div>
+                                                    <span className="text-gray-600">调用工具：</span>
+                                                    <span className="text-blue-600">
+                                                        {uploadDetails.tools_called.join(', ')}
+                                                    </span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* 工具调用结果详情 */}
+                                    {uploadStage === 'tool_answer' && uploadDetails && (
+                                        <div className="mt-2 p-2 bg-white rounded text-xs space-y-1">
+                                            <div className="font-medium text-gray-700">工具调用结果：</div>
+                                            <div>
+                                                <span className="text-gray-600">调用数量：</span>
+                                                <span className="text-blue-600">{uploadDetails.tools_count || 0} 个</span>
+                                            </div>
+                                            {uploadDetails.results && uploadDetails.results.length > 0 && (
+                                                <div className="mt-1">
+                                                    <div className="text-gray-600 mb-1">执行情况：</div>
+                                                    {uploadDetails.results.map((result: any, idx: number) => (
+                                                        <div key={idx} className="ml-2 text-gray-700">
+                                                            • {result.tool_name}:
+                                                            <span className={result.result?.success ? 'text-green-600' : 'text-red-600'}>
+                                                                {result.result?.success ? ' 成功' : ' 失败'}
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         )}
 
@@ -744,6 +861,8 @@ const DocumentPage: React.FC = () => {
                                 <Button onClick={() => {
                                     setUploadVisible(false);
                                     setUploadStatus('');
+                                    setUploadStage('');
+                                    setUploadDetails(null);
                                     form.resetFields();
                                     setUploadMode('auto');
                                 }}>

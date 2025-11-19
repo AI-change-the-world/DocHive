@@ -133,15 +133,19 @@ class ClassTemplate(Base, ToDictMixin):
                 if isinstance(result.get("_levels"), str)
                 else result.pop("_levels")
             )
-        
+
         # 将 _level_options 的 key 改为 level_options，并解析为 JSON
         if "_level_options" in result:
             result["level_options"] = (
-                json.loads(result.pop("_level_options"))
-                if isinstance(result.get("_level_options"), str)
-                else result.pop("_level_options")
-            ) if result.get("_level_options") else {}
-        
+                (
+                    json.loads(result.pop("_level_options"))
+                    if isinstance(result.get("_level_options"), str)
+                    else result.pop("_level_options")
+                )
+                if result.get("_level_options")
+                else {}
+            )
+
         return result
 
 

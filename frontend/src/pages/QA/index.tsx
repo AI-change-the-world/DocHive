@@ -86,6 +86,7 @@ export default function QAPage() {
     const [currentAnswer, setCurrentAnswer] = useState('');
     const [currentReferences, setCurrentReferences] = useState<QADocumentReference[]>([]);
     const [agentStages, setAgentStages] = useState<AgentStage[]>([]);
+    const [executionMode, setExecutionMode] = useState<'tool_calling' | 'document_retrieval' | null>(null);
     const [currentStageIndex, setCurrentStageIndex] = useState(0);
 
     // 使用ref保存最新值
@@ -141,7 +142,19 @@ export default function QAPage() {
         fetchTemplates();
     }, []);
 
-    // 初始化阶段
+    // 根据执行计划初始化阶段
+    const initializeStagesFromPlan = (plan: Array<{ stage: string, name: string, icon: string }>): AgentStage[] => {
+        return plan.map((item, index) => ({
+            stage: item.stage,
+            label: item.name,
+            icon: <span style={{ fontSize: '18px' }}>{item.icon}</span>,
+            status: index === 0 ? 'process' : 'wait',
+            message: index === 0 ? `正在${item.name}...` : undefined,
+            timestamp: index === 0 ? new Date() : undefined,
+        }));
+    };
+
+    // 旧的静态初始化（保留作为默认）
     const initializeStages = (): AgentStage[] => [
         {
             stage: 'start',
@@ -182,6 +195,39 @@ export default function QAPage() {
             status: 'wait',
         },
     ];
+
+    // 更新阶段状态
+    const updateStageStatus = (
+        stages: AgentStage[],
+        targetStage: string,
+        status: 'process' | 'finish' | 'error',
+        message?: string,
+        result?: any
+    ): AgentStage[] => {
+        const stageIndex = stages.findIndex(s => s.stage === targetStage);
+        if (stageIndex === -1) return stages;
+
+        return stages.map((stage, idx) => {
+            if (idx === stageIndex) {
+                return {
+                    ...stage,
+                    status,
+                    message,
+                    result,
+                    timestamp: new Date(),
+                };
+            } else if (idx === stageIndex + 1 && status === 'finish') {
+                // 当前阶段完成，开始下一阶段
+                return {
+                    ...stage,
+                    status: 'process',
+                    message: `正在${stage.label}...`,
+                    timestamp: new Date(),
+                };
+            }
+            return stage;
+        });
+    };
 
     // 预览文档
     const handlePreviewDocument = async (docId: number) => {
@@ -227,14 +273,14 @@ export default function QAPage() {
         setCurrentReferences([]);
         setAmbiguityMessage('');
         setIsStreaming(true);
+        setExecutionMode(null);
 
         currentAnswerRef.current = '';
         currentReferencesRef.current = [];
         agentStagesRef.current = [];
 
-        const initialStages = initializeStages();
-        setAgentStages(initialStages);
-        agentStagesRef.current = initialStages;
+        // 暂时不初始化阶段，等待后端返回 execution_plan
+        setAgentStages([]);
         setCurrentStageIndex(0);
 
         const abortController = new AbortController();
@@ -289,33 +335,27 @@ export default function QAPage() {
                         console.log('[收到SSE事件]', eventData.event, eventData);
 
                         switch (eventData.event) {
+                            case 'execution_plan':
+                                // 根据后端返回的计划初始化阶段
+                                const plan = eventData.data?.plan || [];
+                                const mode = eventData.data?.mode;
+                                console.log('[execution_plan]', { plan, mode });
+
+                                setExecutionMode(mode);
+                                const initialStages = initializeStagesFromPlan(plan);
+                                setAgentStages(initialStages);
+                                agentStagesRef.current = initialStages;
+                                setCurrentStageIndex(0);
+                                break;
+
                             case 'thinking':
                             case 'stage_start':
                                 const stage = eventData.data?.stage || 'start';
                                 const msg = eventData.data?.message || '处理中...';
 
                                 setAgentStages(prev => {
-                                    const updated = [...prev];
-                                    const stageIdx = updated.findIndex(s => s.stage === stage);
-
-                                    if (stageIdx !== -1) {
-                                        // 之前的阶段标记为完成
-                                        for (let i = 0; i < stageIdx; i++) {
-                                            if (updated[i].status !== 'finish') {
-                                                updated[i].status = 'finish';
-                                            }
-                                        }
-
-                                        // 当前阶段标记为进行中
-                                        updated[stageIdx].status = 'process';
-                                        updated[stageIdx].message = msg;
-                                        updated[stageIdx].timestamp = new Date();
-
-                                        setCurrentStageIndex(stageIdx);
-                                    }
-
-                                    agentStagesRef.current = updated;
-                                    return updated;
+                                    if (prev.length === 0) return prev; // 还没有计划
+                                    return updateStageStatus(prev, stage, 'process', msg);
                                 });
                                 break;
 
@@ -326,16 +366,8 @@ export default function QAPage() {
                                 console.log(`[阶段${completedStage}完成]`, { resultData, message: completeMsg });
 
                                 setAgentStages(prev => {
-                                    const updated = [...prev];
-                                    const idx = updated.findIndex(s => s.stage === completedStage);
-
-                                    if (idx !== -1) {
-                                        updated[idx].status = 'finish';
-                                        updated[idx].message = completeMsg;
-                                        updated[idx].result = resultData;
-                                        console.log(`[更新阶段${idx}]`, updated[idx]);
-                                    }
-
+                                    if (prev.length === 0) return prev; // 还没有计划
+                                    const updated = updateStageStatus(prev, completedStage, 'finish', completeMsg, resultData);
                                     agentStagesRef.current = updated;
                                     return updated;
                                 });

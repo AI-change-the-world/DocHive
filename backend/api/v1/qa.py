@@ -162,6 +162,11 @@ async def ask_question_agent_stream(
                 "query": qa_request.question,
                 "template_id": qa_request.template_id or 0,
                 "session_id": session_id,
+                # 节点 0 (Function Calling 路由) 产出
+                "need_tool": False,
+                "tool_calls": [],
+                "tool_results": [],
+                "need_retrieval": True,
                 # 节点 1 (ES全文检索) 产出
                 "es_fulltext_results": [],
                 "es_document_ids": set(),
@@ -199,6 +204,10 @@ async def ask_question_agent_stream(
                 done=False,
             ).model_dump_json()
 
+            # 先执行意图识别，获取执行计划
+            first_step = True
+            execution_plan = []
+
             # 使用astream方式异步流式处理LangGraph（修复：异步节点必须用异步stream）
             state_data = None  # 初始化，用于保存最终状态
             async for step_result in search_agent_app.astream(
@@ -208,13 +217,117 @@ async def ask_question_agent_stream(
                 logger.info(f"[LangGraph step_result.keys()] {step_result.keys()}")
                 # 获取节点名称和状态数据
                 node_name = list(step_result.keys())[0]
-
                 state_data = step_result[node_name]
 
                 print(f"[LangGraph Node] {node_name}")
 
-                # 根据节点发送相应事件（参考fh_agent实现，每个节点发送开始和完成两个事件）
-                if node_name == "es_fulltext":
+                # 第一个节点是 intent_routing，根据结果发送执行计划
+                if first_step and node_name == "intent_routing":
+                    first_step = False
+                    need_tool = state_data.get("need_tool", False)
+
+                    # 构造执行计划
+                    if need_tool:
+                        # 工具调用流程
+                        execution_plan = [
+                            {
+                                "stage": "function_calling",
+                                "name": "LLM决策",
+                                "icon": "🧠",
+                            },
+                            {"stage": "tool_answer", "name": "工具执行", "icon": "🔧"},
+                        ]
+                    else:
+                        # 文档检索流程
+                        execution_plan = [
+                            {
+                                "stage": "function_calling",
+                                "name": "LLM决策",
+                                "icon": "🧠",
+                            },
+                            {
+                                "stage": "es_fulltext",
+                                "name": "ES全文检索",
+                                "icon": "🔍",
+                            },
+                            {
+                                "stage": "sql_structured",
+                                "name": "SQL结构化检索",
+                                "icon": "📊",
+                            },
+                            {
+                                "stage": "merge_results",
+                                "name": "结果融合",
+                                "icon": "🔀",
+                            },
+                            {
+                                "stage": "refined_filter",
+                                "name": "精细化筛选",
+                                "icon": "✨",
+                            },
+                            {
+                                "stage": "generate_answer",
+                                "name": "生成答案",
+                                "icon": "📝",
+                            },
+                        ]
+
+                    # 发送执行计划事件
+                    yield SSEEvent(
+                        event="execution_plan",
+                        data={
+                            "plan": execution_plan,
+                            "mode": (
+                                "tool_calling" if need_tool else "document_retrieval"
+                            ),
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
+
+                # 根据节点发送相应事件
+                if node_name == "intent_routing":
+                    # Function Calling 路由节点
+                    tool_calls = state_data.get("tool_calls", [])
+                    tool_names = [
+                        tc.get("function", {}).get("name") for tc in tool_calls
+                    ]
+
+                    yield SSEEvent(
+                        event="stage_complete",
+                        data={
+                            "stage": "function_calling",
+                            "message": f"LLM 决策: {'调用工具' if state_data.get('need_tool') else '文档检索'}",
+                            "result": {
+                                "need_tool": state_data.get("need_tool", False),
+                                "tools_called": tool_names,
+                                "need_retrieval": state_data.get(
+                                    "need_retrieval", False
+                                ),
+                            },
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
+
+                elif node_name == "tool_answer":
+                    # 工具调用答案生成节点
+                    tool_results = state_data.get("tool_results", [])
+                    yield SSEEvent(
+                        event="stage_complete",
+                        data={
+                            "stage": "tool_answer",
+                            "message": "工具调用完成",
+                            "result": {
+                                "tools_count": len(tool_results),
+                                "results": tool_results,
+                            },
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
+
+                elif node_name == "es_fulltext":
                     # 先发送stage_start事件
                     yield SSEEvent(
                         event="stage_start",
@@ -519,7 +632,8 @@ async def clarify_question_agent(
             ).model_dump_json()
 
             # 继续运行智能体图
-            final_state = await search_agent_app.ainvoke(dict(stored_state))  # type: ignore
+            # type: ignore
+            final_state = await search_agent_app.ainvoke(dict(stored_state))
 
             # 发送检索到的文档引用
             final_results = final_state.get("final_results", [])

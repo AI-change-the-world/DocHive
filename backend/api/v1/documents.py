@@ -478,7 +478,9 @@ async def update_document_class_code(
     - **new_class_code**: 新的分类编码前缀（不包含最后的数字/UUID序号）
     """
     try:
-        success = await DocumentService.update_class_code(db, document_id, new_class_code)
+        success = await DocumentService.update_class_code(
+            db, document_id, new_class_code
+        )
 
         if not success:
             raise HTTPException(
