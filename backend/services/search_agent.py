@@ -130,7 +130,7 @@ def compute_shingles(text: str, k: int = 5) -> Set[str]:
 
     shingles = set()
     for i in range(len(text) - k + 1):
-        shingles.add(text[i : i + k])
+        shingles.add(text[i: i + k])
 
     return shingles
 
@@ -198,7 +198,8 @@ def should_remove_duplicate(
     # 阶段4: 只对Jaccard在0.5-0.75之间的做精细difflib比对（避免O(n²)开销）
     if 0.5 < jac_sim <= 0.75:
         # difflib比对（较慢，只对候选执行）
-        ratio = SequenceMatcher(None, doc_a["normalized"], doc_b["normalized"]).ratio()
+        ratio = SequenceMatcher(
+            None, doc_a["normalized"], doc_b["normalized"]).ratio()
         if ratio > 0.80:  # 阈值可调
             logger.debug(
                 f"文档 {doc_a['document_id']} 和 {doc_b['document_id']} difflib={ratio:.3f}（精细比对重复）"
@@ -216,7 +217,7 @@ class RetrievalState(TypedDict):
     优化后的 RAG 智能体状态机
 
     工作流程:
-    0. 意图路由 -> 判断是工具调用还是文档检索
+    0. 意图路由 -> LLM 自主规划整个执行流程
     1. ES全文检索 -> 基于关键词快速召回候选文档
     2. SQL结构化检索 -> 基于模板层级提取结构化条件
     3. 结果融合 -> 合并两路检索结果
@@ -232,8 +233,8 @@ class RetrievalState(TypedDict):
     session_id: str  # 会话ID
 
     # === 节点 0 (意图路由) 产出 ===
-    need_tool: bool  # 是否需要工具调用
-    tool_calls: List[Dict[str, Any]]  # LLM 返回的工具调用列表
+    execution_plan: List[Dict[str, Any]]  # LLM 规划的执行计划
+    reasoning: str  # LLM 的推理过程
     tool_results: List[Dict[str, Any]]  # 工具执行结果列表
     need_retrieval: bool  # 是否需要文档检索
 
@@ -268,22 +269,22 @@ class RetrievalState(TypedDict):
     answer: Optional[str]  # 最终RAG答案
 
 
-# ==================== 节点 0: Function Calling 路由 ====================
+# ==================== 节点 0: 任务规划路由 ====================
 async def intent_routing(
     state: RetrievalState, config: RunnableConfig
 ) -> RetrievalState:
     """
-    节点 0: Function Calling 路由
+    节点 0: 任务规划路由
 
-    让 LLM 自主决定是否调用工具以及调用哪个工具。
+    让 LLM 看到所有工具，自主规划整个任务的执行流程。
 
     输出:
-    - need_tool: 是否需要工具调用
-    - tool_calls: LLM 返回的工具调用列表
+    - execution_plan: LLM 规划的执行计划
+    - reasoning: LLM 的推理过程
     - tool_results: 工具执行结果列表
     - need_retrieval: 是否需要文档检索
     """
-    logger.info("========== 节点 0: Function Calling 路由 ==========")
+    logger.info("========== 节点 0: 任务规划路由 ==========")
 
     # 从 config 获取 db
     db: AsyncSession = config.get("configurable", {}).get("db")  # type: ignore
@@ -292,33 +293,46 @@ async def intent_routing(
     template_id = state["template_id"]
 
     try:
-        # 调用 Function Calling 路由器
+        # 调用 Function Calling 路由器（现在返回执行计划）
         routing_result = await function_calling_router(query, template_id, db)
 
-        logger.info(f"🧠 Function Calling 结果:")
-        logger.info(f"   需要工具: {routing_result.get('need_tool', False)}")
-        logger.info(f"   工具数量: {len(routing_result.get('tool_calls', []))}")
-        logger.info(f"   需要检索: {routing_result.get('need_retrieval', False)}")
+        execution_plan = routing_result.get("execution_plan", [])
+        reasoning = routing_result.get("reasoning", "")
+        tool_results = routing_result.get("tool_results", [])
+        need_retrieval = routing_result.get("need_retrieval", False)
+
+        logger.info(f"🧠 LLM 规划结果:")
+        logger.info(f"   执行步骤: {len(execution_plan)}")
+        logger.info(f"   工具调用: {len(tool_results)}")
+        logger.info(f"   需要检索: {need_retrieval}")
+        logger.info(f"   推理过程: {reasoning}")
+
+        # 打印执行计划
+        for step in execution_plan:
+            logger.info(
+                f"   步骤 {step.get('step')}: {step.get('action')} - {step.get('description')}")
 
         # 更新状态
-        state["need_tool"] = routing_result.get("need_tool", False)
-        state["tool_calls"] = routing_result.get("tool_calls", [])
-        state["tool_results"] = routing_result.get("tool_results", [])
-        state["need_retrieval"] = routing_result.get("need_retrieval", False)
+        state["execution_plan"] = execution_plan
+        state["reasoning"] = reasoning
+        state["tool_results"] = tool_results
+        state["need_retrieval"] = need_retrieval
 
-        if state["need_tool"]:
-            tool_names = [
-                tc.get("function", {}).get("name") for tc in state["tool_calls"]
-            ]
-            logger.info(f"✅ LLM 选择调用工具: {tool_names}")
-        else:
-            logger.info("✅ LLM 决定走文档检索流程")
+        logger.info("✅ 任务规划完成")
 
     except Exception as e:
-        logger.error(f"❌ Function Calling 路由失败: {e}")
+        logger.error(f"❌ 任务规划失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         # 默认走文档检索
-        state["need_tool"] = False
-        state["tool_calls"] = []
+        state["execution_plan"] = [
+            {
+                "step": 1,
+                "action": "document_retrieval",
+                "description": "文档检索"
+            }
+        ]
+        state["reasoning"] = f"规划失败，降级到文档检索: {str(e)}"
         state["tool_results"] = []
         state["need_retrieval"] = True
 
@@ -332,10 +346,11 @@ async def generate_tool_answer(
     """
     工具调用答案生成节点
 
-    将工具调用结果格式化为自然语言答案。
+    将多步骤工具调用结果格式化为自然语言答案。
 
     输出:
-    - answer: 格式化后的答案
+    - answer: 格式化后的答案（单纯工具查询）
+    - tool_answer_partial: 部分答案（组合查询）
     """
     logger.info("========== 工具调用答案生成 ==========")
 
@@ -344,24 +359,37 @@ async def generate_tool_answer(
 
     tool_results = state.get("tool_results", [])
     query = state["query"]
+    need_retrieval = state.get("need_retrieval", False)
+    execution_plan = state.get("execution_plan", [])
 
     try:
-        # 整合所有工具结果
+        # 构建工具结果数据
         combined_results = {
-            "tools_called": len(tool_results),
-            "results": tool_results,
+            "query": query,
+            "execution_plan": execution_plan,
+            "tool_results": tool_results,
         }
 
         # 使用 LLM 将工具结果转换为自然语言
-        answer = await format_tool_result_as_answer(combined_results, query, db)
-        state["answer"] = answer
-        logger.info(f"✅ 生成工具调用答案: {answer[:100]}...")
+        tool_answer = await format_tool_result_as_answer(combined_results, query, db)
+
+        # 如果是组合查询，保存工具答案，不直接设置为最终答案
+        if need_retrieval:
+            state["tool_answer_partial"] = tool_answer  # 保存部分答案
+            logger.info(f"✅ 生成工具调用部分答案，等待继续检索: {tool_answer[:100]}...")
+        else:
+            state["answer"] = tool_answer  # 直接设置为最终答案
+            logger.info(f"✅ 生成工具调用最终答案: {tool_answer[:100]}...")
     except Exception as e:
         logger.error(f"❌ 格式化工具结果失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         # 降级处理
-        state["answer"] = (
-            f"查询结果：\n{json.dumps(tool_results, ensure_ascii=False, indent=2)}"
-        )
+        fallback_answer = f"查询结果：\n{json.dumps(tool_results, ensure_ascii=False, indent=2)}"
+        if need_retrieval:
+            state["tool_answer_partial"] = fallback_answer
+        else:
+            state["answer"] = fallback_answer
 
     return state
 
@@ -417,7 +445,8 @@ async def es_fulltext_retrieval(
 
         hits = response.get("hits", {}).get("hits", [])
         state["es_fulltext_results"] = [hit["_source"] for hit in hits]
-        state["es_document_ids"] = set(hit["_source"]["document_id"] for hit in hits)
+        state["es_document_ids"] = set(
+            hit["_source"]["document_id"] for hit in hits)
 
         logger.info(f"✅ ES 全文检索召回 {len(hits)} 篇文档")
         logger.info(f"   文档 ID: {list(state['es_document_ids'])}")
@@ -627,7 +656,8 @@ async def merge_retrieval_results(
             # 没有交集,取并集
             logger.info(f"📌 策略: 并集 (ES {len(es_ids)} + SQL {len(sql_ids)})")
             state["fusion_strategy"] = "union"
-            merged_ids = list(es_ids) + [id for id in sql_ids if id not in es_ids]
+            merged_ids = list(es_ids) + \
+                [id for id in sql_ids if id not in es_ids]
 
     # 限制结果数量 (Top 10)
     merged_ids = merged_ids[:10]
@@ -698,7 +728,8 @@ async def refined_filtering(
         state["document_type_fields"] = []
         state["refined_conditions"] = {}
         state["final_es_query"] = None
-        state["final_results"] = _convert_docs_to_results(state["merged_documents"])
+        state["final_results"] = _convert_docs_to_results(
+            state["merged_documents"])
         return state
 
     # 1. 获取 DocumentType 和 DocumentTypeField
@@ -715,7 +746,8 @@ async def refined_filtering(
             logger.warning(f"⚠️ 未找到类别 '{category}' 的 DocumentType,跳过精细化筛选")
             state["document_type_fields"] = []
             state["refined_conditions"] = {}
-            state["final_results"] = _convert_docs_to_results(state["merged_documents"])
+            state["final_results"] = _convert_docs_to_results(
+                state["merged_documents"])
             return state
 
         document_type_fields_result = await db.execute(
@@ -723,20 +755,23 @@ async def refined_filtering(
                 DocumentTypeField.doc_type_id.in_([dt.id for dt in doc_types])
             )
         )
-        document_type_fields = list(document_type_fields_result.scalars().all())
+        document_type_fields = list(
+            document_type_fields_result.scalars().all())
         state["document_type_fields"] = document_type_fields
 
         if not document_type_fields:
             logger.info("📌 该类别无特定字段,跳过精细化筛选")
             state["refined_conditions"] = {}
-            state["final_results"] = _convert_docs_to_results(state["merged_documents"])
+            state["final_results"] = _convert_docs_to_results(
+                state["merged_documents"])
             return state
 
     except Exception as e:
         logger.error(f"❌ 获取文档类型字段失败: {e}")
         state["document_type_fields"] = []
         state["refined_conditions"] = {}
-        state["final_results"] = _convert_docs_to_results(state["merged_documents"])
+        state["final_results"] = _convert_docs_to_results(
+            state["merged_documents"])
         return state
 
     # 2. 使用 LLM 提取精细化条件
@@ -784,20 +819,23 @@ async def refined_filtering(
                 f"您的问题似乎有些宽泛。为了更精确地查找,能否提供: {missing_str}?"
             )
             logger.warning(f"⚠️ 检测到歧义,建议补充: {missing_str}")
-            state["final_results"] = _convert_docs_to_results(state["merged_documents"])
+            state["final_results"] = _convert_docs_to_results(
+                state["merged_documents"])
             return state
 
     except Exception as e:
         logger.error(f"❌ LLM 提取精细化条件失败: {e}")
         state["refined_conditions"] = {}
-        state["final_results"] = _convert_docs_to_results(state["merged_documents"])
+        state["final_results"] = _convert_docs_to_results(
+            state["merged_documents"])
         return state
 
     # 4. 构造精细化 ES 查询
     if not state["refined_conditions"]:
         logger.info("📌 无精细化条件,直接使用融合结果")
         state["final_es_query"] = None
-        state["final_results"] = _convert_docs_to_results(state["merged_documents"])
+        state["final_results"] = _convert_docs_to_results(
+            state["merged_documents"])
         return state
 
     # 只在融合后的文档中筛选
@@ -816,7 +854,8 @@ async def refined_filtering(
         elif field_type == "number":
             must_clauses.append({"term": {f"metadata.{field_name}": value}})
         elif field_type == "date":
-            must_clauses.append({"range": {f"metadata.{field_name}": {"gte": value}}})
+            must_clauses.append(
+                {"range": {f"metadata.{field_name}": {"gte": value}}})
         else:
             must_clauses.append({"term": {f"metadata.{field_name}": value}})
 
@@ -848,7 +887,8 @@ async def refined_filtering(
     except Exception as e:
         logger.error(f"❌ 精细化 ES 查询失败: {e}")
         # 降级: 使用融合结果
-        state["final_results"] = _convert_docs_to_results(state["merged_documents"])
+        state["final_results"] = _convert_docs_to_results(
+            state["merged_documents"])
 
     return state
 
@@ -939,7 +979,8 @@ async def deduplicate_documents(
                 continue
 
             # 判断是否重复
-            remove_id = should_remove_duplicate(doc_features[i], doc_features[j])
+            remove_id = should_remove_duplicate(
+                doc_features[i], doc_features[j])
 
             if remove_id is not None:
                 removed_ids.add(remove_id)
@@ -1027,8 +1068,36 @@ async def generate_answer(
 
     context_str = "\n".join(context_parts)
 
+    # 检查是否有工具调用的部分答案（组合查询）
+    tool_answer_partial = state.get("tool_answer_partial")
+
     # 构造 RAG prompt
-    prompt = f"""
+    if tool_answer_partial:
+        # 组合查询：需要合并工具答案和文档答案
+        prompt = f"""
+你是一个专业的文档问答助手。用户的问题包含多个子任务，你已经通过工具调用回答了部分问题，现在需要结合文档内容回答剩余部分。
+
+【工具调用结果（已回答的部分）】
+{tool_answer_partial}
+
+【检索到的文档】
+{context_str}
+
+【用户问题】
+{query}
+
+【回答要求】
+1. 先简要列出工具调用已经回答的部分
+2. 再基于文档内容回答剩余问题
+3. 如果需要引用文档，请使用 "根据文档X" 的格式
+4. 回答要全面、准确、清晰
+5. 如果文档内容与剩余问题无关，请如实说明
+
+请开始回答：
+    """
+    else:
+        # 单纯文档检索
+        prompt = f"""
 你是一个专业的文档问答助手。请根据以下检索到的文档内容回答用户的问题。
 
 【检索到的文档】
@@ -1062,17 +1131,23 @@ async def generate_answer(
 # ==================== 决策函数 ====================
 def should_use_tool(state: RetrievalState) -> str:
     """
-    决策函数: 判断是使用工具还是文档检索
+    决策函数: 根据执行计划判断路由
 
     Returns:
-        'tool_answer': 使用工具调用结果生成答案
-        'retrieval': 走文档检索流程
+        'tool_answer': 执行计划包含工具调用（之后可能还需要检索）
+        'retrieval': 执行计划只有文档检索
     """
-    if state.get("need_tool"):
-        logger.info("🔀 决策: 使用工具调用 -> tool_answer")
+    execution_plan = state.get("execution_plan", [])
+
+    # 检查执行计划中是否包含工具调用
+    has_tool_call = any(step.get("action") ==
+                        "tool_call" for step in execution_plan)
+
+    if has_tool_call:
+        logger.info("🔧 决策: 执行计划包含工具调用 -> tool_answer")
         return "tool_answer"
     else:
-        logger.info("🔀 决策: 走文档检索 -> retrieval")
+        logger.info("🔍 决策: 仅文档检索 -> retrieval")
         return "retrieval"
 
 
@@ -1096,11 +1171,13 @@ def should_ask_user(state: RetrievalState) -> str:
 """
 优化后的工作流程：
 
-0. 意图路由 (intent_routing)
+0. 任务规划 (intent_routing) - LLM 规划执行步骤
    ↓
-   [决策] 是否使用工具? (should_use_tool)
-   ├─ tool_answer: 工具调用答案生成 (generate_tool_answer) → END
-   └─ retrieval: 走文档检索流程
+   [决策] 是否包含工具调用? (should_use_tool)
+   ├─ tool_answer: 包含工具调用 → 执行工具 → [决策] 是否需要检索?
+   │   ├─ 需要 → 继续文档检索
+   │   └─ 不需要 → END
+   └─ retrieval: 只有文档检索 → ES全文检索...
        ↓
 1. ES全文检索 (es_fulltext_retrieval)
    ↓
@@ -1121,7 +1198,7 @@ def should_ask_user(state: RetrievalState) -> str:
 workflow = StateGraph(RetrievalState)
 
 # 2. 添加所有节点
-workflow.add_node("intent_routing", intent_routing)  # 节点0: 意图路由
+workflow.add_node("intent_routing", intent_routing)  # 节点0: 任务规划
 workflow.add_node("tool_answer", generate_tool_answer)  # 工具调用答案生成
 workflow.add_node("es_fulltext", es_fulltext_retrieval)  # 节点1: ES全文检索
 workflow.add_node("sql_structured", sql_structured_retrieval)  # 节点2: SQL结构化检索
@@ -1131,16 +1208,27 @@ workflow.add_node("deduplicate", deduplicate_documents)  # 节点4.5: 文档去�
 workflow.add_node("ask_user", handle_ambiguity)  # 节点5a: 歧义处理
 workflow.add_node("generate_answer", generate_answer)  # 节点5b: 生成答案
 
-# 3. 设置图的入口点（从意图路由开始）
+# 3. 设置图的入口点（从任务规划开始）
 workflow.set_entry_point("intent_routing")
 
-# 4. 添加条件边：意图路由后决定走向
+# 4. 添加条件边：任务规划后决定走向
 workflow.add_conditional_edges(
     "intent_routing",  # 源节点
     should_use_tool,  # 决策函数
     {
-        "tool_answer": "tool_answer",  # 使用工具 → 工具答案生成
-        "retrieval": "es_fulltext",  # 文档检索 → ES全文检索
+        "tool_answer": "tool_answer",  # 包含工具调用 → 工具答案生成 → [决策]
+        "retrieval": "es_fulltext",  # 仅文档检索 → ES全文检索
+    },
+)
+
+# 4.5 工具调用后，根据执行计划决定是否继续检索
+workflow.add_conditional_edges(
+    "tool_answer",  # 源节点
+    lambda state: "continue_retrieval" if state.get(
+        "need_retrieval", False) else "end",
+    {
+        "continue_retrieval": "es_fulltext",  # 继续文档检索
+        "end": END,  # 直接结束
     },
 )
 
@@ -1160,8 +1248,7 @@ workflow.add_conditional_edges(
     },
 )
 
-# 7. 设置图的终点
-workflow.add_edge("tool_answer", END)  # 工具答案生成后结束
+# 7. 设置图的终点（注意：tool_answer 现在有条件边，不再直接到 END）
 workflow.add_edge("ask_user", END)  # 歧义处理后结束
 workflow.add_edge("generate_answer", END)  # 生成答案后结束
 

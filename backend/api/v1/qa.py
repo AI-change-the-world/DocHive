@@ -162,9 +162,9 @@ async def ask_question_agent_stream(
                 "query": qa_request.question,
                 "template_id": qa_request.template_id or 0,
                 "session_id": session_id,
-                # 节点 0 (Function Calling 路由) 产出
-                "need_tool": False,
-                "tool_calls": [],
+                # 节点 0 (任务规划) 产出
+                "execution_plan": [],
+                "reasoning": "",
                 "tool_results": [],
                 "need_retrieval": True,
                 # 节点 1 (ES全文检索) 产出
@@ -214,72 +214,91 @@ async def ask_question_agent_stream(
                 initial_state,
                 config={"configurable": {"db": db, "es": es_client}},
             ):
-                logger.info(f"[LangGraph step_result.keys()] {step_result.keys()}")
+                logger.info(
+                    f"[LangGraph step_result.keys()] {step_result.keys()}")
                 # 获取节点名称和状态数据
                 node_name = list(step_result.keys())[0]
                 state_data = step_result[node_name]
 
                 print(f"[LangGraph Node] {node_name}")
 
-                # 第一个节点是 intent_routing，根据结果发送执行计划
+                # 第一个节点是 intent_routing，根据执行计划生成前端渲染步骤
                 if first_step and node_name == "intent_routing":
                     first_step = False
-                    need_tool = state_data.get("need_tool", False)
 
-                    # 构造执行计划
-                    if need_tool:
-                        # 工具调用流程
-                        execution_plan = [
-                            {
-                                "stage": "function_calling",
-                                "name": "LLM决策",
-                                "icon": "🧠",
-                            },
-                            {"stage": "tool_answer", "name": "工具执行", "icon": "🔧"},
-                        ]
+                    # 获取 LLM 规划的执行计划
+                    llm_execution_plan = state_data.get("execution_plan", [])
+                    reasoning = state_data.get("reasoning", "")
+
+                    logger.info(f"📋 LLM执行计划: {llm_execution_plan}")
+                    logger.info(f"💭 推理过程: {reasoning}")
+
+                    # 根据执行计划动态生成前端渲染步骤
+                    frontend_plan = []
+
+                    # 总是先添加任务规划步骤
+                    frontend_plan.append({
+                        "stage": "intent_routing",
+                        "name": "任务规划",
+                        "icon": "🧠"
+                    })
+
+                    # 遍历 LLM 的执行计划，转换为前端步骤
+                    for step in llm_execution_plan:
+                        action = step.get("action")
+                        description = step.get("description", "")
+
+                        if action == "tool_call":
+                            # 工具调用步骤（合并所有工具调用为一个步骤）
+                            if not any(s["stage"] == "tool_answer" for s in frontend_plan):
+                                frontend_plan.append({
+                                    "stage": "tool_answer",
+                                    "name": "工具执行",
+                                    "icon": "🔧"
+                                })
+                        elif action == "document_retrieval":
+                            # 文档检索步骤（包含完整的检索流程）
+                            frontend_plan.extend([
+                                {"stage": "es_fulltext",
+                                    "name": "ES全文检索", "icon": "🔍"},
+                                {"stage": "sql_structured",
+                                    "name": "SQL结构化检索", "icon": "📊"},
+                                {"stage": "merge_results",
+                                    "name": "结果融合", "icon": "🔀"},
+                                {"stage": "refined_filter",
+                                    "name": "精细化筛选", "icon": "✨"},
+                            ])
+
+                    # 总是最后添加答案生成步骤
+                    frontend_plan.append({
+                        "stage": "generate_answer",
+                        "name": "生成答案",
+                        "icon": "📝"
+                    })
+
+                    # 判断模式
+                    has_tool = any(step.get("action") ==
+                                   "tool_call" for step in llm_execution_plan)
+                    has_retrieval = any(
+                        step.get("action") == "document_retrieval" for step in llm_execution_plan)
+
+                    if has_tool and has_retrieval:
+                        mode = "combined_query"
+                    elif has_tool:
+                        mode = "tool_calling"
                     else:
-                        # 文档检索流程
-                        execution_plan = [
-                            {
-                                "stage": "function_calling",
-                                "name": "LLM决策",
-                                "icon": "🧠",
-                            },
-                            {
-                                "stage": "es_fulltext",
-                                "name": "ES全文检索",
-                                "icon": "🔍",
-                            },
-                            {
-                                "stage": "sql_structured",
-                                "name": "SQL结构化检索",
-                                "icon": "📊",
-                            },
-                            {
-                                "stage": "merge_results",
-                                "name": "结果融合",
-                                "icon": "🔀",
-                            },
-                            {
-                                "stage": "refined_filter",
-                                "name": "精细化筛选",
-                                "icon": "✨",
-                            },
-                            {
-                                "stage": "generate_answer",
-                                "name": "生成答案",
-                                "icon": "📝",
-                            },
-                        ]
+                        mode = "document_retrieval"
+
+                    logger.info(f"🎯 前端渲染计划: {len(frontend_plan)} 个步骤")
+                    logger.info(f"📌 执行模式: {mode}")
 
                     # 发送执行计划事件
                     yield SSEEvent(
                         event="execution_plan",
                         data={
-                            "plan": execution_plan,
-                            "mode": (
-                                "tool_calling" if need_tool else "document_retrieval"
-                            ),
+                            "plan": frontend_plan,
+                            "mode": mode,
+                            "reasoning": reasoning,  # 传递 LLM 的推理过程
                         },
                         id=task_id,
                         done=False,
@@ -287,23 +306,24 @@ async def ask_question_agent_stream(
 
                 # 根据节点发送相应事件
                 if node_name == "intent_routing":
-                    # Function Calling 路由节点
-                    tool_calls = state_data.get("tool_calls", [])
-                    tool_names = [
-                        tc.get("function", {}).get("name") for tc in tool_calls
-                    ]
+                    # 任务规划节点
+                    execution_plan = state_data.get("execution_plan", [])
+                    reasoning = state_data.get("reasoning", "")
+                    tool_count = len(
+                        [s for s in execution_plan if s.get("action") == "tool_call"])
+                    has_retrieval = any(
+                        s.get("action") == "document_retrieval" for s in execution_plan)
 
                     yield SSEEvent(
                         event="stage_complete",
                         data={
-                            "stage": "function_calling",
-                            "message": f"LLM 决策: {'调用工具' if state_data.get('need_tool') else '文档检索'}",
+                            "stage": "intent_routing",
+                            "message": f"任务规划完成: {tool_count}个工具调用 + {'文档检索' if has_retrieval else '无需检索'}",
                             "result": {
-                                "need_tool": state_data.get("need_tool", False),
-                                "tools_called": tool_names,
-                                "need_retrieval": state_data.get(
-                                    "need_retrieval", False
-                                ),
+                                "execution_plan": execution_plan,
+                                "reasoning": reasoning,
+                                "tool_count": tool_count,
+                                "has_retrieval": has_retrieval,
                             },
                         },
                         id=task_id,
@@ -382,7 +402,8 @@ async def ask_question_agent_stream(
                     ).model_dump_json()
 
                     # 再发送stage_complete事件
-                    sql_doc_ids = list(state_data.get("sql_document_ids", set()))
+                    sql_doc_ids = list(state_data.get(
+                        "sql_document_ids", set()))
                     yield SSEEvent(
                         event="stage_complete",
                         data={

@@ -1,7 +1,12 @@
 """
-Function Calling 路由器
+Function Calling 路由器 - 基于 LLM 的任务规划与执行
 
-让 LLM 自主决策是否调用工具以及调用哪个工具
+让 LLM 自主规划整个任务的执行流程，包括：
+1. 分析用户问题
+2. 决定需要调用哪些工具
+3. 确定工具调用的顺序
+4. 决定是否需要文档检索
+5. 智能组合所有结果
 """
 
 import json
@@ -21,9 +26,13 @@ async def function_calling_router(
     query: str, template_id: int, db: AsyncSession
 ) -> Dict[str, Any]:
     """
-    Function Calling 路由器
+    Function Calling 路由器 - LLM 自主任务规划
 
-    让 LLM 自主决策是否需要调用工具，以及调用哪个工具。
+    让 LLM 看到所有可用工具，自主规划最优的执行方案：
+    - 分析问题，决定需要哪些步骤
+    - 规划工具调用顺序
+    - 决定是否需要文档检索
+    - 系统按计划执行并组合结果
 
     Args:
         query: 用户查询
@@ -32,117 +41,190 @@ async def function_calling_router(
 
     Returns:
         {
-            "need_tool": bool,
-            "tool_calls": [...],  # LLM 返回的工具调用列表
-            "tool_results": [...],  # 工具执行结果列表
-            "need_retrieval": bool,
+            "execution_plan": [
+                {
+                    "step": 1,
+                    "action": "tool_call",
+                    "tool_name": "get_template_statistics",
+                    "arguments": {...},
+                    "description": "获取模板统计信息"
+                },
+                ...
+            ],
+            "reasoning": "LLM的推理过程",
+            "tool_results": [...],
+            "need_retrieval": bool
         }
     """
     try:
         # 1. 构造工具描述（给 LLM 看的）
-        tools_description = json.dumps(TOOLS_SCHEMA, ensure_ascii=False, indent=2)
+        tools_description = json.dumps(
+            TOOLS_SCHEMA, ensure_ascii=False, indent=2)
 
-        # 2. 构造系统提示词
-        system_prompt = f"""你是一个智能助手，能够通过调用工具来回答用户的问题。
+        # 2. 构造系统提示词 - 让 LLM 规划整个执行流程
+        system_prompt = f"""你是一个智能任务规划助手，能够分析用户问题并规划最优的执行方案。
 
 用户当前的模板ID: {template_id}
 
-可用的工具列表：
+【可用的工具列表】
 {tools_description}
 
-请判断用户的问题是否需要调用工具：
+【你的任务】
+分析用户的问题，规划最优的执行方案。你可以：
+1. 调用一个或多个工具来获取信息
+2. 决定工具调用的顺序
+3. 决定是否还需要文档检索
 
-1. **需要调用工具的情况**：
-   - 统计查询（文档数量、分类分布等）
-   - 信息查询（模板列表、文档类型列表等）
-   - 分类筛选（按分类编码查找文档）
-
-2. **不需要调用工具的情况**：
-   - 需要语义理解的文档内容查询
-   - 需要基于文档内容生成答案的问题
-
-如果需要调用工具，请返回 JSON 格式：
+【执行计划格式】
+请返回 JSON 格式的执行计划：
 {{
-    "need_tool": true,
-    "tool_calls": [
+    "execution_plan": [
         {{
-            "name": "工具名称",
-            "arguments": {{"参数名": "参数值"}}
+            "step": 1,
+            "action": "tool_call",
+            "tool_name": "工具名称",
+            "arguments": {{"参数名": "参数值"}},
+            "description": "这一步要做什么"
+        }},
+        {{
+            "step": 2,
+            "action": "document_retrieval",
+            "description": "检索相关文档内容"
         }}
-    ]
+    ],
+    "reasoning": "为什么这样规划"
 }}
 
-如果不需要调用工具，请返回：
+【规划原则】
+1. **识别问题类型**：
+   - 统计/信息查询 → 调用相应工具
+   - 内容理解问题 → document_retrieval
+   - 组合问题 → 先工具调用，再文档检索
+
+2. **工具调用顺序**：
+   - 如果需要多个工具，考虑依赖关系
+   - 基础信息优先（如先获取模板列表，再查询具体模板）
+
+3. **参数处理**：
+   - template_id 会自动填充为 {template_id}（除非你明确指定其他值）
+   - 可选参数可以不提供
+
+4. **action 类型**：
+   - "tool_call": 调用工具
+   - "document_retrieval": 文档检索（语义理解）
+
+【示例】
+问题: "有多少文档，都讲了什么内容"
+计划:
 {{
-    "need_tool": false
+    "execution_plan": [
+        {{
+            "step": 1,
+            "action": "tool_call",
+            "tool_name": "get_template_statistics",
+            "arguments": {{"template_id": {template_id}}},
+            "description": "获取文档数量统计"
+        }},
+        {{
+            "step": 2,
+            "action": "document_retrieval",
+            "description": "检索文档内容进行总结"
+        }}
+    ],
+    "reasoning": "问题包含两部分：1)统计信息用工具查询 2)内容理解需要文档检索"
 }}
 
-注意：
-- 你可以一次调用多个工具
-- 如果工具需要 template_id 但你没有提供，系统会自动填充为 {template_id}
-- 只返回 JSON，不要有其他内容
+现在，请为以下用户问题规划执行方案：
+{query}
+
+只返回 JSON，不要其他内容。
 """
 
-        # 3. 调用 LLM
-        logger.info("🧠 调用 LLM 进行 Function Calling...")
+        # 3. 调用 LLM 获取执行计划
+        logger.info("🧠 调用 LLM 规划任务执行流程...")
 
         response = await llm_client.extract_json_response(
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": query},
+                {"role": "user", "content": f"请为这个问题规划执行方案：{query}"},
             ],
             db=db,
         )
 
-        logger.info(f"LLM 响应: {response}")
+        logger.info(
+            f"📋 LLM 规划结果:\n{json.dumps(response, ensure_ascii=False, indent=2)}")
 
-        # 4. 检查 LLM 是否选择调用工具
-        if not response.get("need_tool", False):
-            # 不需要调用工具，走文档检索
-            logger.info("✅ LLM 决定不调用工具，走文档检索流程")
+        execution_plan = response.get("execution_plan", [])
+        reasoning = response.get("reasoning", "")
+
+        if not execution_plan:
+            # 没有计划，默认走文档检索
+            logger.info("⚠️ LLM 未返回执行计划，默认走文档检索")
             return {
-                "need_tool": False,
-                "tool_calls": [],
+                "execution_plan": [
+                    {
+                        "step": 1,
+                        "action": "document_retrieval",
+                        "description": "文档检索"
+                    }
+                ],
+                "reasoning": "默认流程",
                 "tool_results": [],
                 "need_retrieval": True,
             }
 
-        # 5. 执行工具调用
-        tool_calls = response.get("tool_calls", [])
-        logger.info(f"🔧 LLM 要求调用 {len(tool_calls)} 个工具")
-
+        # 4. 执行计划中的工具调用
         tool_results = []
-        for tool_call in tool_calls:
-            tool_name = tool_call.get("name")
-            arguments = tool_call.get("arguments", {})
+        for step in execution_plan:
+            if step.get("action") == "tool_call":
+                tool_name = step.get("tool_name")
+                arguments = step.get("arguments", {})
 
-            # 自动填充 template_id（如果工具需要且 LLM 未提供）
-            if "template_id" not in arguments and tool_name != "list_all_templates":
-                arguments["template_id"] = template_id
+                # 自动填充 template_id
+                if "template_id" not in arguments and tool_name != "list_all_templates":
+                    arguments["template_id"] = template_id
 
-            # 执行工具
-            result = await execute_tool_call(tool_name, arguments, db)
-            tool_results.append(
-                {
+                # 执行工具
+                logger.info(
+                    f"🔧 执行步骤 {step.get('step')}: {step.get('description')}")
+                result = await execute_tool_call(tool_name, arguments, db)
+
+                tool_results.append({
+                    "step": step.get("step"),
                     "tool_name": tool_name,
                     "arguments": arguments,
                     "result": result,
-                }
-            )
+                    "description": step.get("description"),
+                })
+
+        # 5. 检查是否需要文档检索
+        need_retrieval = any(step.get("action") ==
+                             "document_retrieval" for step in execution_plan)
+
+        logger.info(
+            f"✅ 执行计划完成: {len(tool_results)} 个工具调用, 需要检索: {need_retrieval}")
 
         return {
-            "need_tool": True,
-            "tool_calls": tool_calls,
+            "execution_plan": execution_plan,
+            "reasoning": reasoning,
             "tool_results": tool_results,
-            "need_retrieval": False,
+            "need_retrieval": need_retrieval,
         }
 
     except Exception as e:
         logger.error(f"❌ Function Calling 路由失败: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         # 错误时默认走文档检索
         return {
-            "need_tool": False,
-            "tool_calls": [],
+            "execution_plan": [
+                {
+                    "step": 1,
+                    "action": "document_retrieval",
+                    "description": "文档检索"
+                }
+            ],
+            "reasoning": f"规划失败，降级到文档检索: {str(e)}",
             "tool_results": [],
             "need_retrieval": True,
         }

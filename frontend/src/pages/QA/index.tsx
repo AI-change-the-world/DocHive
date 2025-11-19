@@ -60,12 +60,23 @@ interface AgentStage {
 
 // 阶段结果数据结构
 interface StageResult {
+    // 通用字段
     document_ids?: number[];
     count?: number;
     documents?: any[];
     category?: string;
     conditions?: any[];
     strategy?: string;
+
+    // 任务规划阶段 (intent_routing)
+    execution_plan?: any[];
+    reasoning?: string;
+    tool_count?: number;
+    has_retrieval?: boolean;
+
+    // 工具执行阶段 (tool_answer)
+    tools_count?: number;
+    results?: any[];
 }
 
 interface Message {
@@ -503,8 +514,146 @@ export default function QAPage() {
     const renderStageResult = (stage: AgentStage) => {
         if (!stage.result) return null;
 
-        const { document_ids, count, documents, category, conditions, strategy } = stage.result;
+        const { document_ids, count, documents, category, conditions, strategy, execution_plan, reasoning, tool_count, has_retrieval, tools_count, results } = stage.result;
 
+        // === 1. 任务规划阶段 (intent_routing) ===
+        if (stage.stage === 'intent_routing' && execution_plan) {
+            return (
+                <div className="mt-2 space-y-2">
+                    {/* LLM 推理过程 */}
+                    {reasoning && (
+                        <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+                            <div className="flex items-start space-x-2">
+                                <BulbOutlined className="text-amber-600 mt-0.5" />
+                                <div className="flex-1">
+                                    <Text strong className="text-xs text-amber-700">💭 LLM 推理过程</Text>
+                                    <div className="text-xs text-gray-700 mt-1 whitespace-pre-wrap">
+                                        {reasoning}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 执行计划 */}
+                    <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                        <div className="flex items-start space-x-2">
+                            <InfoCircleOutlined className="text-blue-600 mt-0.5" />
+                            <div className="flex-1">
+                                <Text strong className="text-xs text-blue-700">📋 执行计划</Text>
+                                <div className="mt-2 space-y-2">
+                                    {execution_plan.map((step: any, idx: number) => (
+                                        <div key={idx} className="flex items-start space-x-2 text-xs">
+                                            <span className="flex-shrink-0 w-5 h-5 rounded-full bg-blue-500 text-white flex items-center justify-center text-[10px] font-bold">
+                                                {step.step}
+                                            </span>
+                                            <div className="flex-1">
+                                                <div className="font-medium text-gray-800">
+                                                    {step.action === 'tool_call' ? '🔧 调用工具' : '📚 文档检索'}: {step.description}
+                                                </div>
+                                                {step.tool_name && (
+                                                    <div className="mt-1 text-gray-600">
+                                                        <Tag color="purple" className="text-xs">
+                                                            {step.tool_name}
+                                                        </Tag>
+                                                        {step.arguments && Object.keys(step.arguments).length > 0 && (
+                                                            <span className="ml-2 text-gray-500">
+                                                                参数: {JSON.stringify(step.arguments)}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 执行摘要 */}
+                    <div className="flex items-center space-x-2 text-xs text-gray-600">
+                        <Tag color="green">{tool_count || 0} 个工具调用</Tag>
+                        {has_retrieval && <Tag color="blue">需要文档检索</Tag>}
+                    </div>
+                </div>
+            );
+        }
+
+        // === 2. 工具执行阶段 (tool_answer) ===
+        if (stage.stage === 'tool_answer' && results) {
+            return (
+                <div className="mt-2 space-y-2">
+                    <div className="p-3 bg-purple-50 rounded-lg border border-purple-200">
+                        <div className="flex items-start space-x-2">
+                            <CheckCircleOutlined className="text-purple-600 mt-0.5" />
+                            <div className="flex-1">
+                                <Text strong className="text-xs text-purple-700">
+                                    ✅ 工具执行结果 ({tools_count || results.length} 个)
+                                </Text>
+                                <div className="mt-2 space-y-3">
+                                    {results.map((toolResult: any, idx: number) => (
+                                        <div key={idx} className="p-2 bg-white rounded border border-purple-100">
+                                            {/* 工具信息头部 */}
+                                            <div className="flex items-center space-x-2 mb-2">
+                                                <Badge count={idx + 1} style={{ backgroundColor: '#722ed1' }} />
+                                                <Text strong className="text-xs text-gray-800">
+                                                    {toolResult.tool_name}
+                                                </Text>
+                                                {toolResult.step && (
+                                                    <Tag color="purple" className="text-xs">步骤 {toolResult.step}</Tag>
+                                                )}
+                                            </div>
+
+                                            {/* 工具参数 */}
+                                            {toolResult.arguments && Object.keys(toolResult.arguments).length > 0 && (
+                                                <div className="mb-2 p-2 bg-gray-50 rounded">
+                                                    <Text className="text-xs text-gray-600">📝 调用参数:</Text>
+                                                    <div className="mt-1 flex flex-wrap gap-1">
+                                                        {Object.entries(toolResult.arguments).map(([key, value]) => (
+                                                            <Tag key={key} color="blue" className="text-xs">
+                                                                {key}: {String(value)}
+                                                            </Tag>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* 工具描述 */}
+                                            {toolResult.description && (
+                                                <div className="mb-2 text-xs text-gray-600 italic">
+                                                    💡 {toolResult.description}
+                                                </div>
+                                            )}
+
+                                            {/* 执行结果 */}
+                                            <div className="p-2 bg-green-50 rounded border border-green-100">
+                                                <Text className="text-xs text-green-700 font-medium">📊 执行结果:</Text>
+                                                <div className="mt-1 max-h-40 overflow-y-auto">
+                                                    {toolResult.result?.success === false ? (
+                                                        <Alert
+                                                            type="error"
+                                                            message={toolResult.result.error || '执行失败'}
+                                                            className="text-xs"
+                                                        />
+                                                    ) : (
+                                                        <pre className="text-xs text-gray-700 whitespace-pre-wrap font-mono bg-white p-2 rounded">
+                                                            {JSON.stringify(toolResult.result, null, 2)}
+                                                        </pre>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // === 3. 其他阶段（原有逻辑）===
         return (
             <div className="mt-2 p-3 bg-gray-50 rounded border border-gray-200">
                 <Space direction="vertical" className="w-full" size="small">
