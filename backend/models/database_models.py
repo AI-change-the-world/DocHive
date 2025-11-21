@@ -235,60 +235,6 @@ class Document(Base, ToDictMixin):
         return result
 
 
-class ExtractionConfig(Base, ToDictMixin):
-    """信息抽取配置表"""
-
-    __tablename__ = "extraction_configs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), nullable=False, index=True)
-    doc_type = Column(String(50), nullable=False)  # 简历、报告、合同等
-    _extract_fields = Column("extract_fields", Text, nullable=False)  # 抽取字段配置
-    """
-    示例：[
-        {"name": "姓名", "type": "text", "method": "regex", "pattern": "姓名[:：]\\s*(\\S+)"},
-        {"name": "行业", "type": "text", "method": "llm", "prompt": "提取行业信息"},
-        {"name": "技能", "type": "array", "method": "llm"}
-    ]
-    """
-    is_active = Column(Boolean, default=True)
-    created_at = Column(Integer, default=lambda: int(time.time()))
-    updated_at = Column(Integer, default=lambda: int(time.time()))
-
-    @property
-    def extract_fields(self):
-        """自动将 JSON 字符串转为 list"""
-        import json
-
-        if isinstance(self._extract_fields, str):
-            return json.loads(self._extract_fields)
-        return self._extract_fields
-
-    @extract_fields.setter
-    def extract_fields(self, value):
-        """自动将 list 转为 JSON 字符串"""
-        import json
-
-        if isinstance(value, (list, dict)):
-            self._extract_fields = json.dumps(value, ensure_ascii=False)
-        else:
-            self._extract_fields = value
-
-    def to_dict(self):
-        """重写 to_dict，确保 extract_fields 返回 list"""
-        result = super().to_dict()
-        # 将 _extract_fields 的 key 改为 extract_fields，并解析为 JSON
-        if "_extract_fields" in result:
-            import json
-
-            result["extract_fields"] = (
-                json.loads(result.pop("_extract_fields"))
-                if isinstance(result.get("_extract_fields"), str)
-                else result.pop("_extract_fields")
-            )
-        return result
-
-
 class OperationLog(Base, ToDictMixin):
     """操作日志表"""
 
@@ -469,7 +415,6 @@ event.listen(User, "before_update", update_timestamp_before_update)
 event.listen(ClassTemplate, "before_update", update_timestamp_before_update)
 event.listen(ClassTemplateConfigs, "before_update",
              update_timestamp_before_update)
-event.listen(ExtractionConfig, "before_update", update_timestamp_before_update)
 event.listen(DocumentType, "before_update", update_timestamp_before_update)
 event.listen(DocumentTypeField, "before_update",
              update_timestamp_before_update)

@@ -160,16 +160,6 @@ export interface ExtractionField {
     required?: boolean;
 }
 
-export interface ExtractionConfig {
-    id: number;
-    name: string;
-    doc_type: string;
-    extract_fields: ExtractionField[];
-    is_active: boolean;
-    created_at: string;
-    updated_at: string;
-}
-
 export interface ExtractionConfigCreate {
     name: string;
     doc_type: string;
