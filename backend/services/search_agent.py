@@ -13,19 +13,15 @@ from loguru import logger
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import get_settings
 from models.database_models import (
     Document,
     DocumentType,
     DocumentTypeField,
     TemplateDocumentMapping,
 )
-from services.intent_router import (
-    function_calling_router,
-    format_tool_result_as_answer,
-)
+from services.intent_router import format_tool_result_as_answer, function_calling_router
 from services.template_service import TemplateService
-from utils.llm_client import llm_client
+from utils.llm_client import get_llm_client
 
 # 全局变量存储graph状态，用于支持中断和恢复
 # 注意: 生产环境应使用 Redis 等分布式缓存替代内存存储
@@ -130,7 +126,7 @@ def compute_shingles(text: str, k: int = 5) -> Set[str]:
 
     shingles = set()
     for i in range(len(text) - k + 1):
-        shingles.add(text[i: i + k])
+        shingles.add(text[i : i + k])
 
     return shingles
 
@@ -198,8 +194,7 @@ def should_remove_duplicate(
     # 阶段4: 只对Jaccard在0.5-0.75之间的做精细difflib比对（避免O(n²)开销）
     if 0.5 < jac_sim <= 0.75:
         # difflib比对（较慢，只对候选执行）
-        ratio = SequenceMatcher(
-            None, doc_a["normalized"], doc_b["normalized"]).ratio()
+        ratio = SequenceMatcher(None, doc_a["normalized"], doc_b["normalized"]).ratio()
         if ratio > 0.80:  # 阈值可调
             logger.debug(
                 f"文档 {doc_a['document_id']} 和 {doc_b['document_id']} difflib={ratio:.3f}（精细比对重复）"
@@ -310,7 +305,8 @@ async def intent_routing(
         # 打印执行计划
         for step in execution_plan:
             logger.info(
-                f"   步骤 {step.get('step')}: {step.get('action')} - {step.get('description')}")
+                f"   步骤 {step.get('step')}: {step.get('action')} - {step.get('description')}"
+            )
 
         # 更新状态
         state["execution_plan"] = execution_plan
@@ -323,14 +319,11 @@ async def intent_routing(
     except Exception as e:
         logger.error(f"❌ 任务规划失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         # 默认走文档检索
         state["execution_plan"] = [
-            {
-                "step": 1,
-                "action": "document_retrieval",
-                "description": "文档检索"
-            }
+            {"step": 1, "action": "document_retrieval", "description": "文档检索"}
         ]
         state["reasoning"] = f"规划失败，降级到文档检索: {str(e)}"
         state["tool_results"] = []
@@ -376,16 +369,21 @@ async def generate_tool_answer(
         # 如果是组合查询，保存工具答案，不直接设置为最终答案
         if need_retrieval:
             state["tool_answer_partial"] = tool_answer  # 保存部分答案
-            logger.info(f"✅ 生成工具调用部分答案，等待继续检索: {tool_answer[:100]}...")
+            logger.info(
+                f"✅ 生成工具调用部分答案，等待继续检索: {tool_answer[:100]}..."
+            )
         else:
             state["answer"] = tool_answer  # 直接设置为最终答案
             logger.info(f"✅ 生成工具调用最终答案: {tool_answer[:100]}...")
     except Exception as e:
         logger.error(f"❌ 格式化工具结果失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         # 降级处理
-        fallback_answer = f"查询结果：\n{json.dumps(tool_results, ensure_ascii=False, indent=2)}"
+        fallback_answer = (
+            f"查询结果：\n{json.dumps(tool_results, ensure_ascii=False, indent=2)}"
+        )
         if need_retrieval:
             state["tool_answer_partial"] = fallback_answer
         else:
@@ -410,12 +408,14 @@ async def es_fulltext_retrieval(
     """
     logger.info("========== 节点 1: ES 全文检索 ==========")
 
-    # 从 config 获取 es_client
+    # 从 config 获取 es_client 和 es_index
     es_client: AsyncElasticsearch = config.get("configurable", {}).get(
         "es"
     )  # type: ignore
+    es_index: str = config.get("configurable", {}).get(
+        "es_index", "dochive_documents"
+    )  # type: ignore
 
-    settings = get_settings()
     query = state["query"]
     template_id = state["template_id"]
 
@@ -439,14 +439,11 @@ async def es_fulltext_retrieval(
     }
 
     try:
-        response = await es_client.search(
-            index=settings.ELASTICSEARCH_INDEX, body=es_query
-        )
+        response = await es_client.search(index=es_index, body=es_query)
 
         hits = response.get("hits", {}).get("hits", [])
         state["es_fulltext_results"] = [hit["_source"] for hit in hits]
-        state["es_document_ids"] = set(
-            hit["_source"]["document_id"] for hit in hits)
+        state["es_document_ids"] = set(hit["_source"]["document_id"] for hit in hits)
 
         logger.info(f"✅ ES 全文检索召回 {len(hits)} 篇文档")
         logger.info(f"   文档 ID: {list(state['es_document_ids'])}")
@@ -532,6 +529,7 @@ async def sql_structured_retrieval(
     """
 
     try:
+        llm_client = get_llm_client()
         llm_response = await llm_client.extract_json_response(prompt, db=db)
         logger.info(f"🤖 LLM 提取的结构化条件: {llm_response}")
 
@@ -656,8 +654,7 @@ async def merge_retrieval_results(
             # 没有交集,取并集
             logger.info(f"📌 策略: 并集 (ES {len(es_ids)} + SQL {len(sql_ids)})")
             state["fusion_strategy"] = "union"
-            merged_ids = list(es_ids) + \
-                [id for id in sql_ids if id not in es_ids]
+            merged_ids = list(es_ids) + [id for id in sql_ids if id not in es_ids]
 
     # 限制结果数量 (Top 10)
     merged_ids = merged_ids[:10]
@@ -728,8 +725,7 @@ async def refined_filtering(
         state["document_type_fields"] = []
         state["refined_conditions"] = {}
         state["final_es_query"] = None
-        state["final_results"] = _convert_docs_to_results(
-            state["merged_documents"])
+        state["final_results"] = _convert_docs_to_results(state["merged_documents"])
         return state
 
     # 1. 获取 DocumentType 和 DocumentTypeField
@@ -746,8 +742,7 @@ async def refined_filtering(
             logger.warning(f"⚠️ 未找到类别 '{category}' 的 DocumentType,跳过精细化筛选")
             state["document_type_fields"] = []
             state["refined_conditions"] = {}
-            state["final_results"] = _convert_docs_to_results(
-                state["merged_documents"])
+            state["final_results"] = _convert_docs_to_results(state["merged_documents"])
             return state
 
         document_type_fields_result = await db.execute(
@@ -755,23 +750,20 @@ async def refined_filtering(
                 DocumentTypeField.doc_type_id.in_([dt.id for dt in doc_types])
             )
         )
-        document_type_fields = list(
-            document_type_fields_result.scalars().all())
+        document_type_fields = list(document_type_fields_result.scalars().all())
         state["document_type_fields"] = document_type_fields
 
         if not document_type_fields:
             logger.info("📌 该类别无特定字段,跳过精细化筛选")
             state["refined_conditions"] = {}
-            state["final_results"] = _convert_docs_to_results(
-                state["merged_documents"])
+            state["final_results"] = _convert_docs_to_results(state["merged_documents"])
             return state
 
     except Exception as e:
         logger.error(f"❌ 获取文档类型字段失败: {e}")
         state["document_type_fields"] = []
         state["refined_conditions"] = {}
-        state["final_results"] = _convert_docs_to_results(
-            state["merged_documents"])
+        state["final_results"] = _convert_docs_to_results(state["merged_documents"])
         return state
 
     # 2. 使用 LLM 提取精细化条件
@@ -819,23 +811,20 @@ async def refined_filtering(
                 f"您的问题似乎有些宽泛。为了更精确地查找,能否提供: {missing_str}?"
             )
             logger.warning(f"⚠️ 检测到歧义,建议补充: {missing_str}")
-            state["final_results"] = _convert_docs_to_results(
-                state["merged_documents"])
+            state["final_results"] = _convert_docs_to_results(state["merged_documents"])
             return state
 
     except Exception as e:
         logger.error(f"❌ LLM 提取精细化条件失败: {e}")
         state["refined_conditions"] = {}
-        state["final_results"] = _convert_docs_to_results(
-            state["merged_documents"])
+        state["final_results"] = _convert_docs_to_results(state["merged_documents"])
         return state
 
     # 4. 构造精细化 ES 查询
     if not state["refined_conditions"]:
         logger.info("📌 无精细化条件,直接使用融合结果")
         state["final_es_query"] = None
-        state["final_results"] = _convert_docs_to_results(
-            state["merged_documents"])
+        state["final_results"] = _convert_docs_to_results(state["merged_documents"])
         return state
 
     # 只在融合后的文档中筛选
@@ -854,8 +843,7 @@ async def refined_filtering(
         elif field_type == "number":
             must_clauses.append({"term": {f"metadata.{field_name}": value}})
         elif field_type == "date":
-            must_clauses.append(
-                {"range": {f"metadata.{field_name}": {"gte": value}}})
+            must_clauses.append({"range": {f"metadata.{field_name}": {"gte": value}}})
         else:
             must_clauses.append({"term": {f"metadata.{field_name}": value}})
 
@@ -874,10 +862,11 @@ async def refined_filtering(
 
     # 5. 执行精细化 ES 查询
     try:
-        settings = get_settings()
-        response = await es_client.search(
-            index=settings.ELASTICSEARCH_INDEX, body=final_es_query
-        )
+        # 从 config 获取 es_index
+        es_index: str = config.get("configurable", {}).get(
+            "es_index", "dochive_documents"
+        )  # type: ignore
+        response = await es_client.search(index=es_index, body=final_es_query)
 
         hits = response.get("hits", {}).get("hits", [])
         state["final_results"] = [hit["_source"] for hit in hits]
@@ -887,8 +876,7 @@ async def refined_filtering(
     except Exception as e:
         logger.error(f"❌ 精细化 ES 查询失败: {e}")
         # 降级: 使用融合结果
-        state["final_results"] = _convert_docs_to_results(
-            state["merged_documents"])
+        state["final_results"] = _convert_docs_to_results(state["merged_documents"])
 
     return state
 
@@ -979,8 +967,7 @@ async def deduplicate_documents(
                 continue
 
             # 判断是否重复
-            remove_id = should_remove_duplicate(
-                doc_features[i], doc_features[j])
+            remove_id = should_remove_duplicate(doc_features[i], doc_features[j])
 
             if remove_id is not None:
                 removed_ids.add(remove_id)
@@ -1115,6 +1102,7 @@ async def generate_answer(
 
 请开始回答:
     """
+    llm_client = get_llm_client()
 
     try:
         answer = await llm_client.chat_completion(prompt, db=db)
@@ -1140,8 +1128,7 @@ def should_use_tool(state: RetrievalState) -> str:
     execution_plan = state.get("execution_plan", [])
 
     # 检查执行计划中是否包含工具调用
-    has_tool_call = any(step.get("action") ==
-                        "tool_call" for step in execution_plan)
+    has_tool_call = any(step.get("action") == "tool_call" for step in execution_plan)
 
     if has_tool_call:
         logger.info("🔧 决策: 执行计划包含工具调用 -> tool_answer")
@@ -1224,8 +1211,7 @@ workflow.add_conditional_edges(
 # 4.5 工具调用后，根据执行计划决定是否继续检索
 workflow.add_conditional_edges(
     "tool_answer",  # 源节点
-    lambda state: "continue_retrieval" if state.get(
-        "need_retrieval", False) else "end",
+    lambda state: "continue_retrieval" if state.get("need_retrieval", False) else "end",
     {
         "continue_retrieval": "es_fulltext",  # 继续文档检索
         "end": END,  # 直接结束

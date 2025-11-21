@@ -6,10 +6,6 @@ import docx
 import PyPDF2
 from PIL import Image
 
-from config import get_settings
-
-settings = get_settings()
-
 
 class DocumentParser:
     """文档解析器"""

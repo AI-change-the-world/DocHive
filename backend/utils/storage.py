@@ -3,41 +3,37 @@ from typing import BinaryIO, Optional
 import opendal
 from loguru import logger
 
+from config import DynamicConfig
+
 
 class StorageClient:
     """对象存储客户端 (OpenDAL)"""
 
-    def __init__(self):
-        self.operator: Optional[opendal.Operator] = None
+    def __init__(self, config: DynamicConfig):
+        """
+        初始化存储客户端
 
-    def _ensure_initialized(self):
-        """确保存储客户端已初始化"""
-        if self.operator is not None:
-            return
-
-        # 延迟导入配置，确保Nacos配置已加载
-        from config import get_settings
-
-        settings = get_settings()
-
-        # 根据配置类型初始化 OpenDAL Operator
-        storage_type = settings.STORAGE_TYPE
+        Args:
+            config: 动态配置实例
+        """
+        self.config = config
+        storage_type = config.STORAGE_TYPE
 
         if storage_type == "s3":
             self.operator = opendal.Operator(
                 "s3",
-                bucket=settings.STORAGE_BUCKET,
-                endpoint=settings.STORAGE_ENDPOINT,
-                region=settings.STORAGE_REGION,
-                access_key_id=settings.STORAGE_ACCESS_KEY,
-                secret_access_key=settings.STORAGE_SECRET_KEY,
-                root=settings.STORAGE_ROOT,
+                bucket=config.STORAGE_BUCKET,
+                endpoint=config.STORAGE_ENDPOINT,
+                region=config.STORAGE_REGION,
+                access_key_id=config.STORAGE_ACCESS_KEY,
+                secret_access_key=config.STORAGE_SECRET_KEY,
+                root=config.STORAGE_ROOT,
             )
         elif storage_type == "fs":
             # 本地文件系统
             self.operator = opendal.Operator(
                 "fs",
-                root=settings.STORAGE_ROOT or "./storage",
+                root=config.STORAGE_ROOT or "./storage",
             )
         elif storage_type == "memory":
             # 内存存储(仅用于测试)
@@ -64,8 +60,6 @@ class StorageClient:
         Returns:
             文件存储路径
         """
-        self._ensure_initialized()
-        assert self.operator is not None, "存储客户端初始化失败"
 
         try:
             # 读取文件内容
@@ -76,18 +70,13 @@ class StorageClient:
             # 使用 OpenDAL 写入文件
             self.operator.write(object_name, content)
 
-            # 获取bucket名称
-            from config import get_settings
-
-            settings = get_settings()
-            return f"{settings.STORAGE_BUCKET}/{object_name}"
+            # 返回存储路径
+            return f"{self.config.STORAGE_BUCKET}/{object_name}"
         except Exception as e:
             raise Exception(f"文件上传失败: {str(e)}")
 
     async def download_file(self, object_name: str) -> bytes:
         """下载文件"""
-        self._ensure_initialized()
-        assert self.operator is not None, "存储客户端初始化失败"
 
         try:
             data = self.operator.read(object_name)
@@ -99,8 +88,6 @@ class StorageClient:
 
     async def delete_file(self, object_name: str) -> bool:
         """删除文件"""
-        self._ensure_initialized()
-        assert self.operator is not None, "存储客户端初始化失败"
 
         try:
             self.operator.delete(object_name)
@@ -120,8 +107,6 @@ class StorageClient:
 
     def exists(self, object_name: str) -> bool:
         """检查文件是否存在"""
-        self._ensure_initialized()
-        assert self.operator is not None, "存储客户端初始化失败"
 
         try:
             stat = self.operator.stat(object_name)
@@ -130,5 +115,29 @@ class StorageClient:
             return False
 
 
-# 全局实例
-storage_client = StorageClient()
+# 全局实例（在 app.state 中存储）
+_storage_client: Optional[StorageClient] = None
+
+
+def init_storage_client(config: DynamicConfig) -> StorageClient:
+    """初始化存储客户端
+
+    Args:
+        config: 动态配置实例
+
+    Returns:
+        StorageClient 实例
+    """
+    global _storage_client
+    _storage_client = StorageClient(config)
+    return _storage_client
+
+
+def get_storage_client() -> StorageClient:
+    """获取存储客户端
+
+    注意：应该在 lifespan 中调用 init_storage_client 初始化
+    """
+    if _storage_client is None:
+        raise RuntimeError("存储客户端未初始化，请先调用 init_storage_client()")
+    return _storage_client

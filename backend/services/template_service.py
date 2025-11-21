@@ -13,7 +13,7 @@ from schemas.api_schemas import (
     DocumentTypeCreate,
     TemplateSelection,
 )
-from utils.llm_client import llm_client
+from utils.llm_client import get_llm_client
 
 
 class TemplateService:
@@ -233,6 +233,7 @@ class TemplateService:
     }
   ]
 }"""
+        llm_client = get_llm_client()
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -286,6 +287,7 @@ class TemplateService:
         db: AsyncSession, template: ClassTemplate, levels_data: List[Dict[str, Any]]
     ) -> None:
         """使用大模型生成层级值域选项"""
+        llm_client = get_llm_client()
         # 过滤掉 is_doc_type 的层级
         normal_levels = [
             level for level in levels_data if not level.get("is_doc_type", False)

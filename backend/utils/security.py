@@ -4,10 +4,11 @@ from typing import Optional
 from cryptography.fernet import Fernet
 from jose import JWTError, jwt
 
-from config import get_settings
+from config import DynamicConfig, LocalSettings
 
-settings = get_settings()
-key = settings.SECRET_KEY
+# 静态配置(加密密钥不应动态变更)
+local_settings = LocalSettings()
+key = local_settings.SECRET_KEY
 f = Fernet(key)
 
 
@@ -21,51 +22,69 @@ def get_password_hash(password: str) -> str:
     return f.encrypt(password.encode()).decode()
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """创建访问令牌"""
+def create_access_token(
+    data: dict, config: DynamicConfig, expires_delta: Optional[timedelta] = None
+) -> str:
+    """创建访问令牌
+
+    Args:
+        data: 要编码的数据
+        config: 动态配置实例
+        expires_delta: 过期时间
+    """
     to_encode = data.copy()
 
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(
-            minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+            minutes=config.JWT_ACCESS_TOKEN_EXPIRE_MINUTES
         )
 
     to_encode.update({"exp": expire, "type": "access"})
 
     encoded_jwt = jwt.encode(
         to_encode,
-        settings.JWT_SECRET_KEY,
-        algorithm=settings.JWT_ALGORITHM,
+        config.JWT_SECRET_KEY,
+        algorithm=config.JWT_ALGORITHM,
     )
 
     return encoded_jwt
 
 
-def create_refresh_token(data: dict) -> str:
-    """创建刷新令牌"""
+def create_refresh_token(data: dict, config: DynamicConfig) -> str:
+    """创建刷新令牌
+
+    Args:
+        data: 要编码的数据
+        config: 动态配置实例
+    """
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
+    expire = datetime.utcnow() + timedelta(days=config.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
 
     to_encode.update({"exp": expire, "type": "refresh"})
 
     encoded_jwt = jwt.encode(
         to_encode,
-        settings.JWT_SECRET_KEY,
-        algorithm=settings.JWT_ALGORITHM,
+        config.JWT_SECRET_KEY,
+        algorithm=config.JWT_ALGORITHM,
     )
 
     return encoded_jwt
 
 
-def decode_token(token: str) -> Optional[dict]:
-    """解码令牌"""
+def decode_token(token: str, config: DynamicConfig) -> Optional[dict]:
+    """解码令牌
+
+    Args:
+        token: JWT令牌
+        config: 动态配置实例
+    """
     try:
         payload = jwt.decode(
             token,
-            settings.JWT_SECRET_KEY,
-            algorithms=[settings.JWT_ALGORITHM],
+            config.JWT_SECRET_KEY,
+            algorithms=[config.JWT_ALGORITHM],
         )
         return payload
     except JWTError:

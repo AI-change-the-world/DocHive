@@ -9,23 +9,22 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import declarative_base
 
-from config import get_settings
+from config import DynamicConfig
 
-settings = get_settings()
-
-# 全局数据库引擎和会话工厂（延迟初始化）
+# 全局数据库引擎和会话工厂(延迟初始化)
 engine: Optional[AsyncEngine] = None
 AsyncSessionLocal = None
+_config: Optional[DynamicConfig] = None  # 存储配置引用
 
 # 基础模型类
 Base = declarative_base()
 
 
 # 处理 SQLite 数据库 URL
-def get_database_url():
-    url = settings.DATABASE_URL
+def get_database_url(url: str) -> str:
+    """URL转换:处理SQLite URL"""
     logger.debug(f"Using database URL: {url}")
-    # 如果是 SQLite，使用 aiosqlite
+    # 如果是 SQLite,使用 aiosqlite
     if url.startswith("sqlite"):
         if url.startswith("sqlite:///"):
             url = url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
@@ -34,24 +33,31 @@ def get_database_url():
     return url
 
 
-def init_engine():
-    """初始化数据库引擎（在Nacos配置加载后调用）"""
-    global engine, AsyncSessionLocal
+def init_engine(config: DynamicConfig):
+    """初始化数据库引擎
+
+    Args:
+        config: 动态配置实例
+    """
+    global engine, AsyncSessionLocal, _config
 
     if engine is not None:
         return  # 已经初始化
 
+    _config = config
+    database_url = config.DATABASE_URL
+
     # 创建异步引擎
     engine_kwargs: dict = {
-        "echo": settings.DEBUG,
+        "echo": config.DEBUG,
     }
 
     # SQLite 不需要连接池配置
-    if not settings.DATABASE_URL.startswith("sqlite"):
-        engine_kwargs["pool_size"] = settings.DATABASE_POOL_SIZE
-        engine_kwargs["max_overflow"] = settings.DATABASE_MAX_OVERFLOW
+    if not database_url.startswith("sqlite"):
+        engine_kwargs["pool_size"] = config.DATABASE_POOL_SIZE
+        engine_kwargs["max_overflow"] = config.DATABASE_MAX_OVERFLOW
 
-    engine = create_async_engine(get_database_url(), **engine_kwargs)
+    engine = create_async_engine(get_database_url(database_url), **engine_kwargs)
 
     # 创建异步会话工厂
     AsyncSessionLocal = async_sessionmaker(
@@ -82,10 +88,14 @@ async def get_db():
             await session.close()
 
 
-async def init_db():
-    """初始化数据库表"""
+async def init_db(config: DynamicConfig):
+    """初始化数据库表
+
+    Args:
+        config: 动态配置实例
+    """
     # 先初始化引擎
-    init_engine()
+    init_engine(config)
 
     if engine is None:
         raise RuntimeError("数据库引擎初始化失败")

@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from sse_starlette import EventSourceResponse
 
-from api.deps import get_current_user
-from config import get_settings
+from api.deps import get_config, get_current_user, get_llm, get_storage
+from config import DynamicConfig
 from database import get_db
 from models.database_models import TemplateDocumentMapping, User
 from schemas.api_schemas import (
@@ -21,9 +21,10 @@ from schemas.api_schemas import (
 )
 from services.document_service import DocumentService
 from services.search_service import SearchService
+from utils.llm_client import LLMClient
+from utils.storage import StorageClient
 
 router = APIRouter(prefix="/documents", tags=["文档上传与管理"])
-settings = get_settings()
 
 
 @router.get("/statistics", response_model=ResponseBase)
@@ -59,6 +60,8 @@ async def upload_document(
     template_id: Optional[int] = Form(None, description="分类模板ID"),
     metadata: Optional[str] = Form(None, description="元数据（JSON格式）"),
     db: AsyncSession = Depends(get_db),
+    llm: LLMClient = Depends(get_llm),
+    config: DynamicConfig = Depends(get_config),
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -81,10 +84,10 @@ async def upload_document(
         if file.filename and "." in file.filename
         else ""
     )
-    if file_extension not in settings.allowed_extensions_list:
+    if file_extension not in config.allowed_extensions_list:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"不支持的文件格式，允许的格式: {', '.join(settings.allowed_extensions_list)}",
+            detail=f"不支持的文件格式，允许的格式: {', '.join(config.allowed_extensions_list)}",
         )
 
     # 验证文件大小
@@ -92,10 +95,10 @@ async def upload_document(
     file_size = file.file.tell()
     file.file.seek(0)
 
-    if file_size > settings.MAX_UPLOAD_SIZE:
+    if file_size > config.MAX_UPLOAD_SIZE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"文件大小超过限制（最大 {settings.MAX_UPLOAD_SIZE / 1024 / 1024}MB）",
+            detail=f"文件大小超过限制（最大 {config.MAX_UPLOAD_SIZE / 1024 / 1024}MB）",
         )
 
     # 解析元数据
@@ -120,6 +123,7 @@ async def upload_document(
     return EventSourceResponse(
         DocumentService.upload_file_stream(
             db,
+            llm,
             file.file,
             file.filename or "Untitled",
             document_data,
@@ -264,10 +268,11 @@ async def update_document(
 async def delete_document(
     document_id: int,
     db: AsyncSession = Depends(get_db),
+    storage: StorageClient = Depends(get_storage),
     current_user: User = Depends(get_current_user),
 ):
     """删除文档"""
-    success = await DocumentService.delete_document(db, document_id)
+    success = await DocumentService.delete_document(db, storage, document_id)
 
     if not success:
         raise HTTPException(
@@ -282,10 +287,11 @@ async def delete_document(
 async def get_download_url(
     document_id: int,
     db: AsyncSession = Depends(get_db),
+    storage: StorageClient = Depends(get_storage),
     current_user: User = Depends(get_current_user),
 ):
     """获取文档下载链接"""
-    url = await DocumentService.get_download_url(db, document_id)
+    url = await DocumentService.get_download_url(db, storage, document_id)
 
     if not url:
         raise HTTPException(
@@ -365,6 +371,8 @@ async def create_document_manually(
     class_code: str = Form(..., description="分类编码"),
     title: Optional[str] = Form(None, description="文档标题（可选，不填则自动提取）"),
     db: AsyncSession = Depends(get_db),
+    llm: LLMClient = Depends(get_llm),
+    config: DynamicConfig = Depends(get_config),
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -382,10 +390,10 @@ async def create_document_manually(
         if file.filename and "." in file.filename
         else ""
     )
-    if file_extension not in settings.allowed_extensions_list:
+    if file_extension not in config.allowed_extensions_list:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"不支持的文件格式，允许的格式: {', '.join(settings.allowed_extensions_list)}",
+            detail=f"不支持的文件格式，允许的格式: {', '.join(config.allowed_extensions_list)}",
         )
 
     # 验证文件大小
@@ -393,16 +401,17 @@ async def create_document_manually(
     file_size = file.file.tell()
     file.file.seek(0)
 
-    if file_size > settings.MAX_UPLOAD_SIZE:
+    if file_size > config.MAX_UPLOAD_SIZE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"文件大小超过限制（最大 {settings.MAX_UPLOAD_SIZE / 1024 / 1024}MB）",
+            detail=f"文件大小超过限制（最大 {config.MAX_UPLOAD_SIZE / 1024 / 1024}MB）",
         )
 
     # 使用流式创建
     return EventSourceResponse(
         DocumentService.create_document_manually(
             db,
+            llm,
             file.file,
             file.filename or "Untitled",
             title,

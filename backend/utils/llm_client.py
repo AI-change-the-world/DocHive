@@ -7,43 +7,39 @@ from loguru import logger
 from openai import OpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import DynamicConfig
+
 
 class LLMClient:
     """大语言模型客户端（同步版）"""
 
-    def __init__(self):
-        self.client: Optional[OpenAI] = None
-        self.provider: Optional[str] = None
-        self.default_model: Optional[str] = None
+    def __init__(self, config: DynamicConfig):
+        """
+        初始化LLM客户端
 
-    def _ensure_initialized(self):
-        """确保LLM客户端已初始化"""
-        if self.client is not None:
-            return
-
-        # 延迟导入配置，确保Nacos配置已加载
-        from config import get_settings
-
-        settings = get_settings()
-
-        self.provider = settings.LLM_PROVIDER
-        self.default_model = settings.DEFAULT_MODEL
+        Args:
+            config: 动态配置实例
+        """
+        self.provider = config.LLM_PROVIDER
+        self.default_model = config.DEFAULT_MODEL
 
         # 自动根据 provider 初始化兼容 openai 的客户端
         if self.provider == "openai":
             self.client = OpenAI(
-                api_key=settings.OPENAI_API_KEY,
-                base_url=settings.OPENAI_BASE_URL.rstrip("/"),
+                api_key=config.OPENAI_API_KEY,
+                base_url=config.OPENAI_BASE_URL.rstrip("/"),
             )
         elif self.provider == "deepseek":
             self.client = OpenAI(
-                api_key=settings.DEEPSEEK_API_KEY,
-                base_url=settings.DEEPSEEK_BASE_URL.rstrip("/"),
+                api_key=config.DEEPSEEK_API_KEY,
+                base_url=config.DEEPSEEK_BASE_URL.rstrip("/"),
             )
         else:
             raise ValueError(f"不支持的 LLM 提供商: {self.provider}")
 
-        logger.info(f"✅ LLM客户端初始化完成: {self.provider}")
+        logger.info(
+            f"✅ LLM客户端初始化完成: {self.provider}, model={self.default_model}"
+        )
 
     async def _log_llm_call(
         self,
@@ -108,9 +104,6 @@ class LLMClient:
             db: 数据库会话（用于记录日志）
             user_id: 调用用户ID
         """
-        self._ensure_initialized()
-        assert self.client is not None, "LLM客户端初始化失败"
-        assert self.default_model is not None, "LLM默认模型未配置"
 
         model = model or self.default_model
         if isinstance(messages, str):
@@ -219,5 +212,29 @@ class LLMClient:
             raise Exception(f"JSON 解析失败: {str(e)}, 响应内容: {response}")
 
 
-# 全局实例
-llm_client = LLMClient()
+# 全局实例（在 app.state 中存储）
+_llm_client: Optional[LLMClient] = None
+
+
+def init_llm_client(config: DynamicConfig) -> LLMClient:
+    """初始化LLM客户端
+
+    Args:
+        config: 动态配置实例
+
+    Returns:
+        LLMClient 实例
+    """
+    global _llm_client
+    _llm_client = LLMClient(config)
+    return _llm_client
+
+
+def get_llm_client() -> LLMClient:
+    """获取LLM客户端
+
+    注意：应该在 lifespan 中调用 init_llm_client 初始化
+    """
+    if _llm_client is None:
+        raise RuntimeError("LLM客户端未初始化，请先调用 init_llm_client()")
+    return _llm_client

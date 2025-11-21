@@ -1,6 +1,5 @@
 import asyncio
 import os
-from functools import lru_cache
 from typing import Any, List, Optional
 
 import yaml
@@ -9,48 +8,40 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from v2.nacos import ClientConfigBuilder, ConfigParam, GRPCConfig, NacosConfigService
 
 
-class _LocalSettings(BaseSettings):
-    """本地配置类 - 从.env读取配置"""
+class LocalSettings(BaseSettings):
+    """静态配置类 - 从.env读取,应用启动前就确定的配置"""
 
+    # 应用基础信息
     APP_NAME: str = "DocHive"
-    NACOS_HOST: str = "localhost"
-    NACOS_PORT: int = 8848
-    NACOS_NAMESPACE: str = ""
-    NACOS_GROUP: str = "DEFAULT_GROUP"
-    NACOS_DATA_ID: str = "dochive-config.yaml"
     DOC_HIVE_PORT: int = 8000
     SECRET_KEY: str = "secret_key"
+
+    # Nacos连接配置
+    NACOS_HOST: str = "localhost"
+    NACOS_PORT: int = 8848
+    NACOS_NAMESPACE: str = "public"
+    NACOS_GROUP: str = "DEFAULT_GROUP"
+    NACOS_DATA_ID: str = "dochive-config.yaml"
+    ENABLE_NACOS: bool = True  # 是否启用Nacos配置中心
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
-class Settings:
-    """应用配置类 - 从Nacos动态获取配置"""
+class DynamicConfig:
+    """动态配置类 - 从Nacos获取的运行时配置"""
 
-    def __init__(self):
-
-        self._local_settings = _LocalSettings()
-
-        self.NACOS_HOST = os.getenv("NACOS_HOST", self._local_settings.NACOS_HOST)
-        self.NACOS_PORT = int(os.getenv("NACOS_PORT", self._local_settings.NACOS_PORT))
-        self.NACOS_NAMESPACE = os.getenv("NACOS_NAMESPACE", "public")
-        self.NACOS_GROUP = os.getenv("NACOS_GROUP", self._local_settings.NACOS_GROUP)
-        self.NACOS_DATA_ID = os.getenv(
-            "NACOS_DATA_ID", self._local_settings.NACOS_DATA_ID
-        )
-
-        # 配置数据缓存
+    def __init__(self, local_settings: LocalSettings):
+        self._local_settings = local_settings
         self._config_data: dict[str, Any] = {}
-        # Nacos配置服务实例（在init_nacos_config中设置）
         self.nacos_config_service: Optional[NacosConfigService] = None
 
-    def load_from_yaml(self, yaml_content: str):
+    def load_from_yaml(self, yaml_content: str) -> None:
         """从YAML内容加载配置"""
         try:
             new_config = yaml.safe_load(yaml_content)
             if isinstance(new_config, dict):
                 self._config_data = new_config
-                logger.info("✅ 配置已更新")
+                logger.info("✅ 动态配置已更新")
         except Exception as e:
             logger.error(f"❌ 解析YAML配置失败: {e}")
 
@@ -80,11 +71,16 @@ class Settings:
         except (KeyError, TypeError):
             return default
 
-    # 应用基础配置
+    # 静态配置访问(直接从LocalSettings获取)
     @property
     def APP_NAME(self) -> str:
-        return self._get_config("app.name", "DocHive")
+        return self._local_settings.APP_NAME
 
+    @property
+    def SECRET_KEY(self) -> str:
+        return self._local_settings.SECRET_KEY
+
+    # 动态配置访问(从Nacos获取)
     @property
     def APP_VERSION(self) -> str:
         return self._get_config("app.version", "1.0.0")
@@ -92,10 +88,6 @@ class Settings:
     @property
     def DEBUG(self) -> bool:
         return self._get_config("app.debug", True)
-
-    @property
-    def SECRET_KEY(self) -> str:
-        return self._local_settings.SECRET_KEY
 
     # 数据库配置
     @property
@@ -265,78 +257,89 @@ class Settings:
         return [ext.strip() for ext in self.ALLOWED_EXTENSIONS.split(",")]
 
 
-# 全局配置实例
-_settings: Settings | None = None
+# ==================== 配置初始化函数 ====================
 
 
-def get_settings() -> Settings:
-    """获取配置单例"""
-    global _settings
-    if _settings is None:
-        _settings = Settings()
-    return _settings
+async def create_dynamic_config() -> DynamicConfig:
+    """创建并初始化动态配置
+
+    在应用启动时调用,从Nacos加载配置
+    """
+    # 1. 加载静态配置
+    local_settings = LocalSettings()
+
+    # 2. 创建动态配置实例
+    config = DynamicConfig(local_settings)
+
+    # 3. 如果启用Nacos,则从Nacos加载配置
+    if local_settings.ENABLE_NACOS:
+        try:
+            await _init_nacos_config(config, local_settings)
+        except Exception as e:
+            logger.warning(f"⚠️ Nacos配置初始化失败,将使用默认配置: {e}")
+    else:
+        logger.info("ℹ️ Nacos配置中心已禁用,使用默认配置")
+
+    return config
 
 
-# Nacos配置初始化和监听
-async def init_nacos_config():
-    """初始化Nacos配置（v2异步版）"""
-    settings = get_settings()
-
+async def _init_nacos_config(
+    config: DynamicConfig, local_settings: LocalSettings
+) -> None:
+    """初始化Nacos配置(内部函数)"""
     logger.debug(
-        f"HOST {settings.NACOS_HOST}, PORT {settings.NACOS_PORT}, NAMESPACE {settings.NACOS_NAMESPACE}, GROUP {settings.NACOS_GROUP}, DATA_ID {settings.NACOS_DATA_ID}"
+        f"[Nacos] 连接配置: {local_settings.NACOS_HOST}:{local_settings.NACOS_PORT}, "
+        f"namespace={local_settings.NACOS_NAMESPACE}, group={local_settings.NACOS_GROUP}"
     )
 
     # 构建客户端配置
     client_config = (
         ClientConfigBuilder()
-        .server_address(f"{settings.NACOS_HOST}:{settings.NACOS_PORT}")
+        .server_address(f"{local_settings.NACOS_HOST}:{local_settings.NACOS_PORT}")
         .log_level("INFO")
         .grpc_config(GRPCConfig(grpc_timeout=5000))
         .build()
     )
 
-    # 创建Nacos配置服务并赋值给全局settings
-    settings.nacos_config_service = await NacosConfigService.create_config_service(
+    # 创建Nacos配置服务
+    config.nacos_config_service = await NacosConfigService.create_config_service(
         client_config
     )
     logger.info("✅ Nacos配置服务初始化成功")
 
     # 加载初始配置
     config_param = ConfigParam(
-        data_id=settings.NACOS_DATA_ID, group=settings.NACOS_GROUP
+        data_id=local_settings.NACOS_DATA_ID, group=local_settings.NACOS_GROUP
     )
-    yaml_str = await settings.nacos_config_service.get_config(config_param)
-
-    logger.debug(f"[Nacos] 🚀 Loading config from Nacos: {yaml_str}")
+    yaml_str = await config.nacos_config_service.get_config(config_param)
 
     if yaml_str:
-        settings.load_from_yaml(yaml_str)
-        logger.info(
-            f"[Nacos] ✅ Loaded config: dataId={settings.NACOS_DATA_ID}, group={settings.NACOS_GROUP}"
-        )
+        config.load_from_yaml(yaml_str)
+        logger.info(f"[Nacos] ✅ 配置加载成功: dataId={local_settings.NACOS_DATA_ID}")
 
-    # 启动监听协程（热更新）
-    asyncio.create_task(start_watch_config(settings))
+    # 启动监听协程(热更新)
+    asyncio.create_task(_watch_nacos_config(config, local_settings))
 
 
-async def start_watch_config(settings: Settings):
-    """持续监听配置变化"""
+async def _watch_nacos_config(
+    config: DynamicConfig, local_settings: LocalSettings
+) -> None:
+    """持续监听Nacos配置变化"""
 
     async def on_change(tenant, data_id, group, content):
-        logger.info("🔥 [Nacos] Config changed, reloading...")
-        settings.load_from_yaml(content)
+        logger.info("🔥 [Nacos] 配置变更,重新加载...")
+        config.load_from_yaml(content)
 
-    if settings.nacos_config_service:
-        await settings.nacos_config_service.add_listener(
-            data_id=settings.NACOS_DATA_ID,
-            group=settings.NACOS_GROUP,
+    if config.nacos_config_service:
+        await config.nacos_config_service.add_listener(
+            data_id=local_settings.NACOS_DATA_ID,
+            group=local_settings.NACOS_GROUP,
             listener=on_change,
         )
 
 
-async def close_nacos_config():
-    """关闭Nacos配置服务"""
-    settings = get_settings()
-    if settings.nacos_config_service:
-        await settings.nacos_config_service.shutdown()
+async def close_dynamic_config(config: DynamicConfig) -> None:
+    """关闭动态配置,释放资源"""
+    if config.nacos_config_service:
+        await config.nacos_config_service.shutdown()
         logger.info("✅ Nacos配置服务已关闭")

@@ -10,44 +10,31 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import DynamicConfig
 from models.database_models import TemplateDocumentMapping
 
 
 class SearchEngine:
     """Elasticsearch 搜索引擎"""
 
-    def __init__(self):
-        self.client: Optional[AsyncElasticsearch] = None
-        self.index_name: Optional[str] = None
+    def __init__(self, config: DynamicConfig):
+        """
+        初始化搜索引擎
 
-    def _ensure_initialized(self):
-        """确保搜索引擎已初始化"""
-        if self.client is not None:
-            return
-
-        from config import get_settings
-
-        settings = get_settings()
-        self.client = AsyncElasticsearch(
-            [settings.ELASTICSEARCH_URL], verify_certs=False
-        )
-        self.index_name = settings.ELASTICSEARCH_INDEX
-
-        logger.info(f"✅ Elasticsearch 搜索引擎初始化完成")
+        Args:
+            config: 动态配置实例
+        """
+        self.client = AsyncElasticsearch([config.ELASTICSEARCH_URL], verify_certs=False)
+        self.index_name = config.ELASTICSEARCH_INDEX
+        logger.info(f"✅ Elasticsearch 搜索引擎初始化完成: {config.ELASTICSEARCH_URL}")
 
     async def ensure_index(self):
         """确保索引存在"""
-        self._ensure_initialized()
-        assert self.client is not None, "Elasticsearch 客户端初始化失败"
-        assert self.index_name is not None, "Elasticsearch 索引名称未配置"
-
         if not await self.client.indices.exists(index=self.index_name):
             await self.create_index()
 
     async def create_index(self):
         """创建索引"""
-        assert self.client is not None, "Elasticsearch 客户端初始化失败"
-        assert self.index_name is not None, "Elasticsearch 索引名称未配置"
 
         index_mapping = {
             "mappings": {
@@ -75,9 +62,6 @@ class SearchEngine:
 
     async def index_document(self, document_data: Dict[str, Any]) -> bool:
         """索引文档"""
-        self._ensure_initialized()
-        assert self.client is not None, "Elasticsearch 客户端初始化失败"
-        assert self.index_name is not None, "Elasticsearch 索引名称未配置"
 
         try:
             await self.client.index(
@@ -101,9 +85,6 @@ class SearchEngine:
         page_size: int = 20,
     ) -> Dict[str, Any]:
         """搜索文档"""
-        self._ensure_initialized()
-        assert self.client is not None, "Elasticsearch 客户端初始化失败"
-        assert self.index_name is not None, "Elasticsearch 索引名称未配置"
 
         query = {"bool": {"must": [], "filter": []}}
 
@@ -171,9 +152,6 @@ class SearchEngine:
 
     async def delete_document(self, document_id: int) -> bool:
         """删除文档索引"""
-        self._ensure_initialized()
-        assert self.client is not None, "Elasticsearch 客户端初始化失败"
-        assert self.index_name is not None, "Elasticsearch 索引名称未配置"
 
         try:
             await self.client.delete(index=self.index_name, id=str(document_id))
@@ -185,6 +163,7 @@ class SearchEngine:
         """关闭连接"""
         if self.client is not None:
             await self.client.close()
+            logger.info("✅ Elasticsearch 连接已关闭")
 
     async def _get_document_mapping_info(
         self, db: AsyncSession, document_id: int
@@ -198,13 +177,29 @@ class SearchEngine:
         return result.scalar_one_or_none()
 
 
-# 全局实例（延迟初始化）
+# 全局实例（在 app.state 中存储）
 _search_client: Optional[SearchEngine] = None
 
 
-def get_search_client() -> SearchEngine:
-    """获取搜索引擎客户端（懒加载）"""
+def init_search_client(config: DynamicConfig) -> SearchEngine:
+    """初始化搜索引擎客户端
+
+    Args:
+        config: 动态配置实例
+
+    Returns:
+        SearchEngine 实例
+    """
     global _search_client
+    _search_client = SearchEngine(config)
+    return _search_client
+
+
+def get_search_client() -> SearchEngine:
+    """获取搜索引擎客户端
+
+    注意：应该在 lifespan 中调用 init_search_client 初始化
+    """
     if _search_client is None:
-        _search_client = SearchEngine()
+        raise RuntimeError("搜索引擎未初始化，请先调用 init_search_client()")
     return _search_client

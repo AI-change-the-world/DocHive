@@ -4,6 +4,7 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import DynamicConfig
 from models.database_models import User, UserRole
 from schemas.api_schemas import UserCreate
 from utils.security import (
@@ -70,15 +71,20 @@ class AuthService:
         return user
 
     @staticmethod
-    def generate_tokens(user: User) -> dict:
-        """生成访问令牌和刷新令牌"""
+    def generate_tokens(user: User, config: DynamicConfig) -> dict:
+        """生成访问令牌和刷新令牌
+
+        Args:
+            user: 用户实例
+            config: 动态配置实例
+        """
         token_data = {
             "user_id": user.id,
             "username": user.username,
         }
 
-        access_token = create_access_token(token_data)
-        refresh_token = create_refresh_token(token_data)
+        access_token = create_access_token(token_data, config)
+        refresh_token = create_refresh_token(token_data, config)
 
         return {
             "access_token": access_token,

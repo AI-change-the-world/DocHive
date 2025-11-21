@@ -6,21 +6,23 @@ from typing import Any, Dict, Optional
 
 from elasticsearch import AsyncElasticsearch
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette import EventSourceResponse
 
-from api.deps import get_current_user
-from config import get_settings
+from api.deps import get_config, get_current_user, get_llm, get_search_engine
+from config import DynamicConfig
 from database import get_db
 from models.database_models import User
 from schemas.api_schemas import QARequest, QAResponse, ResponseBase, SSEEvent
 from services.qa_service import QAService
-from loguru import logger
 
 # 导入search_agent相关模块
 from services.search_agent import RetrievalState
 from services.search_agent import app as search_agent_app
 from services.search_agent import graph_state_storage
+from utils.llm_client import LLMClient
+from utils.search_engine import SearchEngine
 
 router = APIRouter(prefix="/qa", tags=["智能问答"])
 
@@ -29,6 +31,8 @@ router = APIRouter(prefix="/qa", tags=["智能问答"])
 async def ask_question_stream(
     qa_request: QARequest,
     db: AsyncSession = Depends(get_db),
+    llm: LLMClient = Depends(get_llm),
+    search_engine: SearchEngine = Depends(get_search_engine),
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -51,6 +55,8 @@ async def ask_question_stream(
         try:
             async for event in QAService.answer_question_stream(
                 db,
+                llm,
+                search_engine,
                 question=qa_request.question,
                 template_id=qa_request.template_id,
                 top_k=qa_request.top_k,
@@ -81,6 +87,8 @@ async def ask_question_stream(
 async def ask_question(
     qa_request: QARequest,
     db: AsyncSession = Depends(get_db),
+    llm: LLMClient = Depends(get_llm),
+    search_engine: SearchEngine = Depends(get_search_engine),
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -95,6 +103,8 @@ async def ask_question(
     try:
         result = await QAService.answer_question(
             db,
+            llm,
+            search_engine,
             question=qa_request.question,
             template_id=qa_request.template_id,
             top_k=qa_request.top_k,
@@ -117,6 +127,7 @@ async def ask_question_agent_stream(
     request: Request,
     qa_request: QARequest,
     db: AsyncSession = Depends(get_db),
+    config: DynamicConfig = Depends(get_config),
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -150,11 +161,10 @@ async def ask_question_agent_stream(
         try:
             # 生成会话ID
             session_id = str(uuid.uuid4())
-            settings = get_settings()
 
             # 初始化Elasticsearch客户端
             es_client = AsyncElasticsearch(
-                [settings.ELASTICSEARCH_URL], verify_certs=False
+                [config.ELASTICSEARCH_URL], verify_certs=False
             )
             # 构造初始状态 (优化后的状态机)
             initial_state: RetrievalState = {
@@ -212,10 +222,15 @@ async def ask_question_agent_stream(
             state_data = None  # 初始化，用于保存最终状态
             async for step_result in search_agent_app.astream(
                 initial_state,
-                config={"configurable": {"db": db, "es": es_client}},
+                config={
+                    "configurable": {
+                        "db": db,
+                        "es": es_client,
+                        "es_index": config.ELASTICSEARCH_INDEX,
+                    }
+                },
             ):
-                logger.info(
-                    f"[LangGraph step_result.keys()] {step_result.keys()}")
+                logger.info(f"[LangGraph step_result.keys()] {step_result.keys()}")
                 # 获取节点名称和状态数据
                 node_name = list(step_result.keys())[0]
                 state_data = step_result[node_name]
@@ -237,11 +252,9 @@ async def ask_question_agent_stream(
                     frontend_plan = []
 
                     # 总是先添加任务规划步骤
-                    frontend_plan.append({
-                        "stage": "intent_routing",
-                        "name": "任务规划",
-                        "icon": "🧠"
-                    })
+                    frontend_plan.append(
+                        {"stage": "intent_routing", "name": "任务规划", "icon": "🧠"}
+                    )
 
                     # 遍历 LLM 的执行计划，转换为前端步骤
                     for step in llm_execution_plan:
@@ -250,37 +263,56 @@ async def ask_question_agent_stream(
 
                         if action == "tool_call":
                             # 工具调用步骤（合并所有工具调用为一个步骤）
-                            if not any(s["stage"] == "tool_answer" for s in frontend_plan):
-                                frontend_plan.append({
-                                    "stage": "tool_answer",
-                                    "name": "工具执行",
-                                    "icon": "🔧"
-                                })
+                            if not any(
+                                s["stage"] == "tool_answer" for s in frontend_plan
+                            ):
+                                frontend_plan.append(
+                                    {
+                                        "stage": "tool_answer",
+                                        "name": "工具执行",
+                                        "icon": "🔧",
+                                    }
+                                )
                         elif action == "document_retrieval":
                             # 文档检索步骤（包含完整的检索流程）
-                            frontend_plan.extend([
-                                {"stage": "es_fulltext",
-                                    "name": "ES全文检索", "icon": "🔍"},
-                                {"stage": "sql_structured",
-                                    "name": "SQL结构化检索", "icon": "📊"},
-                                {"stage": "merge_results",
-                                    "name": "结果融合", "icon": "🔀"},
-                                {"stage": "refined_filter",
-                                    "name": "精细化筛选", "icon": "✨"},
-                            ])
+                            frontend_plan.extend(
+                                [
+                                    {
+                                        "stage": "es_fulltext",
+                                        "name": "ES全文检索",
+                                        "icon": "🔍",
+                                    },
+                                    {
+                                        "stage": "sql_structured",
+                                        "name": "SQL结构化检索",
+                                        "icon": "📊",
+                                    },
+                                    {
+                                        "stage": "merge_results",
+                                        "name": "结果融合",
+                                        "icon": "🔀",
+                                    },
+                                    {
+                                        "stage": "refined_filter",
+                                        "name": "精细化筛选",
+                                        "icon": "✨",
+                                    },
+                                ]
+                            )
 
                     # 总是最后添加答案生成步骤
-                    frontend_plan.append({
-                        "stage": "generate_answer",
-                        "name": "生成答案",
-                        "icon": "📝"
-                    })
+                    frontend_plan.append(
+                        {"stage": "generate_answer", "name": "生成答案", "icon": "📝"}
+                    )
 
                     # 判断模式
-                    has_tool = any(step.get("action") ==
-                                   "tool_call" for step in llm_execution_plan)
+                    has_tool = any(
+                        step.get("action") == "tool_call" for step in llm_execution_plan
+                    )
                     has_retrieval = any(
-                        step.get("action") == "document_retrieval" for step in llm_execution_plan)
+                        step.get("action") == "document_retrieval"
+                        for step in llm_execution_plan
+                    )
 
                     if has_tool and has_retrieval:
                         mode = "combined_query"
@@ -310,9 +342,11 @@ async def ask_question_agent_stream(
                     execution_plan = state_data.get("execution_plan", [])
                     reasoning = state_data.get("reasoning", "")
                     tool_count = len(
-                        [s for s in execution_plan if s.get("action") == "tool_call"])
+                        [s for s in execution_plan if s.get("action") == "tool_call"]
+                    )
                     has_retrieval = any(
-                        s.get("action") == "document_retrieval" for s in execution_plan)
+                        s.get("action") == "document_retrieval" for s in execution_plan
+                    )
 
                     yield SSEEvent(
                         event="stage_complete",
@@ -402,8 +436,7 @@ async def ask_question_agent_stream(
                     ).model_dump_json()
 
                     # 再发送stage_complete事件
-                    sql_doc_ids = list(state_data.get(
-                        "sql_document_ids", set()))
+                    sql_doc_ids = list(state_data.get("sql_document_ids", set()))
                     yield SSEEvent(
                         event="stage_complete",
                         data={
@@ -586,6 +619,7 @@ async def clarify_question_agent(
     clarification: str,
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    config: DynamicConfig = Depends(get_config),
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -632,12 +666,9 @@ async def clarify_question_agent(
             # 清除歧义消息
             stored_state["ambiguity_message"] = None
 
-            # 获取配置
-            settings = get_settings()
-
             # 初始化Elasticsearch客户端
             es_client = AsyncElasticsearch(
-                [settings.ELASTICSEARCH_URL], verify_certs=False
+                [config.ELASTICSEARCH_URL], verify_certs=False
             )
             stored_state["es_client"] = es_client
 
@@ -652,9 +683,18 @@ async def clarify_question_agent(
                 done=False,
             ).model_dump_json()
 
-            # 继续运行智能体图
+            # 继续运行LangGraph智能体图
             # type: ignore
-            final_state = await search_agent_app.ainvoke(dict(stored_state))
+            final_state = await search_agent_app.ainvoke(
+                dict(stored_state),
+                config={
+                    "configurable": {
+                        "db": db,
+                        "es": es_client,
+                        "es_index": config.ELASTICSEARCH_INDEX,
+                    }
+                },
+            )
 
             # 发送检索到的文档引用
             final_results = final_state.get("final_results", [])

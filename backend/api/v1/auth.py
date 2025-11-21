@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from api.deps import get_current_user
+from api.deps import get_config, get_current_user
+from config import DynamicConfig
 from database import get_db
 from models.database_models import User
 from schemas.api_schemas import (
@@ -55,6 +56,7 @@ async def register(
 async def login(
     login_data: LoginRequest,
     db: AsyncSession = Depends(get_db),
+    config: DynamicConfig = Depends(get_config),
 ):
     """
     用户登录
@@ -73,7 +75,7 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    tokens = AuthService.generate_tokens(user)
+    tokens = AuthService.generate_tokens(user, config)
 
     return ResponseBase(
         message="登录成功",
@@ -98,6 +100,7 @@ async def get_current_user_info(
 async def refresh_token(
     refresh_token: str,
     db: AsyncSession = Depends(get_db),
+    config: DynamicConfig = Depends(get_config),
 ):
     """
     刷新访问令牌
@@ -106,7 +109,7 @@ async def refresh_token(
     """
     from utils.security import decode_token
 
-    payload = decode_token(refresh_token)
+    payload = decode_token(refresh_token, config)
 
     if not payload or payload.get("type") != "refresh":
         raise HTTPException(
@@ -123,7 +126,7 @@ async def refresh_token(
             detail="用户不存在",
         )
 
-    tokens = AuthService.generate_tokens(user)
+    tokens = AuthService.generate_tokens(user, config)
 
     return ResponseBase(
         message="令牌刷新成功",

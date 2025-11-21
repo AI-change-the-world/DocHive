@@ -16,8 +16,7 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent_tools import TOOLS_SCHEMA, execute_tool_call
-from utils.llm_client import llm_client
-
+from utils.llm_client import get_llm_client
 
 # ==================== Function Calling 路由 ====================
 
@@ -56,10 +55,10 @@ async def function_calling_router(
             "need_retrieval": bool
         }
     """
+    llm_client = get_llm_client()
     try:
         # 1. 构造工具描述（给 LLM 看的）
-        tools_description = json.dumps(
-            TOOLS_SCHEMA, ensure_ascii=False, indent=2)
+        tools_description = json.dumps(TOOLS_SCHEMA, ensure_ascii=False, indent=2)
 
         # 2. 构造系统提示词 - 让 LLM 规划整个执行流程
         system_prompt = f"""你是一个智能任务规划助手，能够分析用户问题并规划最优的执行方案。
@@ -152,7 +151,8 @@ async def function_calling_router(
         )
 
         logger.info(
-            f"📋 LLM 规划结果:\n{json.dumps(response, ensure_ascii=False, indent=2)}")
+            f"📋 LLM 规划结果:\n{json.dumps(response, ensure_ascii=False, indent=2)}"
+        )
 
         execution_plan = response.get("execution_plan", [])
         reasoning = response.get("reasoning", "")
@@ -165,7 +165,7 @@ async def function_calling_router(
                     {
                         "step": 1,
                         "action": "document_retrieval",
-                        "description": "文档检索"
+                        "description": "文档检索",
                     }
                 ],
                 "reasoning": "默认流程",
@@ -186,23 +186,28 @@ async def function_calling_router(
 
                 # 执行工具
                 logger.info(
-                    f"🔧 执行步骤 {step.get('step')}: {step.get('description')}")
+                    f"🔧 执行步骤 {step.get('step')}: {step.get('description')}"
+                )
                 result = await execute_tool_call(tool_name, arguments, db)
 
-                tool_results.append({
-                    "step": step.get("step"),
-                    "tool_name": tool_name,
-                    "arguments": arguments,
-                    "result": result,
-                    "description": step.get("description"),
-                })
+                tool_results.append(
+                    {
+                        "step": step.get("step"),
+                        "tool_name": tool_name,
+                        "arguments": arguments,
+                        "result": result,
+                        "description": step.get("description"),
+                    }
+                )
 
         # 5. 检查是否需要文档检索
-        need_retrieval = any(step.get("action") ==
-                             "document_retrieval" for step in execution_plan)
+        need_retrieval = any(
+            step.get("action") == "document_retrieval" for step in execution_plan
+        )
 
         logger.info(
-            f"✅ 执行计划完成: {len(tool_results)} 个工具调用, 需要检索: {need_retrieval}")
+            f"✅ 执行计划完成: {len(tool_results)} 个工具调用, 需要检索: {need_retrieval}"
+        )
 
         return {
             "execution_plan": execution_plan,
@@ -214,15 +219,12 @@ async def function_calling_router(
     except Exception as e:
         logger.error(f"❌ Function Calling 路由失败: {str(e)}")
         import traceback
+
         logger.error(traceback.format_exc())
         # 错误时默认走文档检索
         return {
             "execution_plan": [
-                {
-                    "step": 1,
-                    "action": "document_retrieval",
-                    "description": "文档检索"
-                }
+                {"step": 1, "action": "document_retrieval", "description": "文档检索"}
             ],
             "reasoning": f"规划失败，降级到文档检索: {str(e)}",
             "tool_results": [],
@@ -244,6 +246,7 @@ async def format_tool_result_as_answer(
     Returns:
         格式化后的自然语言答案
     """
+    llm_client = get_llm_client()
     try:
         # 使用LLM将结构化数据转换为自然语言
         prompt = f"""请将以下工具查询结果转换为自然、友好的回答。

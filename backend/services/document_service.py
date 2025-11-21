@@ -19,9 +19,9 @@ from models.database_models import (
     TemplateDocumentMapping,
 )
 from schemas.api_schemas import DocumentCreate, DocumentUpdate, SSEEvent
-from utils.llm_client import llm_client
+from utils.llm_client import LLMClient
 from utils.parser import DocumentParser
-from utils.storage import storage_client
+from utils.storage import StorageClient
 
 EXTRACT_FIELES_PROMPT = """
 你是一名信息抽取专家。请从以下文档中提取指定字段的信息，并以 JSON 格式输出。
@@ -123,6 +123,7 @@ class DocumentService:
     @staticmethod
     async def upload_file_stream(
         db: AsyncSession,
+        llm_client: LLMClient,
         file_data: BinaryIO,
         filename: str,
         document_data: DocumentCreate,
@@ -443,6 +444,7 @@ class DocumentService:
     @staticmethod
     async def upload_document(
         db: AsyncSession,
+        storage_client: StorageClient,
         file_data: BinaryIO,
         filename: str,
         document_data: DocumentCreate,
@@ -453,6 +455,7 @@ class DocumentService:
 
         Args:
             db: 数据库会话
+            storage_client: 存储客户端
             file_data: 文件数据流
             filename: 原始文件名
             document_data: 文档创建数据
@@ -647,7 +650,9 @@ class DocumentService:
         return document
 
     @staticmethod
-    async def delete_document(db: AsyncSession, document_id: int) -> bool:
+    async def delete_document(
+        db: AsyncSession, storage_client: StorageClient, document_id: int
+    ) -> bool:
         """删除文档"""
         document = await DocumentService.get_document(db, document_id)
         if not document:
@@ -664,7 +669,9 @@ class DocumentService:
         return True
 
     @staticmethod
-    async def get_download_url(db: AsyncSession, document_id: int) -> Optional[str]:
+    async def get_download_url(
+        db: AsyncSession, storage_client: StorageClient, document_id: int
+    ) -> Optional[str]:
         """获取文档下载链接"""
         document = await DocumentService.get_document(db, document_id)
         if not document:
@@ -679,6 +686,7 @@ class DocumentService:
     @staticmethod
     async def create_document_manually(
         db: AsyncSession,
+        llm_client: LLMClient,
         file_data: BinaryIO,
         filename: str,
         title: Optional[str],
@@ -692,6 +700,7 @@ class DocumentService:
 
         Args:
             db: 数据库会话
+            llm_client: LLM客户端
             file_data: 文件数据流
             filename: 原始文件名
             title: 文档标题（可选，为None则从文档内容中提取）

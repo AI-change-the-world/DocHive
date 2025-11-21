@@ -4,16 +4,16 @@ DocHive 后端服务启动脚本
 
 import uvicorn
 
-from config import get_settings
+from config import LocalSettings
 
-settings = get_settings()
+local_settings = LocalSettings()
 
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
-        reload=settings.DEBUG,
+        port=local_settings.DOC_HIVE_PORT,
+        reload=True,  # 开发模式
         log_level="info",
         access_log=True,
     )

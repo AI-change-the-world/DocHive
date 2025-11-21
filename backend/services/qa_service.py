@@ -5,8 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database_models import Document
-from utils.llm_client import llm_client
-from utils.search_engine import get_search_client
+from utils.llm_client import LLMClient
+from utils.search_engine import SearchEngine
 
 
 class QAService:
@@ -15,6 +15,7 @@ class QAService:
     @staticmethod
     async def _retrieve_documents(
         db: AsyncSession,
+        search_engine: SearchEngine,
         question: str,
         template_id: Optional[int] = None,
         top_k: int = 5,
@@ -24,6 +25,7 @@ class QAService:
 
         Args:
             db: 数据库会话
+            search_engine: 搜索引擎实例
             question: 用户问题
             template_id: 限定模板ID范围
             top_k: 返回文档数量
@@ -31,9 +33,8 @@ class QAService:
         Returns:
             相关文档列表
         """
-        search_client = get_search_client()
         # 使用搜索引擎进行检索
-        search_results = await search_client.search_documents(
+        search_results = await search_engine.search_documents(
             keyword=question,
             template_id=template_id,
             page=1,
@@ -87,7 +88,8 @@ class QAService:
         """
         context_text = "\n\n".join(
             [
-                f"【文档{i+1}: {doc['title']}】\n{doc['content'][:1000]}"  # 每个文档最多1000字符
+                # 每个文档最多1000字符
+                f"【文档{i+1}: {doc['title']}】\n{doc['content'][:1000]}"
                 for i, doc in enumerate(context_docs)
             ]
         )
@@ -114,6 +116,8 @@ class QAService:
     @staticmethod
     async def answer_question_stream(
         db: AsyncSession,
+        llm_client: LLMClient,
+        search_engine: SearchEngine,
         question: str,
         template_id: Optional[int] = None,
         top_k: int = 5,
@@ -123,6 +127,8 @@ class QAService:
 
         Args:
             db: 数据库会话
+            llm_client: LLM客户端
+            search_engine: 搜索引擎
             question: 用户问题
             template_id: 限定模板ID范围
             top_k: 检索文档数量
@@ -140,7 +146,7 @@ class QAService:
 
             # 2. 检索相关文档
             retrieved_docs = await QAService._retrieve_documents(
-                db, question, template_id, top_k
+                db, search_engine, question, template_id, top_k
             )
 
             if not retrieved_docs:
@@ -181,30 +187,9 @@ class QAService:
             # 5. 构建Prompt并调用LLM
             prompt = QAService._build_qa_prompt(question, retrieved_docs)
 
-            # 使用OpenAI客户端的流式API
-            from openai import OpenAI
-
-            from config import get_settings
-
-            settings = get_settings()
-
-            # 根据配置初始化客户端
-            if settings.LLM_PROVIDER == "openai":
-                client = OpenAI(
-                    api_key=settings.OPENAI_API_KEY,
-                    base_url=settings.OPENAI_BASE_URL.rstrip("/"),
-                )
-            elif settings.LLM_PROVIDER == "deepseek":
-                client = OpenAI(
-                    api_key=settings.DEEPSEEK_API_KEY,
-                    base_url=settings.DEEPSEEK_BASE_URL.rstrip("/"),
-                )
-            else:
-                raise ValueError(f"不支持的 LLM 提供商: {settings.LLM_PROVIDER}")
-
             # 6. 流式生成答案
-            stream = client.chat.completions.create(
-                model=settings.DEFAULT_MODEL,
+            stream = llm_client.client.chat.completions.create(
+                model=llm_client.default_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7,
                 stream=True,
@@ -232,6 +217,8 @@ class QAService:
     @staticmethod
     async def answer_question(
         db: AsyncSession,
+        llm_client: LLMClient,
+        search_engine: SearchEngine,
         question: str,
         template_id: Optional[int] = None,
         top_k: int = 5,
@@ -241,6 +228,8 @@ class QAService:
 
         Args:
             db: 数据库会话
+            llm_client: LLM客户端
+            search_engine: 搜索引擎
             question: 用户问题
             template_id: 限定模板ID范围
             top_k: 检索文档数量
@@ -250,7 +239,7 @@ class QAService:
         """
         # 检索相关文档
         retrieved_docs = await QAService._retrieve_documents(
-            db, question, template_id, top_k
+            db, search_engine, question, template_id, top_k
         )
 
         if not retrieved_docs:
@@ -263,7 +252,7 @@ class QAService:
 
         # 构建Prompt并调用LLM
         prompt = QAService._build_qa_prompt(question, retrieved_docs)
-        answer = llm_client.chat_completion(prompt, temperature=0.7)
+        answer = await llm_client.chat_completion(prompt, temperature=0.7)
 
         # 组装引用信息
         references = [

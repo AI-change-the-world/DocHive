@@ -6,9 +6,9 @@ from api.v1 import (
     documents,
     llm_logs,
     qa,
+    sys_config,
     template_configs,
     templates,
-    sys_config,
 )
 
 # 创建 v1 版本路由
