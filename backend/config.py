@@ -24,8 +24,7 @@ class LocalSettings(BaseSettings):
     NACOS_DATA_ID: str = "dochive-config.yaml"
     ENABLE_NACOS: bool = True  # 是否启用Nacos配置中心
 
-    model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
 class DynamicConfig:

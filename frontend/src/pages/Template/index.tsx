@@ -22,6 +22,7 @@ import {
 } from '@ant-design/icons';
 import { templateService } from '../../services/template';
 import type { ClassTemplate, TemplateLevel } from '../../types';
+import type { SSEEvent } from '../../utils/sseClient';
 import TemplateDesigner from './components/TemplateDesigner';
 import DocumentTypeManager from './components/DocumentTypeManager';
 
@@ -90,21 +91,54 @@ const TemplatePage: React.FC = () => {
     };
 
     const handleSubmit = async (values: any) => {
-        try {
-            setSubmitLoading(true);
-            if (editingTemplate) {
+        if (editingTemplate) {
+            // 编辑模式 - 使用传统接口
+            try {
+                setSubmitLoading(true);
                 await templateService.updateTemplate(editingTemplate.id, values);
                 message.success('更新成功');
-            } else {
-                await templateService.createTemplate(values);
-                message.success('创建成功');
+                setModalVisible(false);
+                fetchTemplates();
+            } catch (error) {
+                message.error('更新失败');
+            } finally {
+                setSubmitLoading(false);
             }
-            setModalVisible(false);
-            fetchTemplates();
-        } catch (error) {
-            message.error('操作失败');
-        } finally {
-            setSubmitLoading(false);
+        } else {
+            // 创建模式 - 使用流式接口
+            setSubmitLoading(true);
+
+            templateService.createTemplateStream(
+                values,
+                (event: SSEEvent) => {
+                    const { event: eventType, data } = event;
+
+                    // 只处理 complete 和 error 事件
+                    if (eventType === 'complete') {
+                        console.log('模板创建成功');
+                        message.success('模板创建成功！');
+                        setSubmitLoading(false);
+                        setModalVisible(false);
+                        fetchTemplates();
+                    } else if (eventType === 'error') {
+                        console.error('创建失败:', data?.message);
+                        message.error(data?.message || '创建失败');
+                        setSubmitLoading(false);
+                    }
+                },
+                (error: Error) => {
+                    console.error('请求失败:', error);
+                    message.error('请求失败: ' + error.message);
+                    setSubmitLoading(false);
+                },
+                () => {
+                    message.success('模板创建成功！');
+                    setSubmitLoading(false);
+                    setModalVisible(false);
+                    fetchTemplates();
+                    console.log('流式创建完成');
+                }
+            );
         }
     };
 
@@ -225,14 +259,20 @@ const TemplatePage: React.FC = () => {
                 <Modal
                     title={editingTemplate ? '编辑模板' : '创建模板'}
                     open={modalVisible}
-                    onCancel={() => setModalVisible(false)}
+                    onCancel={() => {
+                        if (!submitLoading) {
+                            setModalVisible(false);
+                        }
+                    }}
                     width={'calc(100vw - 200px)'}
                     footer={null}
                     bodyStyle={{
-                        maxHeight: 'calc(100vh - 200px)', // 限制最大高度
-                        overflowY: 'auto', // 内部滚动
-                        paddingRight: 8 // 防止滚动条覆盖内容
+                        maxHeight: 'calc(100vh - 200px)',
+                        overflowY: 'auto',
+                        paddingRight: 8
                     }}
+                    closable={!submitLoading}
+                    maskClosable={!submitLoading}
                 >
                     <Form
                         form={form}
@@ -244,14 +284,14 @@ const TemplatePage: React.FC = () => {
                             label="模板名称"
                             rules={[{ required: true, message: '请输入模板名称' }]}
                         >
-                            <Input placeholder="请输入模板名称" />
+                            <Input placeholder="请输入模板名称" disabled={submitLoading} />
                         </Form.Item>
 
                         <Form.Item
                             name="description"
                             label="模板描述"
                         >
-                            <Input.TextArea rows={3} placeholder="请输入模板描述" />
+                            <Input.TextArea rows={3} placeholder="请输入模板描述" disabled={submitLoading} />
                         </Form.Item>
 
                         <Form.Item
@@ -259,7 +299,7 @@ const TemplatePage: React.FC = () => {
                             label="版本号"
                             initialValue="1.0"
                         >
-                            <Input placeholder="请输入版本号" />
+                            <Input placeholder="请输入版本号" disabled={submitLoading} />
                         </Form.Item>
 
                         <Form.Item
@@ -275,7 +315,7 @@ const TemplatePage: React.FC = () => {
                                 <Button type="primary" htmlType="submit" loading={submitLoading}>
                                     提交
                                 </Button>
-                                <Button onClick={() => setModalVisible(false)}>
+                                <Button onClick={() => setModalVisible(false)} disabled={submitLoading}>
                                     取消
                                 </Button>
                             </Space>

@@ -73,8 +73,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                             body_data = json.loads(body_bytes.decode())
                             # 过滤敏感信息（如密码）
                             if isinstance(body_data, dict):
-                                filtered_body = {k: "***" if "password" in k.lower() else v
-                                                 for k, v in body_data.items()}
+                                filtered_body = {
+                                    k: "***" if "password" in k.lower() else v
+                                    for k, v in body_data.items()
+                                }
                                 params["body"] = filtered_body
                             else:
                                 params["body"] = body_data
@@ -96,9 +98,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         """将请求日志写入数据库"""
         # 只记录 API 请求,排除静态资源和健康检查
         path = request.url.path
-        if path in ["/health", "/docs", "/redoc", "/openapi.json", "/"] or path.startswith(
-            "/static"
-        ):
+        if path in [
+            "/health",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+            "/",
+        ] or path.startswith("/static"):
             return
 
         # 从 JWT 中获取用户信息
@@ -110,6 +116,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 # 需要从 request.app.state.config 获取配置
                 if hasattr(request.app.state, "config"):
                     from utils.security import decode_token
+
                     payload = decode_token(token, request.app.state.config)
                     if payload:
                         user_id = payload.get("user_id")
@@ -129,8 +136,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         }
 
         # 将请求参数和响应数据序列化为 JSON
-        request_params_str = json.dumps(
-            request_params, ensure_ascii=False) if request_params else None
+        request_params_str = (
+            json.dumps(request_params, ensure_ascii=False) if request_params else None
+        )
 
         # 写入数据库
         # 运行时动态获取 AsyncSessionLocal，避免初始化顺序问题

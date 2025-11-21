@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
+from sse_starlette import EventSourceResponse
 
 from api.deps import get_current_user
 from database import get_db
@@ -45,36 +46,31 @@ async def list_all_templates(
         )
 
 
-@router.post("/", response_model=ResponseBase, status_code=status.HTTP_201_CREATED)
+@router.post("/")
 async def create_template(
     template_data: ClassTemplateCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
-    创建分类模板
+    创建分类模板(流式)
 
     - **name**: 模板名称
     - **levels**: 层级定义列表
-    - **description**: 模板描述（可选）
-    - **version**: 版本号（默认1.0）
-    """
-    try:
-        template = await TemplateService.create_template(
-            db, template_data, current_user.id
-        )
+    - **description**: 模板描述(可选)
+    - **version**: 版本号(默认1.0)
 
-        return ResponseBase(
-            code=201,
-            message="模板创建成功",
-            data=ClassTemplateResponse.model_validate(template),
-        )
-    except ValueError as e:
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+    返回SSE事件流:
+    - stage_start: 阶段开始
+    - thinking: 处理中
+    - stage_complete: 阶段完成
+    - stage_skip: 阶段跳过
+    - complete: 全部完成
+    - error: 错误
+    """
+    return EventSourceResponse(
+        TemplateService.create_template_stream(db, template_data, current_user.id)
+    )
 
 
 @router.get("/{template_id}", response_model=ResponseBase)

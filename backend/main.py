@@ -71,13 +71,14 @@ async def lifespan(app: FastAPI):
         # 对比配置变化,有选择地重新初始化客户端
         try:
             # 检查搜索引擎配置是否变更
-            old_search = old_config.get('search', {})
-            new_search = new_config.get('search', {})
+            old_search = old_config.get("search", {})
+            new_search = new_config.get("search", {})
             if old_search != new_search:
                 logger.info("🔄 搜索引擎配置变更,重新初始化...")
                 # 关闭旧客户端
-                if hasattr(app.state, 'search_client'):
+                if hasattr(app.state, "search_client"):
                     import asyncio
+
                     asyncio.create_task(app.state.search_client.close())
                 # 重新初始化
                 search_client = init_search_client(config)
@@ -85,8 +86,8 @@ async def lifespan(app: FastAPI):
                 logger.info("✅ 搜索引擎热更新完成")
 
             # 检查存储配置是否变更
-            old_storage = old_config.get('storage', {})
-            new_storage = new_config.get('storage', {})
+            old_storage = old_config.get("storage", {})
+            new_storage = new_config.get("storage", {})
             if old_storage != new_storage:
                 logger.info("🔄 存储配置变更,重新初始化...")
                 storage_client = init_storage_client(config)
@@ -94,8 +95,8 @@ async def lifespan(app: FastAPI):
                 logger.info("✅ 存储客户端热更新完成")
 
             # 检查LLM配置是否变更
-            old_llm = old_config.get('llm', {})
-            new_llm = new_config.get('llm', {})
+            old_llm = old_config.get("llm", {})
+            new_llm = new_config.get("llm", {})
             if old_llm != new_llm:
                 logger.info("🔄 LLM配置变更,重新初始化...")
                 llm_client = init_llm_client(config)
