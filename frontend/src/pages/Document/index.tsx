@@ -548,6 +548,8 @@ const DocumentPage: React.FC = () => {
                                 title: record.title,
                                 original_filename: record.filename,
                                 class_code: record.class_code,
+                                file_type: record.file_type,
+                                file_size: record.file_size,
                             };
                             handleViewDetail(doc as any);
                         }}

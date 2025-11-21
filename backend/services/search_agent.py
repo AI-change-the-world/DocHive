@@ -794,6 +794,7 @@ async def refined_filtering(
 
 请直接输出 JSON,不要解释。
     """
+    llm_client = get_llm_client()
 
     try:
         llm_response = await llm_client.extract_json_response(prompt, db=db)

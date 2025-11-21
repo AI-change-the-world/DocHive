@@ -912,6 +912,8 @@ class DocumentService:
                 Document.title,
                 Document.original_filename,
                 TemplateDocumentMapping.created_at,
+                Document.file_size,
+                Document.file_type,
             )
             .join(Document, TemplateDocumentMapping.document_id == Document.id)
             .where(
@@ -930,6 +932,8 @@ class DocumentService:
                 "title": mapping.title,
                 "filename": mapping.original_filename,
                 "created_at": mapping.created_at,
+                "file_size": mapping.file_size,
+                "file_type": mapping.file_type,
             }
             for mapping in mappings
             if mapping.class_code
