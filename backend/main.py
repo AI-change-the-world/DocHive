@@ -11,6 +11,7 @@ from loguru import logger
 from api.router import api_v1_router
 from config import LocalSettings, close_dynamic_config, create_dynamic_config
 from database import init_db
+from middleware import RequestLoggingMiddleware
 from utils.llm_client import init_llm_client
 from utils.search_engine import init_search_client
 from utils.storage import init_storage_client
@@ -97,11 +98,14 @@ app = FastAPI(
 # 配置 CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins = ["*"],  # 静态配置或环境变量
+    allow_origins=["*"],  # 静态配置或环境变量
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 添加请求日志记录中间件
+app.add_middleware(RequestLoggingMiddleware)
 
 
 @app.exception_handler(RequestValidationError)
