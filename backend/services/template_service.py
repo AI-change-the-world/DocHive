@@ -345,4 +345,4 @@ class TemplateService:
 
         except Exception as e:
             logger.error(f"生成层级值域选项失败: {str(e)}")
-            # 不中断模板创建流程
+            raise e

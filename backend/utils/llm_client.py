@@ -190,6 +190,7 @@ class LLMClient:
                 response_format={"type": "json_object"},
                 db=db,
                 user_id=user_id,
+                max_tokens=2048
             )
         except Exception:
             # 不支持 json_object 时回退到普通模式

@@ -132,66 +132,6 @@ export interface DocumentSearchRequest extends PaginationParams {
     status?: string;
 }
 
-// 编号规则相关类型
-export interface NumberingRule {
-    id: number;
-    template_id: number;
-    rule_format: string;
-    separator: string;
-    auto_increment: boolean;
-    current_sequence: number;
-    created_at: string;
-}
-
-export interface NumberingRuleCreate {
-    template_id: number;
-    rule_format: string;
-    separator?: string;
-    auto_increment?: boolean;
-}
-
-// 信息抽取相关类型
-export interface ExtractionField {
-    name: string;
-    type: 'text' | 'number' | 'array' | 'date' | 'boolean';
-    method: 'regex' | 'llm' | 'rule';
-    pattern?: string;
-    prompt?: string;
-    required?: boolean;
-}
-
-export interface ExtractionConfigCreate {
-    name: string;
-    doc_type: string;
-    extract_fields: ExtractionField[];
-}
-
-export interface ExtractionRequest {
-    document_id: number;
-    config_id: number;
-}
-
-export interface ExtractionResponse {
-    document_id: number;
-    extracted_data: Record<string, any>;
-    success_fields: string[];
-    failed_fields: string[];
-}
-
-// 分类相关类型
-export interface ClassificationRequest {
-    document_id: number;
-    template_id: number;
-    force_reclassify?: boolean;
-}
-
-export interface ClassificationResponse {
-    document_id: number;
-    class_code: string;
-    confidence?: number;
-    status?: string;
-}
-
 // 系统配置相关类型
 export interface SystemConfig {
     id: number;

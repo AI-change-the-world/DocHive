@@ -18,6 +18,7 @@ import {
     DeleteOutlined,
     EyeOutlined,
     RobotOutlined,
+    CopyOutlined,
 } from '@ant-design/icons';
 import { templateService } from '../../services/template';
 import type { ClassTemplate, TemplateLevel } from '../../types';
@@ -64,6 +65,17 @@ const TemplatePage: React.FC = () => {
     const handleEdit = (record: ClassTemplate) => {
         setEditingTemplate(record);
         form.setFieldsValue(record);
+        setModalVisible(true);
+    };
+
+    const handleCopy = (record: ClassTemplate) => {
+        setEditingTemplate(null); // 设置为null,表示是创建新模板而不是编辑
+        // 复制模板数据,但不包含id
+        const { id, created_at, updated_at, ...copyData } = record;
+        form.setFieldsValue({
+            ...copyData,
+            name: `${copyData.name} - 副本`, // 添加副本标识
+        });
         setModalVisible(true);
     };
 
@@ -151,6 +163,13 @@ const TemplatePage: React.FC = () => {
                         onClick={() => handleViewDocumentTypes(record)}
                     >
                         查看类别
+                    </Button>
+                    <Button
+                        type="link"
+                        icon={<CopyOutlined />}
+                        onClick={() => handleCopy(record)}
+                    >
+                        复制
                     </Button>
                     <Button
                         type="link"
