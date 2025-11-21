@@ -24,7 +24,8 @@ class LocalSettings(BaseSettings):
     NACOS_DATA_ID: str = "dochive-config.yaml"
     ENABLE_NACOS: bool = True  # 是否启用Nacos配置中心
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8")
 
 
 class DynamicConfig:
@@ -34,16 +35,38 @@ class DynamicConfig:
         self._local_settings = local_settings
         self._config_data: dict[str, Any] = {}
         self.nacos_config_service: Optional[NacosConfigService] = None
+        self._on_config_change_callbacks: List[callable] = []  # 配置变更回调
 
     def load_from_yaml(self, yaml_content: str) -> None:
         """从YAML内容加载配置"""
         try:
             new_config = yaml.safe_load(yaml_content)
             if isinstance(new_config, dict):
+                old_config = self._config_data.copy()
                 self._config_data = new_config
                 logger.info("✅ 动态配置已更新")
+
+                # 触发配置变更回调
+                self._notify_config_change(old_config, new_config)
         except Exception as e:
             logger.error(f"❌ 解析YAML配置失败: {e}")
+
+    def register_on_change(self, callback: callable) -> None:
+        """注册配置变更回调函数
+
+        Args:
+            callback: 回调函数,接收 (old_config, new_config) 两个参数
+        """
+        self._on_config_change_callbacks.append(callback)
+        logger.debug(f"注册配置变更回调: {callback.__name__}")
+
+    def _notify_config_change(self, old_config: dict, new_config: dict) -> None:
+        """通知所有已注册的回调函数配置已变更"""
+        for callback in self._on_config_change_callbacks:
+            try:
+                callback(old_config, new_config)
+            except Exception as e:
+                logger.error(f"配置变更回调执行失败 [{callback.__name__}]: {e}")
 
     def _get_config(self, key_path: str, default: Any = None) -> Any:
         """从配置中获取值，支持环境变量优先"""

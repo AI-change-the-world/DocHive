@@ -5,7 +5,6 @@ import Login from "../pages/Login";
 import Dashboard from "../pages/Dashboard";
 import TemplatePage from "../pages/Template";
 import DocumentPage from "../pages/Document";
-import SearchPage from "../pages/Search";
 import QAPage from "../pages/QA";
 import LLMLogPage from "../pages/LLMLog";
 import TemplateConfigPage from "../pages/TemplateConfig";

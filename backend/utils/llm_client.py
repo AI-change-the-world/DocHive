@@ -167,6 +167,7 @@ class LLMClient:
         model: Optional[str] = None,
         db: Optional[AsyncSession] = None,
         user_id: Optional[int] = None,
+        max_tokens: int = 1024,
     ) -> Dict[str, Any]:
         """
         调用 LLM 并解析 JSON 响应
@@ -190,7 +191,7 @@ class LLMClient:
                 response_format={"type": "json_object"},
                 db=db,
                 user_id=user_id,
-                max_tokens=2048
+                max_tokens=max_tokens
             )
         except Exception:
             # 不支持 json_object 时回退到普通模式

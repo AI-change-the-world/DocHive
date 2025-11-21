@@ -335,7 +335,7 @@ class TemplateService:
             )
 
             # 调用 LLM 生成值域选项
-            level_options = await llm_client.extract_json_response(prompt, db=db)
+            level_options = await llm_client.extract_json_response(prompt, db=db, max_tokens= 4096)
 
             # 保存到模板
             template.level_options = level_options
