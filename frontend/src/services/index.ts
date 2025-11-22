@@ -5,3 +5,4 @@ export { classificationService } from './classification';
 export { numberingService } from './numbering';
 export { searchService } from './search';
 export { configService } from './config';
+export { llmLogService } from './llmLog';

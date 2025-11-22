@@ -92,7 +92,7 @@ export default function TemplateConfigPage() {
             ellipsis: true,
             render: (text: string) => (
                 <div className="max-w-md">
-                    <Text ellipsis={{ tooltip: text }}>{text}</Text>
+                    <Text ellipsis={{ tooltip: text.length > 500 ? text.substring(0, 500) + "..." : text }}>{text}</Text>
                 </div>
             ),
         },
