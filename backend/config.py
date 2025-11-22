@@ -278,6 +278,12 @@ class DynamicConfig:
     def allowed_extensions_list(self) -> List[str]:
         return [ext.strip() for ext in self.ALLOWED_EXTENSIONS.split(",")]
 
+    # RAG配置
+    @property
+    def RAG_MAX_CONTEXT_LENGTH(self) -> int:
+        """单次问答最大上下文长度（字符数）。超过此长度会对每个文档单独问答再组合结果"""
+        return self._get_config("rag.max_context_length", 20000)
+
 
 # ==================== 配置初始化函数 ====================
 

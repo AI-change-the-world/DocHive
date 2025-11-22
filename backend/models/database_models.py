@@ -186,6 +186,7 @@ class Document(Base, ToDictMixin):
 
     # 内容信息
     content_text = Column(Text)  # 提取的文本内容
+    ai_summary = Column(Text)  # AI生成的文档摘要（100-200字）
 
     # 抽取信息
     _doc_metadata = Column("document_metadata", Text)  # 元信息（作者、创建时间等）

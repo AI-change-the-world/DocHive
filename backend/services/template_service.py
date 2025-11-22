@@ -106,7 +106,7 @@ class TemplateService:
                     done=True,
                 ).model_dump_json()
                 return
-            
+
             await asyncio.sleep(0.5)
 
             # 4. 完成

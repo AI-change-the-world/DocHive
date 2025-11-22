@@ -227,6 +227,7 @@ async def ask_question_agent_stream(
                         "db": db,
                         "es": es_client,
                         "es_index": config.ELASTICSEARCH_INDEX,
+                        "rag_max_length": config.RAG_MAX_CONTEXT_LENGTH,
                     }
                 },
             ):
@@ -375,6 +376,26 @@ async def ask_question_agent_stream(
                             "result": {
                                 "tools_count": len(tool_results),
                                 "results": tool_results,
+                            },
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
+
+                elif node_name == "enhance_query":
+                    # 检索增强节点
+                    parsed_fields = state_data.get("parsed_fields", {})
+                    rewritten_query = state_data.get("rewritten_query", "")
+
+                    yield SSEEvent(
+                        event="stage_complete",
+                        data={
+                            "stage": "enhance_query",
+                            "message": f"检索增强完成: 提取 {len(parsed_fields)} 个字段",
+                            "result": {
+                                "parsed_fields": parsed_fields,
+                                "rewritten_query": rewritten_query,
+                                "fields_count": len(parsed_fields),
                             },
                         },
                         id=task_id,
@@ -692,6 +713,7 @@ async def clarify_question_agent(
                         "db": db,
                         "es": es_client,
                         "es_index": config.ELASTICSEARCH_INDEX,
+                        "rag_max_length": config.RAG_MAX_CONTEXT_LENGTH,
                     }
                 },
             )

@@ -283,6 +283,38 @@ class DocumentService:
             + json.dumps(sorted_code_json, ensure_ascii=False)
         )
 
+        # 10.5﹣ 生成AI摘要（粗读文档）
+        event.data = "[info] 生成AI文档摘要..."
+        yield event.model_dump_json(ensure_ascii=False)
+
+        ai_summary = ""
+        try:
+            summary_prompt = f"""
+你是一个文档摘要生成助手。请为以下文档生成简洁的摘要（100-200字）。
+
+【要求】
+1. 摘要应包含：文档是什么、有什么用、给谁用
+2. 语言简洁明了，条理清晰
+3. 不要包含无关信息，直接输出摘要内容
+4. 控制在100-200字之间
+
+【文档内容】
+{doc[:2000]}  {'...' if len(doc) > 2000 else ''}
+
+请直接输出摘要：
+"""
+            ai_summary = await llm_client.chat_completion(summary_prompt, db=db)
+            ai_summary = ai_summary.strip()
+            logger.info(f"✅ AI摘要生成成功: {ai_summary[:50]}...")
+            event.data = f"[info] AI摘要: {ai_summary[:100]}..."
+            yield event.model_dump_json(ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"❌ AI摘要生成失败: {e}")
+            # 失败时使用简单截取
+            ai_summary = doc[:200] + "..." if len(doc) > 200 else doc
+            event.data = "[warning] AI摘要生成失败，使用简单截取"
+            yield event.model_dump_json(ensure_ascii=False)
+
         # 11️⃣ 获取对应 DocumentType
         type_code = (
             type_json.get("type_code", "UNKNOWN")
@@ -385,6 +417,7 @@ class DocumentService:
             doc_metadata=document_data.metadata or {},
             uploader_id=user_id,
             content_text=doc,
+            ai_summary=ai_summary,  # 保存AI摘要
             doc_type_id=doc_type.id if doc_type else 0,
         )
 
@@ -421,7 +454,7 @@ class DocumentService:
                 "document_id": document.id,
                 "title": document.title,
                 "content": doc,
-                "summary": doc[:500] if len(doc) > 500 else doc,
+                "summary": ai_summary,  # 使用AI摘要代替简单截取
                 "template_id": document.template_id,
                 "file_type": document.file_type,
                 "upload_time": (
@@ -813,6 +846,36 @@ class DocumentService:
             event.data = f"[info] 字段提取完成: {json.dumps(_extracted_data, ensure_ascii=False)}"
             yield event.model_dump_json(ensure_ascii=False)
 
+        # 5.5﹣ 生成AI摘要
+        event.data = "[info] 生成AI文档摘要..."
+        yield event.model_dump_json(ensure_ascii=False)
+
+        ai_summary = ""
+        try:
+            summary_prompt = f"""
+你是一个文档摘要生成助手。请为以下文档生成简洁的摘要（100-200字）。
+
+【要求】
+1. 摘要应包含：文档是什么、有什么用、给谁用
+2. 语言简洁明了，条理清晰
+3. 不要包含无关信息，直接输出摘要内容
+4. 控制在100-200字之间
+
+【文档内容】
+{doc[:2000]}  {'...' if len(doc) > 2000 else ''}
+
+请直接输出摘要：
+"""
+            ai_summary = await llm_client.chat_completion(summary_prompt, db=db)
+            ai_summary = ai_summary.strip()
+            event.data = f"[info] AI摘要: {ai_summary[:100]}..."
+            yield event.model_dump_json(ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"❌ AI摘要生成失败: {e}")
+            ai_summary = doc[:200] + "..." if len(doc) > 200 else doc
+            event.data = "[warning] AI摘要生成失败，使用简单截取"
+            yield event.model_dump_json(ensure_ascii=False)
+
         # 6️⃣ 保存文档信息
         event.data = "[info] 保存文档信息..."
         yield event.model_dump_json(ensure_ascii=False)
@@ -827,6 +890,7 @@ class DocumentService:
             doc_metadata={},
             uploader_id=user_id,
             content_text=doc,
+            ai_summary=ai_summary,  # 保存AI摘要
             doc_type_id=doc_type_id,
         )
 
@@ -866,7 +930,7 @@ class DocumentService:
                 "document_id": document.id,
                 "title": document.title,
                 "content": doc,
-                "summary": doc[:500] if len(doc) > 500 else doc,
+                "summary": ai_summary,  # 使用AI摘要
                 "template_id": document.template_id,
                 "file_type": document.file_type,
                 "upload_time": (
