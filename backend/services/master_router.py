@@ -188,27 +188,56 @@ async def plan_execution(
     "direct_answer": null
 }}
 
-示例4 - 混合调用：
-问题: "统计文档数量，并总结主要内容"
+示例4 - 混合调用（概览所有文档+智能分析）：
+问题: "有多少文档，每一份都详细归纳一下内容"
 返回:
 {{
-    "execution_pattern": "hybrid",
-    "reasoning": "既需要统计工具，又需要检索和问答智能体",
+    "execution_pattern": "tool_only",
+    "reasoning": "用户想了解所有文档的详细内容，需要读取文档并分析",
     "execution_plan": [
         {{
             "step": 1,
             "type": "tool",
             "name": "get_template_statistics",
-            "description": "统计文档数量"
+            "description": "获取文档数量统计"
         }},
         {{
             "step": 2,
-            "type": "agent",
-            "name": "retrieval_agent",
-            "description": "检索代表性文档"
+            "type": "tool",
+            "name": "search_documents_by_classification",
+            "description": "获取所有文档ID列表"
         }},
         {{
             "step": 3,
+            "type": "tool",
+            "name": "get_document_contents",
+            "description": "读取文档完整原文"
+        }},
+        {{
+            "step": 4,
+            "type": "tool",
+            "name": "analyze_documents",
+            "description": "智能分析文档（内部自动决定批量or逐份）"
+        }}
+    ],
+    "direct_answer": null
+}}
+
+示例5 - 语义检索+问答：
+问题: "查找关于地震应急的文档，并总结主要内容"
+返回:
+{{
+    "execution_pattern": "agent_chain",
+    "reasoning": "需要语义检索特定主题的文档，然后生成答案",
+    "execution_plan": [
+        {{
+            "step": 1,
+            "type": "agent",
+            "name": "retrieval_agent",
+            "description": "检索相关文档"
+        }},
+        {{
+            "step": 2,
             "type": "agent",
             "name": "qa_agent",
             "description": "总结内容"
@@ -217,7 +246,7 @@ async def plan_execution(
     "direct_answer": null
 }}
 
-示例5 - LLM直接回答：
+示例6 - LLM直接回答：
 问题: "什么是人工智能？"
 返回:
 {{
@@ -226,6 +255,11 @@ async def plan_execution(
     "execution_plan": [],
     "direct_answer": "人工智能（Artificial Intelligence, AI）是计算机科学的一个分支..."
 }}
+
+【重要提示】
+- 如果用户要分析文档内容（"总结"、"归纳"、"都讲了什么"），使用 analyze_documents 工具（它会内部决定批量or逐份）
+- 如果用户问"查找XXX相关的文档"等语义检索问题，使用 retrieval_agent 智能体
+- 区分"文档分析"和"语义检索"两种场景
 
 现在，请为以下用户问题制定执行方案。只返回JSON，不要其他内容。
 """
@@ -328,6 +362,50 @@ async def execute_steps(
                 if step_name == "get_template_statistics":
                     from services.agent_tools import get_template_statistics
                     tool_result = await get_template_statistics(db, template_id)
+                elif step_name == "search_documents_by_classification":
+                    from services.agent_tools import search_documents_by_classification
+                    # 不提供class_code参数，返回所有文档
+                    tool_result = await search_documents_by_classification(db, template_id, class_code=None)
+                    # 保存document_ids到intermediate_data，供后续步骤使用
+                    if tool_result.get("success"):
+                        state["intermediate_data"]["document_ids"] = tool_result.get(
+                            "document_ids", [])
+                elif step_name == "get_document_contents":
+                    from services.retrieval_tools import get_document_contents
+                    # 从前一步获取document_ids
+                    document_ids = state["intermediate_data"].get(
+                        "document_ids", [])
+                    if document_ids:
+                        tool_result = await get_document_contents(
+                            document_ids=document_ids,
+                            db=db,
+                            include_fields=["id", "title",
+                                            "content_text", "ai_summary"]
+                        )
+                        # 保存文档内容
+                        if tool_result.get("success"):
+                            state["intermediate_data"]["documents"] = tool_result.get(
+                                "documents", [])
+                    else:
+                        logger.warning(
+                            "⚠️ 未找到document_ids，跳过get_document_contents")
+                        tool_result = {"success": False, "error": "未找到文档ID"}
+                elif step_name == "analyze_documents":
+                    # 智能分析文档：内部自动决定批量/逐份/分组
+                    from services.document_analyzer import analyze_documents
+                    documents = state["intermediate_data"].get("documents", [])
+                    tool_result = await analyze_documents(
+                        query=query,
+                        documents=documents,
+                        db=db,
+                        max_context_length=config.get(
+                            "configurable", {}).get("rag_max_length", 10000),
+                    )
+                    # 保存分析结果到final_answer
+                    if tool_result.get("success"):
+                        state["final_answer"] = tool_result.get("analysis")
+                        logger.info(
+                            f"✅ 文档分析完成，模式: {tool_result.get('reading_mode')}")
                 elif step_name == "get_document_summary":
                     from services.agent_tools import get_document_summary
                     tool_result = await get_document_summary(db, template_id)
@@ -448,7 +526,12 @@ async def finalize_answer(
 
         # 根据执行模式生成答案
         if state["execution_pattern"] == "tool_only" and state["tool_results"]:
-            # 格式化工具结果
+            # 如果已经有final_answer（比如analyze_documents工具已经生成），直接返回
+            if state["final_answer"]:
+                logger.info("✅ 工具已生成答案，直接返回")
+                return state
+
+            # 否则格式化工具结果
             from services.intent_router import format_tool_result_as_answer
 
             combined_results = {

@@ -439,7 +439,7 @@ async def search_documents_by_classification(
         class_code: 分类编码（可选，不提供则返回所有）
 
     Returns:
-        文档列表
+        文档ID列表和基本信息（不包含内容，需要后续调用read_documents获取）
     """
     try:
         query = (
@@ -461,7 +461,7 @@ async def search_documents_by_classification(
             query = query.where(
                 TemplateDocumentMapping.class_code == class_code)
 
-        query = query.order_by(Document.upload_time.desc()).limit(20)
+        query = query.order_by(Document.upload_time.desc()).limit(50)
 
         result = await db.execute(query)
         documents = [
@@ -481,6 +481,8 @@ async def search_documents_by_classification(
             "class_code": class_code,
             "total_found": len(documents),
             "documents": documents,
+            # 方便后续读取
+            "document_ids": [doc["document_id"] for doc in documents],
         }
 
     except Exception as e:
