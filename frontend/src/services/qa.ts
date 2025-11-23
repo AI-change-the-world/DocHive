@@ -29,6 +29,12 @@ export const qaService = {
         return `${baseUrl}/qa/ask/agent/stream`;
     },
 
+    // Beta版智能体流式问答（V2架构 - master_router）
+    getBetaStreamUrl: () => {
+        const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+        return `${baseUrl}/qa/ask/beta/stream`;
+    },
+
     // 澄清问题后继续智能体问答
     clarifyAgentQuestion: (data: QARequest, clarification: string, sessionId: string) => {
         const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';

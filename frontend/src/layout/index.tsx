@@ -1,6 +1,6 @@
 import { Layout, Menu, Typography } from 'antd';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { FileTextOutlined, FolderOpenOutlined, SearchOutlined, DashboardOutlined, QuestionCircleOutlined, BarChartOutlined, SettingOutlined } from '@ant-design/icons';
+import { FileTextOutlined, FolderOpenOutlined, SearchOutlined, DashboardOutlined, QuestionCircleOutlined, BarChartOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons';
 
 const { Header, Sider, Content } = Layout;
 
@@ -17,6 +17,7 @@ export default function AppLayout() {
         if (path.includes('/templates')) return 'templates';
         if (path.includes('/documents')) return 'documents';
         if (path.includes('/search')) return 'search';
+        if (path.includes('/qa-beta')) return 'qa-beta';
         if (path.includes('/qa')) return 'qa';
         if (path.includes('/llm-logs')) return 'llm-logs';
         if (path.includes('/template-configs')) return 'template-configs';
@@ -78,6 +79,18 @@ export default function AppLayout() {
                                 onClick: () => navigate('/qa'),
                                 icon: <QuestionCircleOutlined className="text-primary-600" />,
                                 className: 'mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200'
+                            },
+                            {
+                                key: 'qa-beta',
+                                label: (
+                                    <span className="font-medium">
+                                        智能体问答-Beta
+                                        <span className="ml-1 px-1.5 py-0.5 text-xs bg-purple-100 text-purple-600 rounded">V2</span>
+                                    </span>
+                                ),
+                                onClick: () => navigate('/qa-beta'),
+                                icon: <ThunderboltOutlined className="text-purple-600" />,
+                                className: 'mx-2 mb-1 rounded-lg hover:bg-purple-50 transition-all duration-200'
                             },
                             {
                                 key: 'templates',

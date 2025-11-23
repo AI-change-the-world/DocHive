@@ -231,7 +231,8 @@ async def ask_question_agent_stream(
                     }
                 },
             ):
-                logger.info(f"[LangGraph step_result.keys()] {step_result.keys()}")
+                logger.info(
+                    f"[LangGraph step_result.keys()] {step_result.keys()}")
                 # 获取节点名称和状态数据
                 node_name = list(step_result.keys())[0]
                 state_data = step_result[node_name]
@@ -343,7 +344,8 @@ async def ask_question_agent_stream(
                     execution_plan = state_data.get("execution_plan", [])
                     reasoning = state_data.get("reasoning", "")
                     tool_count = len(
-                        [s for s in execution_plan if s.get("action") == "tool_call"]
+                        [s for s in execution_plan if s.get(
+                            "action") == "tool_call"]
                     )
                     has_retrieval = any(
                         s.get("action") == "document_retrieval" for s in execution_plan
@@ -457,7 +459,8 @@ async def ask_question_agent_stream(
                     ).model_dump_json()
 
                     # 再发送stage_complete事件
-                    sql_doc_ids = list(state_data.get("sql_document_ids", set()))
+                    sql_doc_ids = list(state_data.get(
+                        "sql_document_ids", set()))
                     yield SSEEvent(
                         event="stage_complete",
                         data={
@@ -622,6 +625,221 @@ async def ask_question_agent_stream(
             yield SSEEvent(
                 event="error",
                 data={"message": f"智能体问答失败: {str(e)}"},
+                id=task_id,
+                done=True,
+            ).model_dump_json()
+        finally:
+            # 关闭Elasticsearch客户端
+            if es_client:
+                await es_client.close()
+
+    return EventSourceResponse(event_generator())
+
+
+@router.post("/ask/beta/stream")
+async def ask_question_beta_stream(
+    request: Request,
+    qa_request: QARequest,
+    db: AsyncSession = Depends(get_db),
+    config: DynamicConfig = Depends(get_config),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    基于Master Router V2的流式问答接口（SSE）- Beta版本
+
+    新架构特性：
+    - 统一的工具和智能体注册中心
+    - LLM基于完整信息进行智能决策
+    - 支持5种执行模式：tool_only, agent_only, agent_chain, hybrid, llm_direct
+    - 完整的状态管理和中间结果追踪
+
+    参数：
+    - **question**: 用户问题
+    - **template_id**: 限定模板ID范围（必需）
+    - **top_k**: 检索文档数量（默认5，范围1-20）
+
+    返回流式事件：
+    - **plan**: 执行计划（包含execution_pattern和execution_plan）
+    - **stage_start**: 阶段开始
+    - **stage_complete**: 阶段完成（包含result数据）
+    - **documents**: 检索到的文档
+    - **answer**: 流式生成的答案片段
+    - **complete**: 回答完成标记
+    - **error**: 错误信息
+    """
+
+    # 检查template_id是否提供
+    if not qa_request.template_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="使用Beta问答必须提供template_id",
+        )
+
+    async def event_generator():
+        """SSE事件生成器"""
+        es_client = None
+        task_id = str(uuid.uuid4())
+
+        try:
+            # 生成会话ID
+            session_id = str(uuid.uuid4())
+
+            # 初始化Elasticsearch客户端
+            es_client = AsyncElasticsearch(
+                [config.ELASTICSEARCH_URL], verify_certs=False
+            )
+
+            logger.info(f"🚀 [Beta] 开始处理问题: {qa_request.question}")
+
+            # 初始化状态
+            from services.master_router import ExecutionState, master_router_app
+
+            initial_state: ExecutionState = {
+                "query": qa_request.question,
+                "template_id": qa_request.template_id,
+                "session_id": session_id,
+                "execution_pattern": "",
+                "reasoning": "",
+                "execution_plan": [],
+                "tool_results": [],
+                "agent_results": [],
+                "intermediate_data": {},
+                "final_answer": None,
+                "documents": [],
+                "success": False,
+                "error": None,
+            }
+
+            # 使用 astream 流式执行 LangGraph
+            state_data = None
+            async for step_result in master_router_app.astream(
+                initial_state,
+                config={
+                    "configurable": {
+                        "db": db,
+                        "es": es_client,
+                        "es_index": config.ELASTICSEARCH_INDEX,
+                    }
+                },
+            ):
+                node_name = list(step_result.keys())[0]
+                state_data = step_result[node_name]
+
+                logger.info(f"📊 [Beta] 节点: {node_name}")
+
+                if node_name == "plan":
+                    # 等待 0.5 秒，避免前端刷新不过来
+                    await asyncio.sleep(0.5)
+
+                    yield SSEEvent(
+                        event="plan",
+                        data={
+                            "execution_pattern": state_data["execution_pattern"],
+                            "execution_plan": state_data["execution_plan"],
+                            "reasoning": state_data["reasoning"],
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
+
+                elif node_name == "execute":
+                    # 等待 0.5 秒，避免前端刷新不过来
+                    await asyncio.sleep(0.5)
+
+                    for i, step in enumerate(state_data["execution_plan"]):
+                        step_id = f"step_{step.get('step', i+1)}"
+
+                        yield SSEEvent(
+                            event="stage_start",
+                            data={
+                                "stage": step_id,
+                                "message": f"正在{step['description']}...",
+                            },
+                            id=task_id,
+                            done=False,
+                        ).model_dump_json()
+
+                        # 步骤间等待 0.5 秒
+                        await asyncio.sleep(0.5)
+
+                        result_data = {}
+                        if step["type"] == "tool":
+                            result_data["tool_results"] = state_data["tool_results"]
+                        elif step["type"] == "agent":
+                            result_data["agent_results"] = state_data["agent_results"]
+                            if state_data["documents"]:
+                                result_data["documents"] = state_data["documents"]
+
+                        yield SSEEvent(
+                            event="stage_complete",
+                            data={
+                                "stage": step_id,
+                                "message": f"{step['description']}完成",
+                                "result": result_data,
+                            },
+                            id=task_id,
+                            done=False,
+                        ).model_dump_json()
+
+                        # 步骤间等待 0.5 秒
+                        await asyncio.sleep(0.5)
+
+            final_state = state_data if state_data else initial_state
+
+            logger.info(
+                f"📊 [Beta] 执行结果: success={final_state['success']}, pattern={final_state['execution_pattern']}")
+
+            # 发送文档引用（如果有）
+            if final_state["documents"]:
+                # 等待 0.5 秒
+                await asyncio.sleep(0.5)
+
+                # 转换为前端需要的格式
+                references = []
+                for doc in final_state["documents"]:
+                    references.append({
+                        "document_id": doc.get("id") or doc.get("document_id"),
+                        "title": doc.get("title", "未命名文档"),
+                        "snippet": doc.get("ai_summary") or doc.get("content", "")[:200],
+                        "score": doc.get("score", 1.0),
+                    })
+
+                yield SSEEvent(
+                    event="documents",
+                    data={"documents": references},
+                    id=task_id,
+                    done=False,
+                ).model_dump_json()
+
+            # 发送答案（非流式）
+            answer = final_state["final_answer"] or "抱歉，无法生成答案。"
+
+            # 等待 0.5 秒
+            await asyncio.sleep(0.5)
+
+            # 一次性发送完整答案，不分块
+            yield SSEEvent(
+                event="answer",
+                data={"content": answer},
+                id=task_id,
+                done=False,
+            ).model_dump_json()
+
+            # 发送完成信号
+            yield SSEEvent(
+                event="complete",
+                data={"message": "回答完成"},
+                id=task_id,
+                done=True,
+            ).model_dump_json()
+
+        except Exception as e:
+            logger.error(f"❌ [Beta] 问答失败: {e}")
+            logger.error(traceback.format_exc())
+            # 发送错误事件
+            yield SSEEvent(
+                event="error",
+                data={"message": f"Beta问答失败: {str(e)}"},
                 id=task_id,
                 done=True,
             ).model_dump_json()

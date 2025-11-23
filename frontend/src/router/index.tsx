@@ -6,6 +6,7 @@ import Dashboard from "../pages/Dashboard";
 import TemplatePage from "../pages/Template";
 import DocumentPage from "../pages/Document";
 import QAPage from "../pages/QA";
+import QABetaPage from "../pages/QABeta";
 import LLMLogPage from "../pages/LLMLog";
 import TemplateConfigPage from "../pages/TemplateConfig";
 
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
             { path: '/documents', element: <DocumentPage /> },
             // { path: '/search', element: <SearchPage /> },
             { path: '/qa', element: <QAPage /> },
+            { path: '/qa-beta', element: <QABetaPage /> },
             { path: '/llm-logs', element: <LLMLogPage /> },
             { path: '/template-configs', element: <TemplateConfigPage /> },
         ],

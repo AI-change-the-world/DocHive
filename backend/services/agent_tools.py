@@ -18,6 +18,16 @@ from models.database_models import (
     TemplateDocumentMapping,
 )
 
+# 导入检索工具
+from services.retrieval_tools import (
+    RETRIEVAL_TOOLS_SCHEMA,
+    es_fulltext_search,
+    sql_structured_search,
+    get_document_contents,
+    skim_documents,  # 新增: 粗读文档
+    read_documents,  # 新增: 精读文档
+)
+
 # ==================== 工具函数定义 ====================
 
 
@@ -184,7 +194,8 @@ async def search_documents_by_classification(
         )
 
         if class_code:
-            query = query.where(TemplateDocumentMapping.class_code == class_code)
+            query = query.where(
+                TemplateDocumentMapping.class_code == class_code)
 
         query = query.order_by(Document.upload_time.desc()).limit(20)
 
@@ -316,6 +327,7 @@ async def list_all_templates(db: AsyncSession) -> Dict[str, Any]:
 # ==================== 工具注册表（OpenAI Function Calling 格式） ====================
 
 TOOLS_SCHEMA = [
+    # 原有的统计查询工具
     {
         "type": "function",
         "function": {
@@ -383,14 +395,102 @@ TOOLS_SCHEMA = [
             },
         },
     },
+    # 检索工具
+    {
+        "type": "function",
+        "function": {
+            "name": "es_fulltext_search",
+            "description": "使用Elasticsearch进行全文检索，基于BM25算法召回相关文档。适用于需要基于关键词匹配的检索场景。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "用户查询文本"
+                    },
+                    "template_id": {
+                        "type": "integer",
+                        "description": "模板ID"
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "description": "返回文档数量，默认10",
+                        "default": 10
+                    }
+                },
+                "required": ["query", "template_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sql_structured_search",
+            "description": "基于分类编码和类别字段进行结构化SQL查询。适用于需要精确匹配特定分类的场景。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "template_id": {
+                        "type": "integer",
+                        "description": "模板ID"
+                    },
+                    "class_code": {
+                        "type": "string",
+                        "description": "分类编码，如'01.02'，不提供则查询所有"
+                    },
+                    "category_field_code": {
+                        "type": "string",
+                        "description": "类别字段编码"
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "description": "返回文档数量，默认50",
+                        "default": 50
+                    }
+                },
+                "required": ["template_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_document_contents",
+            "description": "获取指定文档的完整内容。适用于需要读取具体文档详情的场景。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "document_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "文档ID列表"
+                    },
+                    "include_fields": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "需要包含的字段，默认: id, title, content, ai_summary"
+                    }
+                },
+                "required": ["document_ids"]
+            }
+        }
+    },
 ]
 
 # 工具函数映射表
 TOOLS_MAP = {
+    # 原有统计工具
     "get_template_statistics": get_template_statistics,
     "search_documents_by_classification": search_documents_by_classification,
     "get_document_types_info": get_document_types_info,
     "list_all_templates": list_all_templates,
+    # 检索工具
+    "es_fulltext_search": es_fulltext_search,
+    "sql_structured_search": sql_structured_search,
+    "get_document_contents": get_document_contents,
+    # 阅读工具
+    "skim_documents": skim_documents,  # 粗读：标题+摘要
+    "read_documents": read_documents,  # 精读：完整正文
 }
 
 
@@ -398,7 +498,11 @@ TOOLS_MAP = {
 
 
 async def execute_tool_call(
-    tool_name: str, arguments: Dict[str, Any], db: AsyncSession
+    tool_name: str,
+    arguments: Dict[str, Any],
+    db: AsyncSession,
+    es_client: Any = None,
+    es_index: str = "dochive_documents",
 ) -> Dict[str, Any]:
     """
     执行工具调用
@@ -407,6 +511,8 @@ async def execute_tool_call(
         tool_name: 工具名称
         arguments: 工具参数
         db: 数据库会话
+        es_client: Elasticsearch客户端（检索工具需要）
+        es_index: ES索引名
 
     Returns:
         工具执行结果
@@ -421,11 +527,58 @@ async def execute_tool_call(
 
     try:
         logger.info(f"执行工具: {tool_name}, 参数: {arguments}")
-        result = await tool_function(db, **arguments)
+
+        # 检索工具需要传入 es_client
+        if tool_name in ["es_fulltext_search", "sql_structured_search", "get_document_contents", "skim_documents", "read_documents"]:
+            if tool_name == "es_fulltext_search":
+                if not es_client:
+                    return {
+                        "success": False,
+                        "error": "ES全文检索需要es_client参数",
+                    }
+                result = await tool_function(
+                    query=arguments.get("query"),
+                    template_id=arguments.get("template_id"),
+                    es_client=es_client,
+                    es_index=es_index,
+                    top_k=arguments.get("top_k", 10),
+                )
+            elif tool_name == "sql_structured_search":
+                result = await tool_function(
+                    template_id=arguments.get("template_id"),
+                    class_code=arguments.get("class_code"),
+                    category_field_code=arguments.get("category_field_code"),
+                    db=db,
+                    top_k=arguments.get("top_k", 50),
+                )
+            elif tool_name == "get_document_contents":
+                result = await tool_function(
+                    document_ids=arguments.get("document_ids", []),
+                    db=db,
+                    include_fields=arguments.get("include_fields"),
+                )
+            elif tool_name == "skim_documents":
+                result = await tool_function(
+                    document_ids=arguments.get("document_ids", []),
+                    db=db,
+                )
+            elif tool_name == "read_documents":
+                result = await tool_function(
+                    document_ids=arguments.get("document_ids", []),
+                    db=db,
+                    max_documents=arguments.get("max_documents", 10),
+                )
+        else:
+            # 统计查询工具，只需要 db
+            result = await tool_function(db, **arguments)
+
         logger.info(f"工具执行成功: {tool_name}")
         return result
     except Exception as e:
         logger.error(f"执行工具 {tool_name} 失败: {str(e)}")
+        import traceback
+
+        logger.error(traceback.format_exc())
         return {
             "success": False,
             "error": f"工具执行失败: {str(e)}",
