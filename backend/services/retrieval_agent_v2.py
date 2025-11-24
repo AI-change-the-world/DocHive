@@ -24,6 +24,7 @@ class RetrievalAgentState(TypedDict):
     检索智能体状态机
 
     工作流程：
+    0. 查询优化 -> LLM提取关键词（必须/相关/排除）
     1. ES全文检索 -> 召回候选文档
     2. SQL结构化检索 -> 基于模板层级定义精确过滤
     3. SQL质量评估 -> 判断提取质量是否可靠
@@ -40,7 +41,10 @@ class RetrievalAgentState(TypedDict):
     top_k: int  # 返回文档数量
     enable_deduplication: bool  # 是否去重
 
-    # === 步骤1: ES检索 ===
+    # === 步靨0: 查询优化 ===
+    optimized_query: Dict[str, Any]  # 优化后的查询（包含必须/相关/排除关键词）
+
+    # === 步靨1: ES检索 ===
     es_document_ids: List[int]  # ES召回的文档ID
 
     # === 步骤2: SQL结构化检索 ===
@@ -55,6 +59,96 @@ class RetrievalAgentState(TypedDict):
 
     # === 步骤4: 后处理 ===
     final_documents: List[Dict[str, Any]]  # 最终文档结果
+
+
+# ==================== 节点0: 查询优化 ====================
+
+
+async def optimize_query(
+    state: RetrievalAgentState, config: RunnableConfig
+) -> RetrievalAgentState:
+    """
+    节点0: 查询优化
+
+    使用LLM分析用户查询，提取关键词：
+    1. must_keywords: 必须出现的关键词
+    2. should_keywords: 可能出现的相关关键词
+    3. must_not_keywords: 不应该出现的关键词
+    """
+    logger.info("========== 检索智能体 - 节点0: 查询优化 ===========")
+
+    from utils.llm_client import get_llm_client
+    import json
+
+    db: AsyncSession = config.get("configurable", {}).get("db")
+    query = state["query"]
+
+    # 构造提示词
+    prompt = f"""你是一个智能查询优化助手。请分析用户的自然语言查询，提取出关键词。
+
+【用户查询】
+{query}
+
+【提取任务】
+请分析查询，提取三类关键词：
+
+1. **must_keywords** (必须出现): 文档中必须包含的核心关键词
+   - 示例：查询“火山的处置措施” → [“火山”, “措施”]
+   
+2. **should_keywords** (可能出现): 相关的近义词、扩展词
+   - 示例：查询“火山的处置措施” → [“应急预案”, “处置”, “防范”, “应对”]
+   
+3. **must_not_keywords** (不应出现): 需要排除的干扰词
+   - 示例：查询“火山的处置措施” → [“地震”, “洪水”, “台风”] (排除其他灾害类型)
+
+【提取原则】
+- must_keywords: 提取用户查询中的核心名词和动词，通常是2-5个
+- should_keywords: 扩展相关词，包括近义词、上下位词、常见搭配词
+- must_not_keywords: 分析查询意图，推断需要排除的干扰词（例如其他类型、相反含义等）
+- 如果某一类没有合适的词，返回空数组
+
+【返回格式】
+返回JSON格式：
+{{
+    "must_keywords": ["keyword1", "keyword2"],
+    "should_keywords": ["keyword3", "keyword4"],
+    "must_not_keywords": ["keyword5", "keyword6"]
+}}
+
+请分析并返回JSON，不要其他内容。
+    """
+
+    try:
+        llm_client = get_llm_client()
+        response = await llm_client.extract_json_response(prompt, db=db)
+
+        optimized_query = {
+            "original_query": query,
+            "must_keywords": response.get("must_keywords", []),
+            "should_keywords": response.get("should_keywords", []),
+            "must_not_keywords": response.get("must_not_keywords", []),
+        }
+
+        state["optimized_query"] = optimized_query
+
+        logger.info(f"🔍 查询优化结果:")
+        logger.info(f"   ✅ 必须关键词: {optimized_query['must_keywords']}")
+        logger.info(f"   🔵 相关关键词: {optimized_query['should_keywords']}")
+        logger.info(f"   ❌ 排除关键词: {optimized_query['must_not_keywords']}")
+
+    except Exception as e:
+        logger.error(f"❌ 查询优化失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        # 降级：直接使用原始查询
+        state["optimized_query"] = {
+            "original_query": query,
+            "must_keywords": [],
+            "should_keywords": [],
+            "must_not_keywords": [],
+        }
+
+    return state
 
 
 # ==================== 节点1: ES全文检索 ====================
@@ -77,6 +171,7 @@ async def es_fulltext_retrieval(
     query = state["query"]
     template_id = state["template_id"]
     top_k = state.get("top_k", 20)
+    optimized_query = state.get("optimized_query", {})
 
     try:
         result = await execute_tool_call(
@@ -85,6 +180,7 @@ async def es_fulltext_retrieval(
                 "query": query,
                 "template_id": template_id,
                 "top_k": top_k * 2,  # 多检索一些，留给后面交集
+                "optimized_query": optimized_query,  # 传入优化后的查询
             },
             es_client=es_client,
             es_index=es_index,
@@ -446,6 +542,7 @@ def build_retrieval_agent_v2() -> CompiledStateGraph:
     workflow = StateGraph(RetrievalAgentState)
 
     # 添加节点
+    workflow.add_node("optimize_query", optimize_query)
     workflow.add_node("es_retrieval", es_fulltext_retrieval)
     workflow.add_node("sql_retrieval", sql_structured_retrieval)
     workflow.add_node("sql_quality_eval", evaluate_sql_quality)
@@ -453,9 +550,10 @@ def build_retrieval_agent_v2() -> CompiledStateGraph:
     workflow.add_node("post_process", post_process_results)
 
     # 设置入口点
-    workflow.set_entry_point("es_retrieval")
+    workflow.set_entry_point("optimize_query")
 
     # 添加边
+    workflow.add_edge("optimize_query", "es_retrieval")
     workflow.add_edge("es_retrieval", "sql_retrieval")
     workflow.add_edge("sql_retrieval", "sql_quality_eval")
     workflow.add_edge("sql_quality_eval", "merge")
@@ -466,7 +564,7 @@ def build_retrieval_agent_v2() -> CompiledStateGraph:
     app = workflow.compile()
 
     logger.info("✅ 检索智能体V2工作流编译完成")
-    logger.info("📊 工作流程: ES检索 → SQL检索 → SQL质量评估 → 求交集 → 后处理")
+    logger.info("📋 工作流程: 查询优化 → ES检索 → SQL检索 → SQL质量评估 → 求交集 → 后处理")
 
     return app
 
@@ -514,6 +612,7 @@ async def retrieve_documents_v2(
         "top_k": top_k,
         "enable_deduplication": enable_deduplication,
         # 以下字段在节点中填充
+        "optimized_query": {},
         "es_document_ids": [],
         "class_template_levels": [],
         "sql_extracted_conditions": [],
