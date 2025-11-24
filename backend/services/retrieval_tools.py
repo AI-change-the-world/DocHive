@@ -57,22 +57,21 @@ async def es_fulltext_search(
                 }
             }
             logger.info(f"🔍 使用match_all查询所有文档，template_id={template_id}")
-        elif optimized_query and optimized_query.get("must_keywords"):
-            # 使用优化后的查询（必须/相关/排除关键词）
-            must_keywords = optimized_query.get("must_keywords", [])
-            should_keywords = optimized_query.get("should_keywords", [])
-            must_not_keywords = optimized_query.get("must_not_keywords", [])
+        elif optimized_query and optimized_query.get("primary_keywords"):
+            # 使用优化后的查询（主查询 + 上下文扩展 + 相关词）
+            primary_keywords = optimized_query.get("primary_keywords", [])
+            context_keywords = optimized_query.get("context_keywords", [])
+            related_keywords = optimized_query.get("related_keywords", [])
 
             # 构建 bool 查询
             bool_clauses = {
                 "must": [],
                 "should": [],
-                "must_not": [],
                 "filter": [{"term": {"template_id": template_id}}]
             }
 
-            # 必须关键词：每个都必须匹配
-            for keyword in must_keywords:
+            # 主查询条件：必须包含所有主关键词
+            for keyword in primary_keywords:
                 bool_clauses["must"].append({
                     "multi_match": {
                         "query": keyword,
@@ -81,22 +80,23 @@ async def es_fulltext_search(
                     }
                 })
 
-            # 相关关键词：匹配任意一个即可（提高分数）
-            for keyword in should_keywords:
+            # 上下文扩展：放宽查询范围（should，不强制）
+            for keyword in context_keywords:
+                bool_clauses["should"].append({
+                    "multi_match": {
+                        "query": keyword,
+                        "fields": ["title^1.5", "content", "ai_summary"],
+                        "type": "best_fields",
+                    }
+                })
+
+            # 相关词：提升相关文档排序（should）
+            for keyword in related_keywords:
                 bool_clauses["should"].append({
                     "multi_match": {
                         "query": keyword,
                         "fields": ["title^2", "content", "ai_summary"],
                         "type": "best_fields",
-                    }
-                })
-
-            # 排除关键词：不能包含这些词
-            for keyword in must_not_keywords:
-                bool_clauses["must_not"].append({
-                    "multi_match": {
-                        "query": keyword,
-                        "fields": ["title", "content", "ai_summary"],
                     }
                 })
 
@@ -116,9 +116,9 @@ async def es_fulltext_search(
             es_query = {"bool": bool_clauses}
 
             logger.info(f"🔍 使用优化查询:")
-            logger.info(f"   ✅ 必须: {must_keywords}")
-            logger.info(f"   🔵 相关: {should_keywords}")
-            logger.info(f"   ❌ 排除: {must_not_keywords}")
+            logger.info(f"   ⭐ 主查询(必须包含): {primary_keywords}")
+            logger.info(f"   🌐 上下文扩展(辅助加分): {context_keywords}")
+            logger.info(f"   💡 相关词(提升排序): {related_keywords}")
         else:
             # 构建常规ES查询
             es_query = {

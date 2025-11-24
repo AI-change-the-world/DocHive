@@ -71,9 +71,14 @@ async def optimize_query(
     节点0: 查询优化
 
     使用LLM分析用户查询，提取关键词：
-    1. must_keywords: 必须出现的关键词
-    2. should_keywords: 可能出现的相关关键词
-    3. must_not_keywords: 不应该出现的关键词
+    1. primary_keywords: 主查询条件（必须包含）
+    2. context_keywords: 上下文扩展（向上扩展概念，放宽查询范围）
+    3. related_keywords: 相关词（提升相关文档排序）
+
+    示例：查询“火山的处置措施”
+    - primary: ["火山", "处置", "措施"] ← 必须同时包含
+    - context: ["自然灾害", "灾害防治"] ← 包含更广泛的上级概念
+    - related: ["应急预案", "防范"] ← 提高相关文档分数
     """
     logger.info("========== 检索智能体 - 节点0: 查询优化 ===========")
 
@@ -84,35 +89,43 @@ async def optimize_query(
     query = state["query"]
 
     # 构造提示词
-    prompt = f"""你是一个智能查询优化助手。请分析用户的自然语言查询，提取出关键词。
+    prompt = f"""你是一个智能查询优化助手。请分析用户的自然语言查询，优化为更精确的检索条件。
 
 【用户查询】
 {query}
 
-【提取任务】
-请分析查询，提取三类关键词：
+【优化策略】
+请将查询优化为三类关键词：
 
-1. **must_keywords** (必须出现): 文档中必须包含的核心关键词
-   - 示例：查询“火山的处置措施” → [“火山”, “措施”]
-   
-2. **should_keywords** (可能出现): 相关的近义词、扩展词
-   - 示例：查询“火山的处置措施” → [“应急预案”, “处置”, “防范”, “应对”]
-   
-3. **must_not_keywords** (不应出现): 需要排除的干扰词
-   - 示例：查询“火山的处置措施” → [“地震”, “洪水”, “台风”] (排除其他灾害类型)
+1. **primary_keywords** (主查询条件 - 必须包含):
+   - 提取用户查询中的核心概念、主体词
+   - 这些词必须在文档中同时出现
+   - 示例：查询"火山的处置措施" → ["火山", "处置", "措施"]
 
-【提取原则】
-- must_keywords: 提取用户查询中的核心名词和动词，通常是2-5个
-- should_keywords: 扩展相关词，包括近义词、上下位词、常见搭配词
-- must_not_keywords: 分析查询意图，推断需要排除的干扰词（例如其他类型、相反含义等）
-- 如果某一类没有合适的词，返回空数组
+2. **context_keywords** (上下文扩展 - 辅助条件):
+   - 提取主查询条件的上级概念、更广泛的领域词
+   - 用于放宽查询范围，包容更多相关文档
+   - 思路：以特定主题为主，但也包含上级概念的文档
+   - 示例：查询"火山的处置措施" → ["自然灾害防治", "地质灾害", "灾害应急"]
+   - 解释：火山是自然灾害的一种，所以查询时以"火山防治"为主，但也包容讨论"自然灾害防治"的文档
+
+3. **related_keywords** (相关词 - 提升相关性):
+   - 近义词、同义词、常见搭配词
+   - 用于提高相关文档的排序分数
+   - 示例：查询"火山的处置措施" → ["应急预案", "防范", "应对", "管理"]
+
+【关键原则】
+- primary_keywords 是核心条件，必须严格匹配
+- context_keywords 是向上扩展到上级概念，实现包容性查询
+- 不要排除其他灾害类型（如地震、洪水等），它们可能也在自然灾害防治文档中
+- 所有扩展都是包容性的，而非排他性的
 
 【返回格式】
 返回JSON格式：
 {{
-    "must_keywords": ["keyword1", "keyword2"],
-    "should_keywords": ["keyword3", "keyword4"],
-    "must_not_keywords": ["keyword5", "keyword6"]
+    "primary_keywords": ["keyword1", "keyword2"],
+    "context_keywords": ["keyword3", "keyword4"],
+    "related_keywords": ["keyword5", "keyword6"]
 }}
 
 请分析并返回JSON，不要其他内容。
@@ -124,17 +137,17 @@ async def optimize_query(
 
         optimized_query = {
             "original_query": query,
-            "must_keywords": response.get("must_keywords", []),
-            "should_keywords": response.get("should_keywords", []),
-            "must_not_keywords": response.get("must_not_keywords", []),
+            "primary_keywords": response.get("primary_keywords", []),
+            "context_keywords": response.get("context_keywords", []),
+            "related_keywords": response.get("related_keywords", []),
         }
 
         state["optimized_query"] = optimized_query
 
         logger.info(f"🔍 查询优化结果:")
-        logger.info(f"   ✅ 必须关键词: {optimized_query['must_keywords']}")
-        logger.info(f"   🔵 相关关键词: {optimized_query['should_keywords']}")
-        logger.info(f"   ❌ 排除关键词: {optimized_query['must_not_keywords']}")
+        logger.info(f"   ⭐ 主查询: {optimized_query['primary_keywords']}")
+        logger.info(f"   📊 上下文扩展: {optimized_query['context_keywords']}")
+        logger.info(f"   🔵 相关词: {optimized_query['related_keywords']}")
 
     except Exception as e:
         logger.error(f"❌ 查询优化失败: {e}")
@@ -143,9 +156,9 @@ async def optimize_query(
         # 降级：直接使用原始查询
         state["optimized_query"] = {
             "original_query": query,
-            "must_keywords": [],
-            "should_keywords": [],
-            "must_not_keywords": [],
+            "primary_keywords": [],
+            "context_keywords": [],
+            "related_keywords": [],
         }
 
     return state
