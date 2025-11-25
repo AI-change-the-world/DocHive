@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.agent_tools import TOOLS_SCHEMA, execute_tool_call
+from services.tools.tool_registry import TOOLS_SCHEMA, execute_tool_call
 from utils.llm_client import get_llm_client
 
 # ==================== Function Calling 路由 ====================
@@ -58,7 +58,8 @@ async def function_calling_router(
     llm_client = get_llm_client()
     try:
         # 1. 构造工具描述（给 LLM 看的）
-        tools_description = json.dumps(TOOLS_SCHEMA, ensure_ascii=False, indent=2)
+        tools_description = json.dumps(
+            TOOLS_SCHEMA, ensure_ascii=False, indent=2)
 
         # 2. 构造系统提示词 - 让 LLM 规划整个执行流程
         system_prompt = f"""你是一个智能任务规划助手，能够分析用户问题并规划最优的执行方案。

@@ -13,7 +13,8 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.agent_tools import execute_tool_call, deduplicate_documents
+from services.tools.tool_registry import execute_tool_call
+from services.tools.document.deduplicate_documents import deduplicate_documents
 
 
 # ==================== 检索智能体状态定义 ====================

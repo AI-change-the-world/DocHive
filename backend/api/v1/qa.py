@@ -691,147 +691,99 @@ async def ask_question_beta_stream(
 
             logger.info(f"🚀 [Beta] 开始处理问题: {qa_request.question}")
 
-            # 初始化状态
-            from services.master_router import ExecutionState, master_router_app
+            # 使用新的三步执行函数
+            from services.agents.master_router import execute_master_router
 
-            initial_state: ExecutionState = {
-                "query": qa_request.question,
-                "template_id": qa_request.template_id,
-                "session_id": session_id,
-                "execution_pattern": "",
-                "reasoning": "",
-                "execution_plan": [],
-                "tool_results": [],
-                "agent_results": [],
-                "intermediate_data": {},
-                "final_answer": None,
-                "documents": [],
-                "success": False,
-                "error": None,
-            }
-
-            # 使用 astream 流式执行 LangGraph
-            state_data = None
-            async for step_result in master_router_app.astream(
-                initial_state,
-                config={
-                    "configurable": {
-                        "db": db,
-                        "es": es_client,
-                        "es_index": config.ELASTICSEARCH_INDEX,
-                    }
-                },
+            async for step_data in execute_master_router(
+                query=qa_request.question,
+                template_id=qa_request.template_id,
+                db=db,
+                es_client=es_client,
+                es_index=config.ELASTICSEARCH_INDEX,
             ):
-                node_name = list(step_result.keys())[0]
-                state_data = step_result[node_name]
+                step_type = step_data["type"]
+                data = step_data["data"]
 
-                logger.info(f"📊 [Beta] 节点: {node_name}")
-
-                if node_name == "plan":
-                    # 等待 0.5 秒，避免前端刷新不过来
-                    await asyncio.sleep(0.5)
-
+                if step_type == "plan":
+                    # 发送执行计划
+                    await asyncio.sleep(0.3)
                     yield SSEEvent(
                         event="plan",
                         data={
-                            "execution_pattern": state_data["execution_pattern"],
-                            "execution_plan": state_data["execution_plan"],
-                            "reasoning": state_data["reasoning"],
+                            "execution_pattern": data["execution_pattern"],
+                            "execution_plan": data["execution_plan"],
+                            "reasoning": data["reasoning"],
                         },
                         id=task_id,
                         done=False,
                     ).model_dump_json()
+                    logger.info(
+                        f"📊 [Beta] 已发送执行计划，共{len(data['execution_plan'])}步")
 
-                elif node_name == "execute":
-                    # 等待 0.5 秒，避免前端刷新不过来
+                elif step_type == "step_result":
+                    # 发送步骤结果
+                    await asyncio.sleep(0.3)
+
+                    result_data = {data["step_type"] +
+                                   "_result": {"result": data["result"]}}
+                    if data.get("documents"):
+                        result_data["documents"] = data["documents"]
+
+                    yield SSEEvent(
+                        event="stage_complete",
+                        data={
+                            "stage": f"step_{data['step']}",
+                            "step_index": data["step"],
+                            "message": f"{data['description']}完成",
+                            "result": result_data,
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
+                    logger.info(f"📊 [Beta] 已发送步骤{data['step']}结果")
+
+                elif step_type == "final":
+                    # 发送文档引用（如果有）
+                    if data["documents"]:
+                        await asyncio.sleep(0.5)
+                        references = []
+                        for doc in data["documents"]:
+                            references.append({
+                                "document_id": doc.get("id") or doc.get("document_id"),
+                                "title": doc.get("title", "未命名文档"),
+                                "snippet": doc.get("ai_summary") or doc.get("content", "")[:200],
+                                "score": doc.get("score", 1.0),
+                            })
+
+                        yield SSEEvent(
+                            event="documents",
+                            data={"documents": references},
+                            id=task_id,
+                            done=False,
+                        ).model_dump_json()
+
+                    # 发送答案
+                    answer = data["final_answer"] or "抱歉，无法生成答案。"
                     await asyncio.sleep(0.5)
 
-                    for i, step in enumerate(state_data["execution_plan"]):
-                        step_id = f"step_{step.get('step', i+1)}"
+                    yield SSEEvent(
+                        event="answer",
+                        data={"content": answer},
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
 
-                        yield SSEEvent(
-                            event="stage_start",
-                            data={
-                                "stage": step_id,
-                                "message": f"正在{step['description']}...",
-                            },
-                            id=task_id,
-                            done=False,
-                        ).model_dump_json()
-
-                        # 步骤间等待 0.5 秒
-                        await asyncio.sleep(0.5)
-
-                        result_data = {}
-                        if step["type"] == "tool":
-                            result_data["tool_results"] = state_data["tool_results"]
-                        elif step["type"] == "agent":
-                            result_data["agent_results"] = state_data["agent_results"]
-                            if state_data["documents"]:
-                                result_data["documents"] = state_data["documents"]
-
-                        yield SSEEvent(
-                            event="stage_complete",
-                            data={
-                                "stage": step_id,
-                                "message": f"{step['description']}完成",
-                                "result": result_data,
-                            },
-                            id=task_id,
-                            done=False,
-                        ).model_dump_json()
-
-                        # 步骤间等待 0.5 秒
-                        await asyncio.sleep(0.5)
-
-            final_state = state_data if state_data else initial_state
-
-            logger.info(
-                f"📊 [Beta] 执行结果: success={final_state['success']}, pattern={final_state['execution_pattern']}")
-
-            # 发送文档引用（如果有）
-            if final_state["documents"]:
-                # 等待 0.5 秒
-                await asyncio.sleep(0.5)
-
-                # 转换为前端需要的格式
-                references = []
-                for doc in final_state["documents"]:
-                    references.append({
-                        "document_id": doc.get("id") or doc.get("document_id"),
-                        "title": doc.get("title", "未命名文档"),
-                        "snippet": doc.get("ai_summary") or doc.get("content", "")[:200],
-                        "score": doc.get("score", 1.0),
-                    })
-
-                yield SSEEvent(
-                    event="documents",
-                    data={"documents": references},
-                    id=task_id,
-                    done=False,
-                ).model_dump_json()
-
-            # 发送答案（非流式）
-            answer = final_state["final_answer"] or "抱歉，无法生成答案。"
-
-            # 等待 0.5 秒
-            await asyncio.sleep(0.5)
-
-            # 一次性发送完整答案，不分块
-            yield SSEEvent(
-                event="answer",
-                data={"content": answer},
-                id=task_id,
-                done=False,
-            ).model_dump_json()
-
-            # 发送完成信号
-            yield SSEEvent(
-                event="complete",
-                data={"message": "回答完成"},
-                id=task_id,
-                done=True,
-            ).model_dump_json()
+                    # 发送完成信号（带上答案）
+                    yield SSEEvent(
+                        event="complete",
+                        data={
+                            "message": "回答完成",
+                            "answer": answer,  # 关键：带上答案
+                            "documents": references if data["documents"] else [],
+                        },
+                        id=task_id,
+                        done=True,
+                    ).model_dump_json()
 
         except Exception as e:
             logger.error(f"❌ [Beta] 问答失败: {e}")
