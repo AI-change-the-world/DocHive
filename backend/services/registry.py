@@ -5,7 +5,7 @@
 """
 
 from typing import Any, Dict, List
-from services.agent_tools import TOOLS_SCHEMA
+from services.tools.tool_registry import TOOLS_SCHEMA
 
 
 # ==================== 智能体注册表 ====================

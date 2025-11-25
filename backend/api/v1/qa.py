@@ -680,6 +680,10 @@ async def ask_question_beta_stream(
         es_client = None
         task_id = str(uuid.uuid4())
 
+        # 用于追踪步骤进度
+        current_step_index = 0
+        step_results = {}
+
         try:
             # 生成会话ID
             session_id = str(uuid.uuid4())
@@ -692,7 +696,7 @@ async def ask_question_beta_stream(
             logger.info(f"🚀 [Beta] 开始处理问题: {qa_request.question}")
 
             # 初始化状态
-            from services.master_router import ExecutionState, master_router_app
+            from services.agents.master_router import ExecutionState, master_router_app
 
             initial_state: ExecutionState = {
                 "query": qa_request.question,
@@ -712,6 +716,11 @@ async def ask_question_beta_stream(
 
             # 使用 astream 流式执行 LangGraph
             state_data = None
+            execution_plan = []
+            last_tool_count = 0
+            last_agent_count = 0
+            plan_sent = False
+
             async for step_result in master_router_app.astream(
                 initial_state,
                 config={
@@ -721,68 +730,105 @@ async def ask_question_beta_stream(
                         "es_index": config.ELASTICSEARCH_INDEX,
                     }
                 },
+                stream_mode="values",  # 使用values模式，获取完整状态
             ):
-                node_name = list(step_result.keys())[0]
-                state_data = step_result[node_name]
+                # values模式返回完整状态，不是{node: state}格式
+                state_data = step_result
 
-                logger.info(f"📊 [Beta] 节点: {node_name}")
+                # 发送执行计划（只发送一次）
+                if not plan_sent and state_data.get("execution_plan"):
+                    execution_plan = state_data["execution_plan"]
+                    plan_sent = True
 
-                if node_name == "plan":
-                    # 等待 0.5 秒，避免前端刷新不过来
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.3)
 
                     yield SSEEvent(
                         event="plan",
                         data={
-                            "execution_pattern": state_data["execution_pattern"],
-                            "execution_plan": state_data["execution_plan"],
-                            "reasoning": state_data["reasoning"],
+                            "execution_pattern": state_data.get("execution_pattern", ""),
+                            "execution_plan": execution_plan,
+                            "reasoning": state_data.get("reasoning", ""),
                         },
                         id=task_id,
                         done=False,
                     ).model_dump_json()
 
-                elif node_name == "execute":
-                    # 等待 0.5 秒，避免前端刷新不过来
-                    await asyncio.sleep(0.5)
+                    logger.info(f"📊 [Beta] 已发送执行计划，共{len(execution_plan)}步")
 
-                    for i, step in enumerate(state_data["execution_plan"]):
-                        step_id = f"step_{step.get('step', i+1)}"
+                # 检测工具执行进度
+                current_tool_results = state_data.get("tool_results", [])
+                current_tool_count = len(current_tool_results)
+
+                if current_tool_count > last_tool_count:
+                    # 有新的工具执行完成，发送每个新完成的工具
+                    for i in range(last_tool_count, current_tool_count):
+                        tool_result = current_tool_results[i]
+                        step_num = tool_result.get("step", i + 1)
+
+                        # 找到对应的执行计划步骤
+                        step_info = None
+                        for step in execution_plan:
+                            if step.get("step") == step_num:
+                                step_info = step
+                                break
+
+                        await asyncio.sleep(0.3)
 
                         yield SSEEvent(
-                            event="stage_start",
+                            event="stage_complete",
                             data={
-                                "stage": step_id,
-                                "message": f"正在{step['description']}...",
+                                "stage": f"step_{step_num}",
+                                "step_index": step_num,
+                                "message": f"{step_info.get('description', '步骤') if step_info else '步骤'}完成",
+                                "result": {"tool_result": tool_result},
                             },
                             id=task_id,
                             done=False,
                         ).model_dump_json()
 
-                        # 步骤间等待 0.5 秒
-                        await asyncio.sleep(0.5)
+                        logger.info(f"📊 [Beta] 已发送工具执行进度: 步骤{step_num}")
 
-                        result_data = {}
-                        if step["type"] == "tool":
-                            result_data["tool_results"] = state_data["tool_results"]
-                        elif step["type"] == "agent":
-                            result_data["agent_results"] = state_data["agent_results"]
-                            if state_data["documents"]:
-                                result_data["documents"] = state_data["documents"]
+                    last_tool_count = current_tool_count
+
+                # 检测智能体执行进度
+                current_agent_results = state_data.get("agent_results", [])
+                current_agent_count = len(current_agent_results)
+
+                if current_agent_count > last_agent_count:
+                    # 有新的智能体执行完成
+                    for i in range(last_agent_count, current_agent_count):
+                        agent_result = current_agent_results[i]
+                        step_num = agent_result.get(
+                            "step", last_tool_count + i + 1)
+
+                        # 找到对应的执行计划步骤
+                        step_info = None
+                        for step in execution_plan:
+                            if step.get("step") == step_num:
+                                step_info = step
+                                break
+
+                        await asyncio.sleep(0.3)
+
+                        result_data = {"agent_result": agent_result}
+                        if state_data.get("documents"):
+                            result_data["documents"] = state_data["documents"]
 
                         yield SSEEvent(
                             event="stage_complete",
                             data={
-                                "stage": step_id,
-                                "message": f"{step['description']}完成",
+                                "stage": f"step_{step_num}",
+                                "step_index": step_num,
+                                "message": f"{step_info.get('description', '步骤') if step_info else '步骤'}完成",
                                 "result": result_data,
                             },
                             id=task_id,
                             done=False,
                         ).model_dump_json()
 
-                        # 步骤间等待 0.5 秒
-                        await asyncio.sleep(0.5)
+                        logger.info(f"📊 [Beta] 已发送智能体执行进度: 步骤{step_num}")
+
+                    last_agent_count = current_agent_count
 
             final_state = state_data if state_data else initial_state
 
@@ -791,7 +837,6 @@ async def ask_question_beta_stream(
 
             # 发送文档引用（如果有）
             if final_state["documents"]:
-                # 等待 0.5 秒
                 await asyncio.sleep(0.5)
 
                 # 转换为前端需要的格式
@@ -814,7 +859,6 @@ async def ask_question_beta_stream(
             # 发送答案（非流式）
             answer = final_state["final_answer"] or "抱歉，无法生成答案。"
 
-            # 等待 0.5 秒
             await asyncio.sleep(0.5)
 
             # 一次性发送完整答案，不分块

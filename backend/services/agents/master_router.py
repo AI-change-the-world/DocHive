@@ -19,8 +19,8 @@ from langgraph.graph.state import CompiledStateGraph
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.retrieval_agent_v2 import retrieve_documents_v2
-from services.qa_agent_v2 import generate_answer_v2
+from services.agents.retrieval_agent import retrieve_documents_v2
+from services.agents.qa_agent import generate_answer_v2
 from services.registry import (
     get_system_capabilities,
     get_tools_description,
@@ -360,10 +360,10 @@ async def execute_steps(
             if step_type == "tool":
                 # 执行工具
                 if step_name == "get_template_statistics":
-                    from services.agent_tools import get_template_statistics
+                    from services.tools.statistics.get_template_statistics import get_template_statistics
                     tool_result = await get_template_statistics(db, template_id)
                 elif step_name == "search_documents_by_classification":
-                    from services.agent_tools import search_documents_by_classification
+                    from services.tools.statistics.search_documents_by_classification import search_documents_by_classification
                     # 不提供class_code参数，返回所有文档
                     tool_result = await search_documents_by_classification(db, template_id, class_code=None)
                     # 保存document_ids到intermediate_data，供后续步骤使用
@@ -371,7 +371,7 @@ async def execute_steps(
                         state["intermediate_data"]["document_ids"] = tool_result.get(
                             "document_ids", [])
                 elif step_name == "get_document_contents":
-                    from services.retrieval_tools import get_document_contents
+                    from services.tools.document.get_document_contents import get_document_contents
                     # 从前一步获取document_ids
                     document_ids = state["intermediate_data"].get(
                         "document_ids", [])
@@ -390,9 +390,45 @@ async def execute_steps(
                         logger.warning(
                             "⚠️ 未找到document_ids，跳过get_document_contents")
                         tool_result = {"success": False, "error": "未找到文档ID"}
+                elif step_name == "skim_documents":
+                    # 粗读文档：只获取标题和摘要
+                    from services.tools.document.skim_documents import skim_documents
+                    document_ids = state["intermediate_data"].get(
+                        "document_ids", [])
+                    if document_ids:
+                        tool_result = await skim_documents(
+                            document_ids=document_ids,
+                            db=db,
+                        )
+                        # 保存文档内容
+                        if tool_result.get("success"):
+                            state["intermediate_data"]["documents"] = tool_result.get(
+                                "documents", [])
+                    else:
+                        logger.warning("⚠️ 未找到document_ids，跳过skim_documents")
+                        tool_result = {"success": False, "error": "未找到文档ID"}
+                elif step_name == "read_documents":
+                    # 精读文档：获取完整正文
+                    from services.tools.document.read_documents import read_documents
+                    document_ids = state["intermediate_data"].get(
+                        "document_ids", [])
+                    if document_ids:
+                        tool_result = await read_documents(
+                            document_ids=document_ids,
+                            db=db,
+                            max_documents=config.get(
+                                "configurable", {}).get("max_read_documents", 10),
+                        )
+                        # 保存文档内容
+                        if tool_result.get("success"):
+                            state["intermediate_data"]["documents"] = tool_result.get(
+                                "documents", [])
+                    else:
+                        logger.warning("⚠️ 未找到document_ids，跳过read_documents")
+                        tool_result = {"success": False, "error": "未找到文档ID"}
                 elif step_name == "analyze_documents":
                     # 智能分析文档：内部自动决定批量/逐份/分组
-                    from services.document_analyzer import analyze_documents
+                    from services.tools.analysis.document_analyzer import analyze_documents
                     documents = state["intermediate_data"].get("documents", [])
                     tool_result = await analyze_documents(
                         query=query,
@@ -406,14 +442,14 @@ async def execute_steps(
                         state["final_answer"] = tool_result.get("analysis")
                         logger.info(
                             f"✅ 文档分析完成，模式: {tool_result.get('reading_mode')}")
-                elif step_name == "get_document_summary":
-                    from services.agent_tools import get_document_summary
-                    tool_result = await get_document_summary(db, template_id)
-                elif step_name == "get_classification_info":
-                    from services.agent_tools import get_classification_info
-                    tool_result = await get_classification_info(db, template_id)
+                # elif step_name == "get_document_summary":
+                #     from services.tools.statistics.get_document_summary import get_document_summary
+                #     tool_result = await get_document_summary(db, template_id)
+                # elif step_name == "get_classification_info":
+                #     from services.tools.statistics.get_classification_info import get_classification_info
+                #     tool_result = await get_classification_info(db, template_id)
                 elif step_name == "list_all_templates":
-                    from services.agent_tools import list_all_templates
+                    from services.tools.statistics.list_all_templates import list_all_templates
                     tool_result = await list_all_templates(db)
                 else:
                     logger.warning(f"⚠️ 未知的工具: {step_name}")

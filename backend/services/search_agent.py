@@ -1,6 +1,14 @@
 import json
 from typing import Any, Dict, List, Optional, Set, TypedDict
-from services.agent_tools import normalize_text, compute_strong_hash, compute_simhash, compute_shingles, should_remove_duplicate
+# 注意：这些是deduplicate_documents模块的私有辅助函数，一般不应直接导入
+# 考虑重构或使用公开接口
+from services.tools.document.deduplicate_documents import (
+    _normalize_text as normalize_text,
+    _compute_strong_hash as compute_strong_hash,
+    _compute_simhash as compute_simhash,
+    _compute_shingles as compute_shingles,
+    _should_remove_duplicate as should_remove_duplicate,
+)
 
 from elasticsearch import AsyncElasticsearch
 from langchain_core.runnables import RunnableConfig
