@@ -410,6 +410,7 @@ export default function QAPage() {
 
                             case 'complete':
                                 console.log('[收到complete事件]', {
+                                    eventData: eventData.data,
                                     currentAnswer: currentAnswerRef.current,
                                     referencesCount: currentReferencesRef.current.length,
                                     stagesCount: agentStagesRef.current.length,
@@ -421,9 +422,9 @@ export default function QAPage() {
                                     status: (s.status === 'error' ? 'error' : 'finish') as 'wait' | 'process' | 'finish' | 'error',
                                 }));
 
-                                // 获取最终数据
-                                const finalAnswer = currentAnswerRef.current;
-                                const finalReferences = [...currentReferencesRef.current];
+                                // 获取最终数据 - 优先使用complete事件中的answer
+                                const finalAnswer = eventData.data?.answer || currentAnswerRef.current;
+                                const finalReferences = eventData.data?.documents || [...currentReferencesRef.current];
 
                                 console.log('[准备添加消息]', {
                                     hasAnswer: !!finalAnswer,

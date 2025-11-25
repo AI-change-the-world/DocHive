@@ -18,7 +18,7 @@ async def get_document_contents(
     Args:
         document_ids: 文档ID列表
         db: 数据库会话
-        include_fields: 需要包含的字段列表（默认: id, title, content, ai_summary）
+        include_fields: 需要包含的字段列表（默认: id, title, content_text, ai_summary）
 
     Returns:
         {
@@ -32,7 +32,7 @@ async def get_document_contents(
         from models.database_models import Document
 
         if not include_fields:
-            include_fields = ["id", "title", "content", "ai_summary"]
+            include_fields = ["id", "title", "content_text", "ai_summary"]
 
         # 构建查询，只选择需要的字段
         columns = [getattr(Document, field)

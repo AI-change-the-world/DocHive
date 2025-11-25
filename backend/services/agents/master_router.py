@@ -1,12 +1,12 @@
 """ 
-主路由器V2 - 统一的智能体调度系统（基于LangGraph）
+主路由器V3 - 简单三步执行流程
 
 功能：
-1. 提供完整的工具和智能体清单给LLM
-2. LLM基于完整信息决定最优执行方案
-3. 支持多种执行模式：工具调用/智能体调用/混合调用/LLM直接回答
-4. 使用LangGraph实现真正的异步流式执行
-5. 统一管理执行状态和结果
+1. 第一步：规划 - LLM选择合适的工具/智能体
+2. 第二步：执行 - 异步顺序执行规划的步骤
+3. 第三步：总结 - 格式化最终结果
+
+特点：不使用LangGraph，直接异步执行，每步实时yield
 """
 
 import asyncio
@@ -331,9 +331,7 @@ async def execute_steps(
     state: ExecutionState, config: RunnableConfig
 ) -> ExecutionState:
     """
-    节点: 执行步骤
-
-    根据执行计划，顺序执行工具和智能体。
+    节点: 执行步骤（异步顺序执行）
     """
     logger.info("🚀 ========== 节点: 执行步骤 ===========")
 
@@ -342,189 +340,144 @@ async def execute_steps(
     session_id = state["session_id"]
 
     # 从 config 获取所需资源
-    db: AsyncSession = config.get("configurable", {}).get("db")  # type: ignore
-    es_client = config.get("configurable", {}).get("es")  # type: ignore
+    db: AsyncSession = config.get("configurable", {}).get("db")
+    es_client = config.get("configurable", {}).get("es")
     es_index: str = config.get("configurable", {}).get(
-        "es_index", "dochive_documents")  # type: ignore
+        "es_index", "dochive_documents")
+    max_read_documents = config.get(
+        "configurable", {}).get("max_read_documents", 10)
+    rag_max_length = config.get(
+        "configurable", {}).get("rag_max_length", 10000)
 
+    # helper: 实际调用工具/智能体实现 - 使用通用调用机制
+    async def _dispatch_to_impl(step_type: str, step_name: str):
+        """
+        通用的工具/智能体调度器
+        - 工具调用：使用 tool_registry.execute_tool_call 统一处理
+        - 智能体调用：直接调用智能体函数
+        """
+        if step_type == "tool":
+            # 使用通用的工具执行器
+            from services.tools.tool_registry import execute_tool_call
+
+            # 准备工具参数
+            arguments = {"template_id": template_id}
+
+            # 特殊处理：从 state 中获取中间数据
+            if step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+                arguments["document_ids"] = state["intermediate_data"].get(
+                    "document_ids", [])
+                if step_name == "read_documents":
+                    arguments["max_documents"] = max_read_documents
+            elif step_name == "analyze_documents":
+                # analyze_documents 需要特殊处理（参数不标准）
+                from services.tools.analysis.document_analyzer import analyze_documents
+                documents = state["intermediate_data"].get("documents", [])
+                return await analyze_documents(
+                    query=query,
+                    documents=documents,
+                    db=db,
+                    max_context_length=rag_max_length,
+                )
+            elif step_name == "search_documents_by_classification":
+                arguments["class_code"] = None  # 默认返回所有文档
+
+            # 调用通用执行器
+            return await execute_tool_call(
+                tool_name=step_name,
+                arguments=arguments,
+                db=db,
+                es_client=es_client,
+                es_index=es_index,
+            )
+
+        elif step_type == "agent":
+            # 智能体调用：直接调用智能体函数
+            if step_name == "retrieval_agent":
+                return await retrieve_documents_v2(
+                    query=query,
+                    template_id=template_id,
+                    session_id=session_id,
+                    db=db,
+                    es_client=es_client,
+                    es_index=es_index,
+                    top_k=20,
+                    enable_deduplication=True,
+                )
+            elif step_name == "qa_agent":
+                documents = state["intermediate_data"].get("documents", [])
+                return await generate_answer_v2(
+                    query=query,
+                    documents=documents,
+                    db=db,
+                    max_context_length=rag_max_length,
+                )
+            else:
+                raise RuntimeError(f"未知的智能体: {step_name}")
+        else:
+            raise RuntimeError(f"未知的 step_type: {step_type}")
+
+    # 主执行逻辑：逐个异步执行步骤
+    plan: List[Dict[str, Any]] = state.get("execution_plan", [])
     try:
-        for i, step in enumerate(state["execution_plan"]):
+        for i, step in enumerate(plan):
             step_type = step.get("type")
             step_name = step.get("name")
             step_desc = step.get("description", "")
 
-            logger.info(f"🔧 执行第{i+1}步: {step_type}/{step_name} - {step_desc}")
+            logger.info(f"🔧 执行第{i+1}步: {step_type}/{step_name}")
 
-            await asyncio.sleep(0.3)  # 步骤间延迟
+            try:
+                # 执行步骤
+                result = await _dispatch_to_impl(step_type, step_name)
 
-            if step_type == "tool":
-                # 执行工具
-                if step_name == "get_template_statistics":
-                    from services.tools.statistics.get_template_statistics import get_template_statistics
-                    tool_result = await get_template_statistics(db, template_id)
-                elif step_name == "search_documents_by_classification":
-                    from services.tools.statistics.search_documents_by_classification import search_documents_by_classification
-                    # 不提供class_code参数，返回所有文档
-                    tool_result = await search_documents_by_classification(db, template_id, class_code=None)
-                    # 保存document_ids到intermediate_data，供后续步骤使用
-                    if tool_result.get("success"):
-                        state["intermediate_data"]["document_ids"] = tool_result.get(
-                            "document_ids", [])
-                elif step_name == "get_document_contents":
-                    from services.tools.document.get_document_contents import get_document_contents
-                    # 从前一步获取document_ids
-                    document_ids = state["intermediate_data"].get(
-                        "document_ids", [])
-                    if document_ids:
-                        tool_result = await get_document_contents(
-                            document_ids=document_ids,
-                            db=db,
-                            include_fields=["id", "title",
-                                            "content_text", "ai_summary"]
-                        )
-                        # 保存文档内容
-                        if tool_result.get("success"):
-                            state["intermediate_data"]["documents"] = tool_result.get(
-                                "documents", [])
-                    else:
-                        logger.warning(
-                            "⚠️ 未找到document_ids，跳过get_document_contents")
-                        tool_result = {"success": False, "error": "未找到文档ID"}
-                elif step_name == "skim_documents":
-                    # 粗读文档：只获取标题和摘要
-                    from services.tools.document.skim_documents import skim_documents
-                    document_ids = state["intermediate_data"].get(
-                        "document_ids", [])
-                    if document_ids:
-                        tool_result = await skim_documents(
-                            document_ids=document_ids,
-                            db=db,
-                        )
-                        # 保存文档内容
-                        if tool_result.get("success"):
-                            state["intermediate_data"]["documents"] = tool_result.get(
-                                "documents", [])
-                    else:
-                        logger.warning("⚠️ 未找到document_ids，跳过skim_documents")
-                        tool_result = {"success": False, "error": "未找到文档ID"}
-                elif step_name == "read_documents":
-                    # 精读文档：获取完整正文
-                    from services.tools.document.read_documents import read_documents
-                    document_ids = state["intermediate_data"].get(
-                        "document_ids", [])
-                    if document_ids:
-                        tool_result = await read_documents(
-                            document_ids=document_ids,
-                            db=db,
-                            max_documents=config.get(
-                                "configurable", {}).get("max_read_documents", 10),
-                        )
-                        # 保存文档内容
-                        if tool_result.get("success"):
-                            state["intermediate_data"]["documents"] = tool_result.get(
-                                "documents", [])
-                    else:
-                        logger.warning("⚠️ 未找到document_ids，跳过read_documents")
-                        tool_result = {"success": False, "error": "未找到文档ID"}
-                elif step_name == "analyze_documents":
-                    # 智能分析文档：内部自动决定批量/逐份/分组
-                    from services.tools.analysis.document_analyzer import analyze_documents
-                    documents = state["intermediate_data"].get("documents", [])
-                    tool_result = await analyze_documents(
-                        query=query,
-                        documents=documents,
-                        db=db,
-                        max_context_length=config.get(
-                            "configurable", {}).get("rag_max_length", 10000),
-                    )
-                    # 保存分析结果到final_answer
-                    if tool_result.get("success"):
-                        state["final_answer"] = tool_result.get("analysis")
-                        logger.info(
-                            f"✅ 文档分析完成，模式: {tool_result.get('reading_mode')}")
-                # elif step_name == "get_document_summary":
-                #     from services.tools.statistics.get_document_summary import get_document_summary
-                #     tool_result = await get_document_summary(db, template_id)
-                # elif step_name == "get_classification_info":
-                #     from services.tools.statistics.get_classification_info import get_classification_info
-                #     tool_result = await get_classification_info(db, template_id)
-                elif step_name == "list_all_templates":
-                    from services.tools.statistics.list_all_templates import list_all_templates
-                    tool_result = await list_all_templates(db)
-                else:
-                    logger.warning(f"⚠️ 未知的工具: {step_name}")
-                    continue
-
-                state["tool_results"].append({
+                # 记录结果
+                result_entry = {
                     "step": i + 1,
-                    "tool_name": step_name,
+                    "name": step_name,
                     "description": step_desc,
-                    "result": tool_result,
-                })
+                    "result": result
+                }
 
-                logger.info(f"✅ 工具执行完成: {step_name}")
-
-            elif step_type == "agent":
-                # 执行智能体
-                if step_name == "retrieval_agent":
-                    # 检索智能体
-                    retrieval_result = await retrieve_documents_v2(
-                        query=query,
-                        template_id=template_id,
-                        session_id=session_id,
-                        db=db,
-                        es_client=es_client,
-                        es_index=es_index,
-                        top_k=20,
-                        enable_deduplication=True,
-                    )
-
-                    state["agent_results"].append({
-                        "step": i + 1,
-                        "agent_name": step_name,
-                        "description": step_desc,
-                        "result": retrieval_result,
-                    })
-
-                    # 保存检索到的文档
-                    if retrieval_result.get("success"):
-                        state["intermediate_data"]["documents"] = retrieval_result.get(
-                            "documents", [])
-                        state["documents"] = retrieval_result.get(
-                            "documents", [])
-                        logger.info(
-                            f"✅ 检索智能体执行完成: {len(state['documents'])} 篇文档")
-                    else:
-                        logger.warning(
-                            f"⚠️ 检索智能体执行失败: {retrieval_result.get('error')}")
-
-                elif step_name == "qa_agent":
-                    # 问答智能体
-                    documents = state["intermediate_data"].get("documents", [])
-
-                    qa_result = await generate_answer_v2(
-                        query=query,
-                        documents=documents,
-                        db=db,
-                        max_context_length=10000,
-                    )
-
-                    state["agent_results"].append({
-                        "step": i + 1,
-                        "agent_name": step_name,
-                        "description": step_desc,
-                        "result": qa_result,
-                    })
-
-                    # 保存答案
-                    if qa_result.get("success"):
-                        state["final_answer"] = qa_result.get("answer")
-                        logger.info(f"✅ 问答智能体执行完成")
-                    else:
-                        logger.warning(
-                            f"⚠️ 问答智能体执行失败: {qa_result.get('error')}")
+                if step_type == "tool":
+                    state["tool_results"].append(result_entry)
                 else:
-                    logger.warning(f"⚠️ 未知的智能体: {step_name}")
+                    state["agent_results"].append(result_entry)
+
+                # 特殊处理：更新中间数据
+                if result.get("success"):
+                    if step_type == "agent" and step_name == "retrieval_agent":
+                        state["intermediate_data"]["documents"] = result.get(
+                            "documents", [])
+                        state["documents"] = result.get("documents", [])
+                    elif step_type == "tool" and step_name == "search_documents_by_classification":
+                        state["intermediate_data"]["document_ids"] = result.get(
+                            "document_ids", [])
+                    elif step_type == "tool" and step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+                        state["intermediate_data"]["documents"] = result.get(
+                            "documents", [])
+
+                logger.info(f"✅ 步骤{i+1}完成: {step_name}")
+
+            except Exception as e:
+                import traceback
+                logger.error(f"❌ 步骤{i+1}失败: {step_name}, 错误: {e}")
+                logger.error(traceback.format_exc())
+
+                # 记录错误
+                result_entry = {
+                    "step": i + 1,
+                    "name": step_name,
+                    "description": step_desc,
+                    "result": {"success": False, "error": str(e)}
+                }
+
+                if step_type == "tool":
+                    state["tool_results"].append(result_entry)
+                else:
+                    state["agent_results"].append(result_entry)
+
+                # 继续执行后续步骤（可根据需要调整策略）
 
         state["success"] = True
         logger.info("✅ 所有步骤执行完成")
@@ -550,48 +503,152 @@ async def finalize_answer(
     logger.info("📝 ========== 节点: 生成最终答案 ===========")
 
     query = state["query"]
-
-    # 从 config 获取 db
     db: AsyncSession = config.get("configurable", {}).get("db")  # type: ignore
 
     try:
-        # 如果已经有答案，直接返回
+        # 如果已经有答案（qa_agent生成的），直接返回
         if state["final_answer"]:
             logger.info("✅ 已有最终答案，跳过生成")
+            state["success"] = True
             return state
 
         # 根据执行模式生成答案
-        if state["execution_pattern"] == "tool_only" and state["tool_results"]:
-            # 如果已经有final_answer（比如analyze_documents工具已经生成），直接返回
-            if state["final_answer"]:
-                logger.info("✅ 工具已生成答案，直接返回")
-                return state
-
-            # 否则格式化工具结果
-            from services.intent_router import format_tool_result_as_answer
-
-            combined_results = {
-                "query": query,
-                "execution_plan": state["execution_plan"],
-                "tool_results": state["tool_results"],
-            }
-
-            state["final_answer"] = await format_tool_result_as_answer(
-                combined_results, query, db
-            )
-            logger.info("✅ 工具结果格式化完成")
+        if state["execution_pattern"] == "llm_direct":
+            # LLM直接回答的情况，已经有答案
+            state["success"] = True
+            return state
 
         elif state["execution_pattern"] == "agent_only":
-            # 仅智能体，看是否有答案
+            # 仅检索模式
             if state["documents"]:
-                # 有文档但没答案，返回文档列表
                 state["final_answer"] = None  # 仅检索，不生成答案
                 logger.info("📚 仅检索模式，不生成答案")
             else:
                 state["final_answer"] = "抱歉，没有找到相关文档。"
                 logger.warning("⚠️ 未找到文档")
+            state["success"] = True
+            return state
 
+        # 其他模式：根据所有步骤结果生成详细答案
+        logger.info("🤖 根据执行结果生成详细答案")
+
+        llm_client = get_llm_client()
+
+        # 构建执行过程描述
+        execution_summary = []
+        execution_summary.append(f"用户问题：{query}\n")
+        execution_summary.append(f"执行模式：{state['execution_pattern']}")
+        execution_summary.append(f"执行推理：{state['reasoning']}\n")
+
+        execution_summary.append("执行步骤及结果：")
+
+        # 添加工具执行结果
+        for i, tool_result in enumerate(state["tool_results"]):
+            step_num = tool_result.get("step", i + 1)
+            name = tool_result.get("name", "未知工具")
+            desc = tool_result.get("description", "")
+            result = tool_result.get("result", {})
+
+            execution_summary.append(f"\n步骤{step_num}：{desc} (工具: {name})")
+
+            if result.get("success"):
+                # 根据不同工具类型格式化结果
+                if name == "get_template_statistics":
+                    # get_template_statistics 直接返回数据，不是嵌套在statistics里
+                    total_docs = result.get('total_documents', 0)
+                    execution_summary.append(f"  - 文档总数：{total_docs}")
+
+                    # 显示分类分布
+                    class_dist = result.get('class_code_distribution', [])
+                    if class_dist:
+                        execution_summary.append(
+                            f"  - 分类分布：{len(class_dist)}个分类")
+                        for item in class_dist[:3]:  # 只显示前3个
+                            execution_summary.append(
+                                f"    * {item.get('class_code', '未知')}: {item.get('count', 0)}篇")
+                elif name == "search_documents_by_classification":
+                    doc_ids = result.get("document_ids", [])
+                    execution_summary.append(f"  - 找到{len(doc_ids)}篇文档")
+                elif name in ["get_document_contents", "skim_documents", "read_documents"]:
+                    docs = result.get("documents", [])
+                    execution_summary.append(f"  - 读取{len(docs)}篇文档")
+                    for doc in docs[:3]:  # 只显示前3篇
+                        execution_summary.append(
+                            f"    * {doc.get('title', '未命名')}")
+                elif name == "analyze_documents":
+                    analysis = result.get("analysis", "")
+                    if analysis:
+                        execution_summary.append(
+                            f"  - 分析结果：{analysis[:200]}...")
+                else:
+                    # 通用处理
+                    execution_summary.append(f"  - 执行成功")
+            else:
+                execution_summary.append(
+                    f"  - 执行失败：{result.get('error', '未知错误')}")
+
+        # 添加智能体执行结果
+        for i, agent_result in enumerate(state["agent_results"]):
+            step_num = agent_result.get(
+                "step", len(state["tool_results"]) + i + 1)
+            name = agent_result.get("name", "未知智能体")
+            desc = agent_result.get("description", "")
+            result = agent_result.get("result", {})
+
+            execution_summary.append(f"\n步骤{step_num}：{desc} (智能体: {name})")
+
+            if result.get("success"):
+                if name == "retrieval_agent":
+                    docs = result.get("documents", [])
+                    execution_summary.append(f"  - 检索到{len(docs)}篇相关文档")
+                    for doc in docs[:5]:  # 显示前5篇
+                        execution_summary.append(
+                            f"    * {doc.get('title', '未命名')} (相关度: {doc.get('score', 0):.2f})")
+                elif name == "qa_agent":
+                    answer = result.get("answer", "")
+                    execution_summary.append(f"  - 生成答案：{answer[:200]}...")
+                else:
+                    execution_summary.append(f"  - 执行成功")
+            else:
+                execution_summary.append(
+                    f"  - 执行失败：{result.get('error', '未知错误')}")
+
+        execution_context = "\n".join(execution_summary)
+
+        # 调用LLM生成最终答案
+        system_prompt = """你是一个专业的智能助手，负责根据执行过程和结果生成详细的答案。
+
+要求：
+1. 按照执行步骤顺序组织答案
+2. 每个步骤说明：做了什么、得到了什么结果
+3. 用清晰的格式（标题、列表等）呈现
+4. 最后总结回答用户的问题
+5. 使用Markdown格式
+
+注意：
+- 不要编造信息，只使用执行结果中的实际内容
+- 如果某步骤失败，说明原因
+- 语气友好、专业
+"""
+
+        user_prompt = f"""请根据以下执行过程生成详细答案：
+
+{execution_context}
+
+请生成一个清晰、详细、有条理的答案。
+"""
+
+        final_answer = await llm_client.chat_completion(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            db=db,
+        )
+
+        state["final_answer"] = final_answer
         state["success"] = True
+        logger.info("✅ 最终答案生成完成")
 
     except Exception as e:
         logger.error(f"❌ 生成最终答案失败: {e}")
@@ -601,6 +658,228 @@ async def finalize_answer(
         state["success"] = False
 
     return state
+
+# ==================== 简单三步执行函数（不使用LangGraph） ====================
+
+
+async def execute_master_router(
+    query: str,
+    template_id: int,
+    db: AsyncSession,
+    es_client,
+    es_index: str = "dochive_documents",
+):
+    """
+    主路由器执行函数：三步流程
+
+    第一步：规划 - LLM选择合适的工具/智能体
+    第二步：执行 - 异步顺序执行每一步，yield结果
+    第三步：总结 - 格式化最终结果
+
+    Yields:
+        dict: 每一步的执行结果
+            - type: 'plan' | 'step_result' | 'final'
+            - data: 具体数据
+    """
+    import uuid
+    session_id = str(uuid.uuid4())
+
+    # ========== 第一步：规划 ==========
+    logger.info("🧠 ========== 第一步：规划 ===========")
+
+    state: ExecutionState = {
+        "query": query,
+        "template_id": template_id,
+        "session_id": session_id,
+        "execution_pattern": "",
+        "reasoning": "",
+        "execution_plan": [],
+        "tool_results": [],
+        "agent_results": [],
+        "intermediate_data": {},
+        "final_answer": None,
+        "documents": [],
+        "success": False,
+        "error": None,
+    }
+
+    config = {"configurable": {"db": db, "es": es_client, "es_index": es_index}}
+    state = await plan_execution(state, config)
+
+    # Yield 执行计划
+    yield {
+        "type": "plan",
+        "data": {
+            "execution_pattern": state["execution_pattern"],
+            "execution_plan": state["execution_plan"],
+            "reasoning": state["reasoning"],
+        }
+    }
+
+    # ========== 第二步：执行 ==========
+    if state["execution_pattern"] != "llm_direct":
+        logger.info("🛠️ ========== 第二步：执行 ===========")
+
+        from services.tools.tool_registry import execute_tool_call
+        from services.tools.analysis.document_analyzer import analyze_documents
+
+        max_read_documents = 10
+        rag_max_length = 10000
+
+        # 逐步执行
+        for i, step in enumerate(state["execution_plan"]):
+            step_type = step.get("type")
+            step_name = step.get("name")
+            step_desc = step.get("description", "")
+
+            logger.info(f"🔧 执行第{i+1}步: {step_type}/{step_name}")
+
+            try:
+                result = None
+
+                # 执行工具或智能体
+                if step_type == "tool":
+                    arguments = {"template_id": template_id}
+
+                    if step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+                        arguments["document_ids"] = state["intermediate_data"].get(
+                            "document_ids", [])
+                        if step_name == "read_documents":
+                            arguments["max_documents"] = max_read_documents
+                    elif step_name == "analyze_documents":
+                        # 特殊处理
+                        documents = state["intermediate_data"].get(
+                            "documents", [])
+                        result = await analyze_documents(
+                            query=query,
+                            documents=documents,
+                            db=db,
+                            max_context_length=rag_max_length,
+                        )
+                    elif step_name == "search_documents_by_classification":
+                        arguments["class_code"] = None
+
+                    if result is None:
+                        result = await execute_tool_call(
+                            tool_name=step_name,
+                            arguments=arguments,
+                            db=db,
+                            es_client=es_client,
+                            es_index=es_index,
+                        )
+
+                elif step_type == "agent":
+                    if step_name == "retrieval_agent":
+                        result = await retrieve_documents_v2(
+                            query=query,
+                            template_id=template_id,
+                            session_id=session_id,
+                            db=db,
+                            es_client=es_client,
+                            es_index=es_index,
+                            top_k=20,
+                            enable_deduplication=True,
+                        )
+                    elif step_name == "qa_agent":
+                        documents = state["intermediate_data"].get(
+                            "documents", [])
+                        result = await generate_answer_v2(
+                            query=query,
+                            documents=documents,
+                            db=db,
+                            max_context_length=rag_max_length,
+                        )
+                    else:
+                        raise RuntimeError(f"未知的智能体: {step_name}")
+                else:
+                    raise RuntimeError(f"未知的 step_type: {step_type}")
+
+                # 记录结果
+                result_entry = {
+                    "step": i + 1,
+                    "name": step_name,
+                    "description": step_desc,
+                    "result": result
+                }
+
+                if step_type == "tool":
+                    state["tool_results"].append(result_entry)
+                else:
+                    state["agent_results"].append(result_entry)
+
+                # 更新中间数据
+                if result.get("success"):
+                    if step_type == "agent" and step_name == "retrieval_agent":
+                        state["intermediate_data"]["documents"] = result.get(
+                            "documents", [])
+                        state["documents"] = result.get("documents", [])
+                    elif step_type == "tool" and step_name == "search_documents_by_classification":
+                        state["intermediate_data"]["document_ids"] = result.get(
+                            "document_ids", [])
+                    elif step_type == "tool" and step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+                        state["intermediate_data"]["documents"] = result.get(
+                            "documents", [])
+                    elif step_type == "agent" and step_name == "qa_agent":
+                        state["final_answer"] = result.get("answer")
+
+                logger.info(f"✅ 步骤{i+1}完成: {step_name}")
+
+                # Yield 每一步的结果
+                yield {
+                    "type": "step_result",
+                    "data": {
+                        "step": i + 1,
+                        "step_type": step_type,
+                        "step_name": step_name,
+                        "description": step_desc,
+                        "result": result,
+                        "documents": state.get("documents", []) if step_type == "agent" else None,
+                    }
+                }
+
+            except Exception as e:
+                import traceback
+                logger.error(f"❌ 步骤{i+1}失败: {step_name}, 错误: {e}")
+                logger.error(traceback.format_exc())
+
+                result_entry = {
+                    "step": i + 1,
+                    "name": step_name,
+                    "description": step_desc,
+                    "result": {"success": False, "error": str(e)}
+                }
+
+                if step_type == "tool":
+                    state["tool_results"].append(result_entry)
+                else:
+                    state["agent_results"].append(result_entry)
+
+                yield {
+                    "type": "step_result",
+                    "data": {
+                        "step": i + 1,
+                        "step_type": step_type,
+                        "step_name": step_name,
+                        "description": step_desc,
+                        "result": {"success": False, "error": str(e)},
+                    }
+                }
+
+    # ========== 第三步：总结 ==========
+    logger.info("📝 ========== 第三步：总结 ===========")
+
+    state = await finalize_answer(state, config)
+
+    # Yield 最终结果
+    yield {
+        "type": "final",
+        "data": {
+            "final_answer": state["final_answer"],
+            "documents": state["documents"],
+            "success": state["success"],
+            "error": state.get("error"),
+        }
+    }
 
 
 # ==================== 决策函数 ====================

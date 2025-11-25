@@ -680,10 +680,6 @@ async def ask_question_beta_stream(
         es_client = None
         task_id = str(uuid.uuid4())
 
-        # 用于追踪步骤进度
-        current_step_index = 0
-        step_results = {}
-
         try:
             # 生成会话ID
             session_id = str(uuid.uuid4())
@@ -695,187 +691,99 @@ async def ask_question_beta_stream(
 
             logger.info(f"🚀 [Beta] 开始处理问题: {qa_request.question}")
 
-            # 初始化状态
-            from services.agents.master_router import ExecutionState, master_router_app
+            # 使用新的三步执行函数
+            from services.agents.master_router import execute_master_router
 
-            initial_state: ExecutionState = {
-                "query": qa_request.question,
-                "template_id": qa_request.template_id,
-                "session_id": session_id,
-                "execution_pattern": "",
-                "reasoning": "",
-                "execution_plan": [],
-                "tool_results": [],
-                "agent_results": [],
-                "intermediate_data": {},
-                "final_answer": None,
-                "documents": [],
-                "success": False,
-                "error": None,
-            }
-
-            # 使用 astream 流式执行 LangGraph
-            state_data = None
-            execution_plan = []
-            last_tool_count = 0
-            last_agent_count = 0
-            plan_sent = False
-
-            async for step_result in master_router_app.astream(
-                initial_state,
-                config={
-                    "configurable": {
-                        "db": db,
-                        "es": es_client,
-                        "es_index": config.ELASTICSEARCH_INDEX,
-                    }
-                },
-                stream_mode="values",  # 使用values模式，获取完整状态
+            async for step_data in execute_master_router(
+                query=qa_request.question,
+                template_id=qa_request.template_id,
+                db=db,
+                es_client=es_client,
+                es_index=config.ELASTICSEARCH_INDEX,
             ):
-                # values模式返回完整状态，不是{node: state}格式
-                state_data = step_result
+                step_type = step_data["type"]
+                data = step_data["data"]
 
-                # 发送执行计划（只发送一次）
-                if not plan_sent and state_data.get("execution_plan"):
-                    execution_plan = state_data["execution_plan"]
-                    plan_sent = True
-
+                if step_type == "plan":
+                    # 发送执行计划
                     await asyncio.sleep(0.3)
-
                     yield SSEEvent(
                         event="plan",
                         data={
-                            "execution_pattern": state_data.get("execution_pattern", ""),
-                            "execution_plan": execution_plan,
-                            "reasoning": state_data.get("reasoning", ""),
+                            "execution_pattern": data["execution_pattern"],
+                            "execution_plan": data["execution_plan"],
+                            "reasoning": data["reasoning"],
                         },
                         id=task_id,
                         done=False,
                     ).model_dump_json()
+                    logger.info(
+                        f"📊 [Beta] 已发送执行计划，共{len(data['execution_plan'])}步")
 
-                    logger.info(f"📊 [Beta] 已发送执行计划，共{len(execution_plan)}步")
+                elif step_type == "step_result":
+                    # 发送步骤结果
+                    await asyncio.sleep(0.3)
 
-                # 检测工具执行进度
-                current_tool_results = state_data.get("tool_results", [])
-                current_tool_count = len(current_tool_results)
+                    result_data = {data["step_type"] +
+                                   "_result": {"result": data["result"]}}
+                    if data.get("documents"):
+                        result_data["documents"] = data["documents"]
 
-                if current_tool_count > last_tool_count:
-                    # 有新的工具执行完成，发送每个新完成的工具
-                    for i in range(last_tool_count, current_tool_count):
-                        tool_result = current_tool_results[i]
-                        step_num = tool_result.get("step", i + 1)
+                    yield SSEEvent(
+                        event="stage_complete",
+                        data={
+                            "stage": f"step_{data['step']}",
+                            "step_index": data["step"],
+                            "message": f"{data['description']}完成",
+                            "result": result_data,
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
+                    logger.info(f"📊 [Beta] 已发送步骤{data['step']}结果")
 
-                        # 找到对应的执行计划步骤
-                        step_info = None
-                        for step in execution_plan:
-                            if step.get("step") == step_num:
-                                step_info = step
-                                break
-
-                        await asyncio.sleep(0.3)
+                elif step_type == "final":
+                    # 发送文档引用（如果有）
+                    if data["documents"]:
+                        await asyncio.sleep(0.5)
+                        references = []
+                        for doc in data["documents"]:
+                            references.append({
+                                "document_id": doc.get("id") or doc.get("document_id"),
+                                "title": doc.get("title", "未命名文档"),
+                                "snippet": doc.get("ai_summary") or doc.get("content", "")[:200],
+                                "score": doc.get("score", 1.0),
+                            })
 
                         yield SSEEvent(
-                            event="stage_complete",
-                            data={
-                                "stage": f"step_{step_num}",
-                                "step_index": step_num,
-                                "message": f"{step_info.get('description', '步骤') if step_info else '步骤'}完成",
-                                "result": {"tool_result": tool_result},
-                            },
+                            event="documents",
+                            data={"documents": references},
                             id=task_id,
                             done=False,
                         ).model_dump_json()
 
-                        logger.info(f"📊 [Beta] 已发送工具执行进度: 步骤{step_num}")
+                    # 发送答案
+                    answer = data["final_answer"] or "抱歉，无法生成答案。"
+                    await asyncio.sleep(0.5)
 
-                    last_tool_count = current_tool_count
+                    yield SSEEvent(
+                        event="answer",
+                        data={"content": answer},
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
 
-                # 检测智能体执行进度
-                current_agent_results = state_data.get("agent_results", [])
-                current_agent_count = len(current_agent_results)
-
-                if current_agent_count > last_agent_count:
-                    # 有新的智能体执行完成
-                    for i in range(last_agent_count, current_agent_count):
-                        agent_result = current_agent_results[i]
-                        step_num = agent_result.get(
-                            "step", last_tool_count + i + 1)
-
-                        # 找到对应的执行计划步骤
-                        step_info = None
-                        for step in execution_plan:
-                            if step.get("step") == step_num:
-                                step_info = step
-                                break
-
-                        await asyncio.sleep(0.3)
-
-                        result_data = {"agent_result": agent_result}
-                        if state_data.get("documents"):
-                            result_data["documents"] = state_data["documents"]
-
-                        yield SSEEvent(
-                            event="stage_complete",
-                            data={
-                                "stage": f"step_{step_num}",
-                                "step_index": step_num,
-                                "message": f"{step_info.get('description', '步骤') if step_info else '步骤'}完成",
-                                "result": result_data,
-                            },
-                            id=task_id,
-                            done=False,
-                        ).model_dump_json()
-
-                        logger.info(f"📊 [Beta] 已发送智能体执行进度: 步骤{step_num}")
-
-                    last_agent_count = current_agent_count
-
-            final_state = state_data if state_data else initial_state
-
-            logger.info(
-                f"📊 [Beta] 执行结果: success={final_state['success']}, pattern={final_state['execution_pattern']}")
-
-            # 发送文档引用（如果有）
-            if final_state["documents"]:
-                await asyncio.sleep(0.5)
-
-                # 转换为前端需要的格式
-                references = []
-                for doc in final_state["documents"]:
-                    references.append({
-                        "document_id": doc.get("id") or doc.get("document_id"),
-                        "title": doc.get("title", "未命名文档"),
-                        "snippet": doc.get("ai_summary") or doc.get("content", "")[:200],
-                        "score": doc.get("score", 1.0),
-                    })
-
-                yield SSEEvent(
-                    event="documents",
-                    data={"documents": references},
-                    id=task_id,
-                    done=False,
-                ).model_dump_json()
-
-            # 发送答案（非流式）
-            answer = final_state["final_answer"] or "抱歉，无法生成答案。"
-
-            await asyncio.sleep(0.5)
-
-            # 一次性发送完整答案，不分块
-            yield SSEEvent(
-                event="answer",
-                data={"content": answer},
-                id=task_id,
-                done=False,
-            ).model_dump_json()
-
-            # 发送完成信号
-            yield SSEEvent(
-                event="complete",
-                data={"message": "回答完成"},
-                id=task_id,
-                done=True,
-            ).model_dump_json()
+                    # 发送完成信号（带上答案）
+                    yield SSEEvent(
+                        event="complete",
+                        data={
+                            "message": "回答完成",
+                            "answer": answer,  # 关键：带上答案
+                            "documents": references if data["documents"] else [],
+                        },
+                        id=task_id,
+                        done=True,
+                    ).model_dump_json()
 
         except Exception as e:
             logger.error(f"❌ [Beta] 问答失败: {e}")
