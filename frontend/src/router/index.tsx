@@ -9,6 +9,7 @@ import QAPage from "../pages/QA";
 import QABetaPage from "../pages/QABeta";
 import LLMLogPage from "../pages/LLMLog";
 import TemplateConfigPage from "../pages/TemplateConfig";
+import AgentEditorPage from "../pages/AgentEditor";
 
 export const router = createBrowserRouter([
     {
@@ -28,6 +29,7 @@ export const router = createBrowserRouter([
             { path: '/qa-beta', element: <QABetaPage /> },
             { path: '/llm-logs', element: <LLMLogPage /> },
             { path: '/template-configs', element: <TemplateConfigPage /> },
+            { path: '/agent-editor', element: <AgentEditorPage /> },
         ],
     },
     { path: '*', element: <Error /> },

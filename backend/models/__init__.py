@@ -6,6 +6,7 @@ from models.database_models import (
     SystemConfig,
     User,
     UserRole,
+    CustomAgent
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "OperationLog",
     "SystemConfig",
     "ClassTemplateConfigs",
+    "CustomAgent",
 ]

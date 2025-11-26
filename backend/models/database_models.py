@@ -5,7 +5,7 @@ from datetime import datetime
 from loguru import logger
 from sqlalchemy import Boolean, Column
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy import ForeignKey, Integer, String, Text, event, inspect
+from sqlalchemy import ForeignKey, Integer, String, Text, event, inspect, JSON
 
 from database import Base
 
@@ -259,7 +259,8 @@ class DocumentType(Base, ToDictMixin):
     __tablename__ = "document_types"
 
     id = Column(Integer, primary_key=True, index=True)
-    template_id = Column(Integer, nullable=False, index=True)  # 关联 class_templates.id
+    template_id = Column(Integer, nullable=False,
+                         index=True)  # 关联 class_templates.id
     type_code = Column(
         String(50), nullable=False, index=True
     )  # 类型编码，如：DEV_DOC、DESIGN_DOC
@@ -276,7 +277,8 @@ class DocumentTypeField(Base, ToDictMixin):
     __tablename__ = "document_type_fields"
 
     id = Column(Integer, primary_key=True, index=True)
-    doc_type_id = Column(Integer, nullable=False, index=True)  # 关联 document_types.id
+    doc_type_id = Column(Integer, nullable=False,
+                         index=True)  # 关联 document_types.id
     field_name = Column(String(100), nullable=False)  # 字段名称，如：编制人、任务数量
     description = Column(
         String(255), nullable=False
@@ -294,8 +296,10 @@ class TemplateDocumentMapping(Base, ToDictMixin):
     __tablename__ = "template_document_mappings"
 
     id = Column(Integer, primary_key=True, index=True)
-    template_id = Column(Integer, nullable=False, index=True)  # 关联 class_templates.id
-    document_id = Column(Integer, nullable=False, index=True)  # 关联 documents.id
+    template_id = Column(Integer, nullable=False,
+                         index=True)  # 关联 class_templates.id
+    document_id = Column(Integer, nullable=False,
+                         index=True)  # 关联 documents.id
     class_code = Column(String(100), index=True)  # 分类编号
 
     # 状态信息
@@ -355,9 +359,11 @@ class LLMLog(Base, ToDictMixin):
     __tablename__ = "llm_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    provider = Column(String(50), nullable=False, index=True)  # openai, deepseek等
+    provider = Column(String(50), nullable=False,
+                      index=True)  # openai, deepseek等
     model = Column(String(100), nullable=False, index=True)  # 模型名称
-    _input_messages = Column("input_messages", Text, nullable=False)  # 输入消息（JSON）
+    _input_messages = Column("input_messages", Text,
+                             nullable=False)  # 输入消息（JSON）
     output_content = Column(Text)  # 输出内容
     prompt_tokens = Column(Integer, default=0)  # 提示词token数
     completion_tokens = Column(Integer, default=0)  # 完成token数
@@ -405,10 +411,73 @@ class LLMLog(Base, ToDictMixin):
         return result
 
 
+class CustomAgent(Base, ToDictMixin):
+    """自定义Agent表"""
+
+    __tablename__ = "custom_agents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False, index=True, comment="Agent名称")
+    description = Column(Text, comment="Agent描述")
+    template_id = Column(Integer, index=True, comment="关联的模板ID")
+
+    # Agent定义
+    markdown_content = Column(Text, nullable=False,
+                              comment="Markdown格式的Agent定义")
+    execution_pattern = Column(String(
+        50), nullable=False, comment="执行模式：tool_only/agent_only/agent_chain/hybrid/llm_direct")
+    _steps = Column("steps", Text, nullable=False, comment="执行步骤的JSON数组")
+    mermaid_diagram = Column(Text, comment="Mermaid流程图代码")
+
+    # 元信息
+    version = Column(String(20), default="1.0")
+    is_active = Column(Boolean, default=True)
+
+    # 审计信息
+    creator_id = Column(Integer, index=True, comment="创建者ID")
+    created_at = Column(Integer, default=lambda: int(time.time()))
+    updated_at = Column(Integer, default=lambda: int(time.time()))
+
+    @property
+    def steps(self):
+        """自动将JSON字符串转为list"""
+        import json
+        if isinstance(self._steps, str):
+            return json.loads(self._steps)
+        return self._steps
+
+    @steps.setter
+    def steps(self, value):
+        """自动将list转为JSON字符串"""
+        import json
+        if isinstance(value, (list, dict)):
+            self._steps = json.dumps(value, ensure_ascii=False)
+        else:
+            self._steps = value
+
+    def to_dict(self):
+        """重写to_dict，确保steps和metadata返回解析后的值"""
+        result = super().to_dict()
+        import json
+
+        # 解析steps
+        if "_steps" in result:
+            result["steps"] = (
+                json.loads(result.pop("_steps"))
+                if isinstance(result.get("_steps"), str)
+                else result.pop("_steps")
+            )
+
+        return result
+
+
 # 注册 before_update 事件监听器，自动更新 updated_at 时间戳
 event.listen(User, "before_update", update_timestamp_before_update)
 event.listen(ClassTemplate, "before_update", update_timestamp_before_update)
-event.listen(ClassTemplateConfigs, "before_update", update_timestamp_before_update)
+event.listen(ClassTemplateConfigs, "before_update",
+             update_timestamp_before_update)
 event.listen(DocumentType, "before_update", update_timestamp_before_update)
-event.listen(DocumentTypeField, "before_update", update_timestamp_before_update)
+event.listen(DocumentTypeField, "before_update",
+             update_timestamp_before_update)
 event.listen(SystemConfig, "before_update", update_timestamp_before_update)
+event.listen(CustomAgent, "before_update", update_timestamp_before_update)

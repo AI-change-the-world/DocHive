@@ -1,6 +1,6 @@
 import { Layout, Menu, Typography } from 'antd';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { FileTextOutlined, FolderOpenOutlined, SearchOutlined, DashboardOutlined, QuestionCircleOutlined, BarChartOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { FileTextOutlined, FolderOpenOutlined, SearchOutlined, DashboardOutlined, QuestionCircleOutlined, BarChartOutlined, SettingOutlined, ThunderboltOutlined, RobotOutlined } from '@ant-design/icons';
 
 const { Header, Sider, Content } = Layout;
 
@@ -21,6 +21,7 @@ export default function AppLayout() {
         if (path.includes('/qa')) return 'qa';
         if (path.includes('/llm-logs')) return 'llm-logs';
         if (path.includes('/template-configs')) return 'template-configs';
+        if (path.includes('/agent-editor')) return 'agent-editor';
         return 'dashboard'; // 默认选中项
     };
 
@@ -91,6 +92,13 @@ export default function AppLayout() {
                                 onClick: () => navigate('/qa-beta'),
                                 icon: <ThunderboltOutlined className="text-purple-600" />,
                                 className: 'mx-2 mb-1 rounded-lg hover:bg-purple-50 transition-all duration-200'
+                            },
+                            {
+                                key: 'agent-editor',
+                                label: <span className="font-medium">Agent编辑</span>,
+                                onClick: () => navigate('/agent-editor'),
+                                icon: <RobotOutlined className="text-blue-600" />,
+                                className: 'mx-2 mb-1 rounded-lg hover:bg-blue-50 transition-all duration-200'
                             },
                             {
                                 key: 'templates',
