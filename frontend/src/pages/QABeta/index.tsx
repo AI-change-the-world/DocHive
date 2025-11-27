@@ -43,6 +43,7 @@ import { qaService } from '../../services/qa';
 import { documentService } from '../../services/document';
 import ReactMarkdown from 'react-markdown';
 import { v4 as uuidv4 } from 'uuid';
+import html2canvas from 'html2canvas';
 
 const { TextArea } = Input;
 const { Title, Text, Paragraph } = Typography;
@@ -125,6 +126,7 @@ export default function QABetaPage() {
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
+    const messagesContainerRef = useRef<HTMLDivElement>(null);
 
     // 自动滚动
     const scrollToBottom = () => {
@@ -475,6 +477,53 @@ export default function QABetaPage() {
         setSessionId(uuidv4());
     };
 
+    // 导出对话历史为图片
+    const handleExportChat = async () => {
+        if (!messagesContainerRef.current) {
+            message.error('无法导出：未找到对话容器');
+            return;
+        }
+
+        if (messages.length === 0) {
+            message.warning('暂无对话历史可导出');
+            return;
+        }
+
+        try {
+            message.loading({ content: '正在生成图片...', key: 'export', duration: 0 });
+
+            // 使用html2canvas截取对话区域
+            const canvas = await html2canvas(messagesContainerRef.current, {
+                backgroundColor: '#f5f5f5',
+                scale: 2, // 提高清晰度
+                logging: false,
+                useCORS: true,
+                allowTaint: true,
+                windowWidth: messagesContainerRef.current.scrollWidth,
+                windowHeight: messagesContainerRef.current.scrollHeight,
+            });
+
+            // 转换为图片并下载
+            canvas.toBlob((blob) => {
+                if (blob) {
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                    link.download = `对话历史_${timestamp}.png`;
+                    link.href = url;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                    message.success({ content: '导出成功！', key: 'export' });
+                } else {
+                    message.error({ content: '导出失败', key: 'export' });
+                }
+            }, 'image/png');
+        } catch (error) {
+            console.error('导出失败:', error);
+            message.error({ content: '导出失败，请重试', key: 'export' });
+        }
+    };
+
     // 提交用户输入
     const handleSubmitUserInput = () => {
         if (!selectedUserInput) {
@@ -603,15 +652,24 @@ export default function QABetaPage() {
                 </div>
                 <div className="flex items-center space-x-2">
                     {messages.length > 0 && (
-                        <Button size="small" onClick={handleClear} danger>
-                            清空对话
-                        </Button>
+                        <>
+                            <Button
+                                size="small"
+                                icon={<FileTextOutlined />}
+                                onClick={handleExportChat}
+                            >
+                                导出对话
+                            </Button>
+                            <Button size="small" onClick={handleClear} danger icon={<DeleteOutlined />}>
+                                清空对话
+                            </Button>
+                        </>
                     )}
                 </div>
             </div>
 
             {/* 消息列表 */}
-            <div className="flex-1 overflow-y-auto mb-4 space-y-4">
+            <div ref={messagesContainerRef} className="flex-1 overflow-y-auto mb-4 space-y-4">
                 {messages.length === 0 && !isStreaming && (
                     <Empty
                         image={Empty.PRESENTED_IMAGE_SIMPLE}
