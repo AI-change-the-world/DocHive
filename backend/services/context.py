@@ -6,11 +6,11 @@
 
 from contextvars import ContextVar
 from typing import Any, Dict, Optional
+
 from loguru import logger
 
-from services.tools.base import ToolContext
 from services.agents.base import AgentContext
-
+from services.tools.base import ToolContext
 
 # ==================== 上下文变量（线程/协程安全） ====================
 

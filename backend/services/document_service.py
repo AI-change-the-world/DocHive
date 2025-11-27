@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 import uuid
@@ -715,6 +716,378 @@ class DocumentService:
         object_name = file_path.split("/", 1)[1] if "/" in file_path else file_path
 
         return storage_client.get_presigned_url(object_name)
+
+    @staticmethod
+    async def create_document_from_text(
+        db: AsyncSession,
+        llm_client: LLMClient,
+        text_content: str,
+        title: str,
+        template_id: int,
+        user_id: int,
+    ) -> AsyncGenerator[str, Any]:
+        """
+        从文本内容直接创建文档（流式处理）
+
+        Args:
+            db: 数据库会话
+            llm_client: LLM客户端
+            text_content: 文本内容
+            title: 文档标题
+            template_id: 模板ID
+            user_id: 上传用户ID
+
+        Yields:
+            SSE事件流
+        """
+        _id = str(uuid.uuid4())
+
+        logger.info(f"[{_id}] 创建文档从文本开始")
+
+        event = SSEEvent(
+            event="create document from text", data=None, id=_id, done=False
+        )
+
+        # 1️⃣ 验证输入
+        if not text_content or not text_content.strip():
+            event.done = True
+            event.data = "[error] 文本内容不能为空"
+            yield event.model_dump_json(ensure_ascii=False)
+            return
+
+        if not title or not title.strip():
+            event.done = True
+            event.data = "[error] 文档标题不能为空"
+            yield event.model_dump_json(ensure_ascii=False)
+            return
+
+        event.data = "[info] 开始处理文本内容..."
+        yield event.model_dump_json(ensure_ascii=False)
+
+        await asyncio.sleep(0.5)
+
+        # 2️⃣ 获取模板
+        result = await db.execute(
+            select(ClassTemplate).where(ClassTemplate.id == template_id)
+        )
+        template = result.scalar_one_or_none()
+
+        if not template:
+            event.done = True
+            event.data = "[error] 模板不存在"
+            yield event.model_dump_json(ensure_ascii=False)
+            return
+
+        # 3️⃣ 获取文档类型
+        doc_type_result = await db.execute(
+            select(DocumentType).where(DocumentType.template_id == template_id)
+        )
+        doc_types = doc_type_result.scalars().all()
+
+        if not doc_types:
+            event.done = True
+            event.data = "[error] 文档类型不存在"
+            yield event.model_dump_json(ensure_ascii=False)
+            return
+
+        # 4️⃣ 获取模板的层级定义
+        template_json_list: List[Dict[str, Any]] = getattr(template, "levels") or []
+
+        # 5️⃣ 检查并生成编码提取提示
+        class_template_config_result = await db.execute(
+            select(ClassTemplateConfigs).where(
+                ClassTemplateConfigs.template_id == template_id,
+                ClassTemplateConfigs.config_name == "code_extraction_prompt",
+            )
+        )
+        class_template_config = class_template_config_result.scalar_one_or_none()
+
+        type_level = -1
+        new_list = []
+        for i in template_json_list:
+            if i.get("is_doc_type", False):
+                type_level = i.get("level", -1)
+                continue
+            new_list.append(i)
+
+        if class_template_config:
+            code_prompt = class_template_config.config_value
+            event.data = "[info] 使用自定义的编码提取提示"
+            yield event.model_dump_json(ensure_ascii=False)
+        else:
+            event.data = "[info] 重新构造编码提取提示"
+            yield event.model_dump_json(ensure_ascii=False)
+
+            prompt = CODE_EXTRACTION_PROMPT.replace(
+                "{{JSON_CONFIG}}", json.dumps(new_list, ensure_ascii=False)
+            )
+            code_prompt = await llm_client.chat_completion(prompt, db=db)
+
+            # 保存配置
+            new_config = ClassTemplateConfigs(
+                template_id=template_id,
+                config_name="code_extraction_prompt",
+                config_value=code_prompt,
+            )
+            db.add(new_config)
+            await db.commit()
+
+        # 6️⃣ 提取编码结果
+        prompt_message = (
+            str(code_prompt) + "\n\n以下为文档内容，请帮我提取：" + str(text_content)
+        )
+        code_json_result = await llm_client.extract_json_response(
+            prompt_message,
+            db=db,
+        )
+        if isinstance(code_json_result, dict):
+            code_json: List[Dict[str, Any]] = [code_json_result]
+        elif isinstance(code_json_result, list):
+            code_json = code_json_result
+        else:
+            code_json = []
+
+        logger.info("👓️ 编码结果：" + str(code_json))
+        event.data = f"[info] 提取编码结果： {code_json}"
+        yield event.model_dump_json(ensure_ascii=False)
+
+        # 7️⃣ 提取文档类型
+        type_list = [
+            {
+                "type_code": getattr(i, "type_code"),
+                "type_name": getattr(i, "type_name"),
+                "description": getattr(i, "description"),
+            }
+            for i in doc_types
+        ]
+
+        type_prompt = TYPE_CLASSIFICATION_PROMPT.replace(
+            "{{type_code}}", json.dumps(type_list, ensure_ascii=False)
+        ).replace("{{doc}}", text_content)
+        type_json = await llm_client.extract_json_response(type_prompt, db=db)
+        logger.info("🩱 文档类型：" + str(type_json))
+        event.data = f"[info] 文档类型： {type_json}"
+        yield event.model_dump_json(ensure_ascii=False)
+
+        # 8️⃣ 合并编码和分类结果
+        type_value = (
+            type_json.get("type_code", "UNKNOWN")
+            if isinstance(type_json, dict)
+            else "UNKNOWN"
+        )
+        type_json_into_code_json = {
+            "code": "TYPE",
+            "value": type_value,
+            "level": type_level,
+        }
+
+        code_json.append(type_json_into_code_json)
+        dict_items = [item for item in code_json if isinstance(item, dict)]
+        sorted_code_json = sorted(
+            dict_items, key=lambda x: x.get("level", 0) if isinstance(x, dict) else 0
+        )
+
+        logger.info(
+            "✅ 合并编码和分类结果： "
+            + json.dumps(sorted_code_json, ensure_ascii=False)
+        )
+
+        # 9️⃣ 生成AI摘要
+        event.data = "[info] 生成AI文档摘要..."
+        yield event.model_dump_json(ensure_ascii=False)
+
+        ai_summary = ""
+        try:
+            summary_prompt = f"""
+你是一个文档摘要生成助手。请为以下文档生成简洁的摘要（100-200字）。
+
+【要求】
+1. 摘要应包含：文档是什么、有什么用、给谁用
+2. 语言简洁明了，条理清晰
+3. 不要包含无关信息，直接输出摘要内容
+4. 控制在100-200字之间
+
+【文档内容】
+{text_content[:2000]}  {'...' if len(text_content) > 2000 else ''}
+
+请直接输出摘要：
+"""
+            ai_summary = await llm_client.chat_completion(summary_prompt, db=db)
+            ai_summary = ai_summary.strip()
+            logger.info(f"✅ AI摘要生成成功: {ai_summary[:50]}...")
+            event.data = f"[info] AI摘要: {ai_summary[:100]}..."
+            yield event.model_dump_json(ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"❌ AI摘要生成失败: {e}")
+            ai_summary = (
+                text_content[:200] + "..." if len(text_content) > 200 else text_content
+            )
+            event.data = "[warning] AI摘要生成失败，使用简单截取"
+            yield event.model_dump_json(ensure_ascii=False)
+
+        # 🔟 获取对应 DocumentType
+        type_code = (
+            type_json.get("type_code", "UNKNOWN")
+            if isinstance(type_json, dict)
+            else "UNKNOWN"
+        )
+        doc_type_result = await db.execute(
+            select(DocumentType).where(
+                DocumentType.type_code == type_code,
+                DocumentType.template_id == template_id,
+            )
+        )
+        doc_type = doc_type_result.scalar_one_or_none()
+
+        # 1️⃣1️⃣ 构造文件编码
+        file_code_id_prefix = "-".join(
+            (
+                str(i.get("value"))
+                if isinstance(i, dict) and i.get("value") is not None
+                else "UNKNOWN"
+            )
+            for i in sorted_code_json
+        )
+        logger.info("✅ 编码前缀：" + file_code_id_prefix)
+        event.data = f"[info] 编码前缀： {file_code_id_prefix}"
+        yield event.model_dump_json(ensure_ascii=False)
+
+        # 生成数字序号
+        event.data = "[info] 生成文档序号..."
+        yield event.model_dump_json(ensure_ascii=False)
+
+        result = await db.execute(
+            select(TemplateDocumentMapping.class_code).where(
+                TemplateDocumentMapping.template_id == template_id,
+                TemplateDocumentMapping.class_code.like(f"{file_code_id_prefix}-%"),
+            )
+        )
+        existing_codes = result.scalars().all()
+
+        max_seq = 0
+        for code in existing_codes:
+            if code:
+                parts = code.split("-")
+                if parts:
+                    last_part = parts[-1]
+                    try:
+                        seq = int(last_part)
+                        max_seq = max(max_seq, seq)
+                    except ValueError:
+                        pass
+
+        next_seq = max_seq + 1
+        final_code_id = f"{file_code_id_prefix}-{next_seq}"
+
+        logger.info(f"✅ 最终编码：{final_code_id} (序号: {next_seq})")
+        event.data = f"[info] 最终编码： {final_code_id}"
+        yield event.model_dump_json(ensure_ascii=False)
+
+        # 1️⃣2️⃣ 查询类型字段定义
+        doc_type_fields_result = await db.execute(
+            select(DocumentTypeField).where(
+                DocumentTypeField.doc_type_id == (doc_type.id if doc_type else None)
+            )
+        )
+        doc_type_fields = doc_type_fields_result.scalars().all()
+
+        _extracted_data = {}
+
+        if not doc_type_fields:
+            event.data = "[info] 文档类型字段不存在,不提取内容"
+            yield event.model_dump_json(ensure_ascii=False)
+        else:
+            event.data = "[info] 文档类型字段存在，开始提取内容"
+            yield event.model_dump_json(ensure_ascii=False)
+
+            _fields = [i.to_dict() for i in doc_type_fields]
+            field_definitions = "\n".join(
+                f"{i+1}. {f['field_name']}（{f['field_type']}）：{f['description']}"
+                for i, f in enumerate(_fields)
+            )
+            prompt = EXTRACT_FIELES_PROMPT.replace(
+                "{{field_definitions}}", field_definitions
+            ).replace("{{document_content}}", text_content)
+            _extracted_data = await llm_client.extract_json_response(prompt, db=db)
+
+        # 1️⃣3️⃣ 保存文档信息
+        event.data = "[info] 保存文档信息..."
+        yield event.model_dump_json(ensure_ascii=False)
+
+        # 文本文档使用虚拟文件路径
+        object_name = f"text_{uuid.uuid4()}.txt"
+        file_path = f"{object_name}"
+
+        document = Document(
+            title=title.strip(),
+            original_filename=f"{title.strip()}.txt",
+            file_path=file_path,
+            file_type="txt",
+            file_size=len(text_content.encode("utf-8")),
+            template_id=template_id,
+            doc_metadata={},
+            uploader_id=user_id,
+            content_text=text_content,
+            ai_summary=ai_summary,
+            doc_type_id=doc_type.id if doc_type else 0,
+        )
+
+        db.add(document)
+        await db.flush()
+
+        # 1️⃣4️⃣ 创建模板和文档的映射记录
+        mapping = TemplateDocumentMapping(
+            template_id=template_id,
+            document_id=document.id,
+            class_code=final_code_id,
+            status="completed",
+            processed_time=int(time.time()),
+            extracted_data=(
+                json.dumps(_extracted_data, ensure_ascii=False)
+                if _extracted_data
+                else None
+            ),
+        )
+        db.add(mapping)
+
+        await db.commit()
+
+        # 1️⃣5️⃣ 将文档索引到Elasticsearch
+        event.data = "[info] 索引文档到搜索引擎..."
+        yield event.model_dump_json(ensure_ascii=False)
+
+        try:
+            from utils.search_engine import get_search_client
+
+            search_client = get_search_client()
+            upload_time = getattr(document, "upload_time", None)
+
+            document_data_for_es = {
+                "document_id": document.id,
+                "title": document.title,
+                "content": text_content,
+                "summary": ai_summary,
+                "template_id": document.template_id,
+                "file_type": document.file_type,
+                "upload_time": (
+                    datetime.fromtimestamp(upload_time).isoformat()
+                    if upload_time
+                    else None
+                ),
+                "metadata": _extracted_data,
+            }
+            await search_client.index_document(document_data_for_es)
+            logger.info(f"文档 {document.id} 已成功索引到Elasticsearch")
+            event.data = "[info] 文档索引成功"
+            yield event.model_dump_json(ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"文档 {document.id} 索引到Elasticsearch失败: {e}")
+            event.data = f"[warning] 文档索引失败: {str(e)}"
+            yield event.model_dump_json(ensure_ascii=False)
+
+        event.data = "[info] 文档创建成功"
+        event.done = True
+        yield event.model_dump_json(ensure_ascii=False)
 
     @staticmethod
     async def create_document_manually(

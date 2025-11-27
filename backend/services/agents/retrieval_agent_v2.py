@@ -5,9 +5,10 @@
 """
 
 from typing import Any, Dict, List
+
 from loguru import logger
 
-from services.agents.base import agent, BaseAgent, AgentContext, AgentResult
+from services.agents.base import AgentContext, AgentResult, BaseAgent, agent
 from services.tools.base import execute_tool
 
 
@@ -33,7 +34,7 @@ from services.tools.base import execute_tool
         "需要获取文档列表",
         "需要基于语义或结构化条件查找文档",
         "作为问答的前置步骤",
-    ]
+    ],
 )
 class RetrievalAgentV2(BaseAgent):
     """检索智能体 V2"""
@@ -70,7 +71,9 @@ class RetrievalAgentV2(BaseAgent):
         template_id = self.ctx.template_id
         tool_ctx = self.ctx.to_tool_context()
 
-        self.logger.info(f"🔍 开始检索: query='{search_query}', template_id={template_id}")
+        self.logger.info(
+            f"🔍 开始检索: query='{search_query}', template_id={template_id}"
+        )
 
         # Step 1: 查询优化
         optimized_query = await self._optimize_query(search_query)
@@ -87,8 +90,12 @@ class RetrievalAgentV2(BaseAgent):
             tool_ctx,
         )
 
-        es_doc_ids = es_result.get("document_ids", []) if es_result.get("success") else []
-        es_documents = es_result.get("documents", []) if es_result.get("success") else []
+        es_doc_ids = (
+            es_result.get("document_ids", []) if es_result.get("success") else []
+        )
+        es_documents = (
+            es_result.get("documents", []) if es_result.get("success") else []
+        )
 
         self.logger.info(f"✅ ES检索完成: {len(es_doc_ids)} 篇文档")
 
@@ -102,7 +109,9 @@ class RetrievalAgentV2(BaseAgent):
             tool_ctx,
         )
 
-        sql_doc_ids = sql_result.get("document_ids", []) if sql_result.get("success") else []
+        sql_doc_ids = (
+            sql_result.get("document_ids", []) if sql_result.get("success") else []
+        )
 
         self.logger.info(f"✅ SQL检索完成: {len(sql_doc_ids)} 篇文档")
 
@@ -122,7 +131,9 @@ class RetrievalAgentV2(BaseAgent):
                 tool_ctx,
             )
 
-            documents = read_result.get("documents", []) if read_result.get("success") else []
+            documents = (
+                read_result.get("documents", []) if read_result.get("success") else []
+            )
 
             # 合并 score 信息
             score_map = {d["document_id"]: d.get("score", 0) for d in es_documents}

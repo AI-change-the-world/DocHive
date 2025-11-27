@@ -35,7 +35,7 @@ class AgentMarkdownParser:
             llm_client = get_llm_client()
 
             # 构建系统能力描述
-            from services.registry import get_tools_description, get_agents_description
+            from services.registry import get_agents_description, get_tools_description
 
             tools_desc = get_tools_description()
             agents_desc = get_agents_description()
@@ -261,11 +261,12 @@ class AgentMarkdownParser:
                     )
                     steps.append(step)
                 except Exception as e:
-                    errors.append(
-                        f"步骤{step_data.get('step', '?')}格式错误: {str(e)}")
+                    errors.append(f"步骤{step_data.get('step', '?')}格式错误: {str(e)}")
 
             if errors:
-                return AgentMarkdownParseResponse(success=False, errors=errors, warnings=warnings)
+                return AgentMarkdownParseResponse(
+                    success=False, errors=errors, warnings=warnings
+                )
 
             # 构建Agent定义
             agent = AgentDefinitionSchema(
@@ -285,6 +286,7 @@ class AgentMarkdownParser:
         except Exception as e:
             logger.error(f"解析Agent Markdown失败: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
             errors.append(f"解析失败: {str(e)}")
             return AgentMarkdownParseResponse(success=False, errors=errors)
@@ -303,31 +305,37 @@ class AgentMarkdownParser:
             lines.append(f"**模板ID**: {agent.template_id}")
             lines.append("")
 
-        lines.extend([
-            f"**执行模式**: {agent.execution_pattern}",
-            "",
-            "## 执行步骤",
-            "",
-        ])
+        lines.extend(
+            [
+                f"**执行模式**: {agent.execution_pattern}",
+                "",
+                "## 执行步骤",
+                "",
+            ]
+        )
 
         for step in agent.steps:
-            lines.extend([
-                f"### 步骤{step.step}: {step.description}",
-                f"- **类型**: {step.type}",
-                f"- **名称**: {step.name}",
-                f"- **描述**: {step.description}",
-            ])
+            lines.extend(
+                [
+                    f"### 步骤{step.step}: {step.description}",
+                    f"- **类型**: {step.type}",
+                    f"- **名称**: {step.name}",
+                    f"- **描述**: {step.description}",
+                ]
+            )
 
             if step.condition:
                 lines.append(f"- **条件**: {step.condition}")
 
             if step.parameters:
-                lines.extend([
-                    "- **参数**:",
-                    "```json",
-                    json.dumps(step.parameters, ensure_ascii=False, indent=2),
-                    "```",
-                ])
+                lines.extend(
+                    [
+                        "- **参数**:",
+                        "```json",
+                        json.dumps(step.parameters, ensure_ascii=False, indent=2),
+                        "```",
+                    ]
+                )
 
             lines.append("")
 
@@ -422,7 +430,7 @@ class AgentLLMValidator:
         llm_client = get_llm_client()
 
         # 构建验证prompt
-        from services.registry import get_tools_description, get_agents_description
+        from services.registry import get_agents_description, get_tools_description
 
         tools_desc = get_tools_description()
         agents_desc = get_agents_description()
@@ -505,7 +513,8 @@ graph TD
             mermaid_diagram = response.get("mermaid_diagram", "")
 
             logger.info(
-                f"✅ LLM验证结果: valid={is_valid}, errors={len(errors)}, warnings={len(warnings)}")
+                f"✅ LLM验证结果: valid={is_valid}, errors={len(errors)}, warnings={len(warnings)}"
+            )
 
             return is_valid, errors, warnings, mermaid_diagram
 

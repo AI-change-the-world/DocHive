@@ -6,19 +6,18 @@
 """
 
 from typing import Any, Dict
+
+from elasticsearch import AsyncElasticsearch
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
-from elasticsearch import AsyncElasticsearch
 
 # 从新版基础设施导入
-from services.tools.base import (
-    ToolContext,
-    get_tools_schema_list,
-    execute_tool as _execute_tool_new,
-)
-
+from services.tools.base import ToolContext
+from services.tools.base import execute_tool as _execute_tool_new
+from services.tools.base import get_tools_schema_list
 
 # ==================== 向后兼容：TOOLS_SCHEMA ====================
+
 
 # 延迟加载，避免循环导入
 class _LazyToolsSchema:
@@ -52,6 +51,7 @@ TOOLS_MAP = {}
 
 
 # ==================== 向后兼容：execute_tool_call ====================
+
 
 async def execute_tool_call(
     tool_name: str,
@@ -95,6 +95,7 @@ async def execute_tool_call(
     except Exception as e:
         logger.error(f"执行工具 {tool_name} 失败: {str(e)}")
         import traceback
+
         logger.error(traceback.format_exc())
         return {
             "success": False,

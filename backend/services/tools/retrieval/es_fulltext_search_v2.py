@@ -5,36 +5,31 @@ ES全文检索工具 V2
 """
 
 from typing import Any, Dict, List, Optional
+
 from loguru import logger
 
-from services.tools.base import tool, ToolContext
+from services.tools.base import ToolContext, tool
 
 
 @tool(
     name="es_fulltext_search",
     description="使用Elasticsearch进行全文检索，基于BM25算法召回相关文档。适用于需要基于关键词匹配的检索场景。",
     parameters={
-        "query": {
-            "type": "string",
-            "description": "用户查询文本"
-        },
-        "template_id": {
-            "type": "integer",
-            "description": "模板ID"
-        },
+        "query": {"type": "string", "description": "用户查询文本"},
+        "template_id": {"type": "integer", "description": "模板ID"},
         "top_k": {
             "type": "integer",
             "description": "返回文档数量，默认10",
-            "default": 10
+            "default": 10,
         },
         "optimized_query": {
             "type": "object",
-            "description": "优化后的查询（包含 primary_keywords/context_keywords/related_keywords）"
-        }
+            "description": "优化后的查询（包含 primary_keywords/context_keywords/related_keywords）",
+        },
     },
     required=["query", "template_id"],
     category="retrieval",
-    tags=["检索", "ES", "全文搜索"]
+    tags=["检索", "ES", "全文搜索"],
 )
 async def es_fulltext_search(
     ctx: ToolContext,
@@ -96,47 +91,55 @@ async def es_fulltext_search(
             bool_clauses = {
                 "must": [],
                 "should": [],
-                "filter": [{"term": {"template_id": template_id}}]
+                "filter": [{"term": {"template_id": template_id}}],
             }
 
             # 主查询条件
             for keyword in primary_keywords:
-                bool_clauses["must"].append({
-                    "multi_match": {
-                        "query": keyword,
-                        "fields": ["title^3", "content", "ai_summary^2"],
-                        "type": "best_fields",
+                bool_clauses["must"].append(
+                    {
+                        "multi_match": {
+                            "query": keyword,
+                            "fields": ["title^3", "content", "ai_summary^2"],
+                            "type": "best_fields",
+                        }
                     }
-                })
+                )
 
             # 上下文扩展
             for keyword in context_keywords:
-                bool_clauses["should"].append({
-                    "multi_match": {
-                        "query": keyword,
-                        "fields": ["title^1.5", "content", "ai_summary"],
-                        "type": "best_fields",
+                bool_clauses["should"].append(
+                    {
+                        "multi_match": {
+                            "query": keyword,
+                            "fields": ["title^1.5", "content", "ai_summary"],
+                            "type": "best_fields",
+                        }
                     }
-                })
+                )
 
             # 相关词
             for keyword in related_keywords:
-                bool_clauses["should"].append({
-                    "multi_match": {
-                        "query": keyword,
-                        "fields": ["title^2", "content", "ai_summary"],
-                        "type": "best_fields",
+                bool_clauses["should"].append(
+                    {
+                        "multi_match": {
+                            "query": keyword,
+                            "fields": ["title^2", "content", "ai_summary"],
+                            "type": "best_fields",
+                        }
                     }
-                })
+                )
 
             if not bool_clauses["must"]:
-                bool_clauses["must"].append({
-                    "multi_match": {
-                        "query": query,
-                        "fields": ["title^3", "content", "ai_summary^2"],
-                        "type": "best_fields",
+                bool_clauses["must"].append(
+                    {
+                        "multi_match": {
+                            "query": query,
+                            "fields": ["title^3", "content", "ai_summary^2"],
+                            "type": "best_fields",
+                        }
                     }
-                })
+                )
 
             bool_clauses = {k: v for k, v in bool_clauses.items() if v}
             es_query = {"bool": bool_clauses}
@@ -194,12 +197,14 @@ async def es_fulltext_search(
                 else source.get("content", "")[:200]
             )
 
-            documents.append({
-                "document_id": doc_id,
-                "title": source.get("title", ""),
-                "snippet": snippet,
-                "score": hit["_score"],
-            })
+            documents.append(
+                {
+                    "document_id": doc_id,
+                    "title": source.get("title", ""),
+                    "snippet": snippet,
+                    "score": hit["_score"],
+                }
+            )
 
         logger.info(f"✅ ES全文检索完成: 召回 {len(document_ids)} 篇文档")
 
@@ -213,6 +218,7 @@ async def es_fulltext_search(
     except Exception as e:
         logger.error(f"❌ ES全文检索失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         return {
             "success": False,

@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from api.v1 import (
+    agent_editor,
     auth,
     document_types,
     documents,
@@ -9,7 +10,6 @@ from api.v1 import (
     sys_config,
     template_configs,
     templates,
-    agent_editor,
 )
 
 # 创建 v1 版本路由

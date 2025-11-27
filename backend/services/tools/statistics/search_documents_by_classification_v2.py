@@ -5,28 +5,26 @@
 """
 
 from typing import Any, Dict, List, Optional
+
 from loguru import logger
 from sqlalchemy import select
 
-from services.tools.base import tool, ToolContext
+from services.tools.base import ToolContext, tool
 
 
 @tool(
     name="search_documents_by_classification",
     description="根据分类编码搜索文档，可以查找特定分类下的文档列表",
     parameters={
-        "template_id": {
-            "type": "integer",
-            "description": "模板ID"
-        },
+        "template_id": {"type": "integer", "description": "模板ID"},
         "class_code": {
             "type": "string",
-            "description": "分类编码，如果不提供则返回所有文档"
-        }
+            "description": "分类编码，如果不提供则返回所有文档",
+        },
     },
     required=["template_id"],
     category="statistics",
-    tags=["搜索", "分类", "文档列表"]
+    tags=["搜索", "分类", "文档列表"],
 )
 async def search_documents_by_classification(
     ctx: ToolContext,
@@ -86,6 +84,7 @@ async def search_documents_by_classification(
     except Exception as e:
         logger.error(f"❌ 按分类搜索失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         return {
             "success": False,

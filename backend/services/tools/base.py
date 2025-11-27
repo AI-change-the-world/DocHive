@@ -7,8 +7,8 @@
 import inspect
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, Type, get_type_hints
-from loguru import logger
 
+from loguru import logger
 
 # ==================== 全局注册表 ====================
 
@@ -85,6 +85,7 @@ def tool(
         category: 工具分类（retrieval/document/statistics/analysis）
         tags: 标签列表（用于筛选和分组）
     """
+
     def decorator(func: Callable):
         # 构建完整的 JSON Schema
         param_schema = {
@@ -100,7 +101,7 @@ def tool(
                 "name": name,
                 "description": description,
                 "parameters": param_schema,
-            }
+            },
         }
 
         # 注册到全局注册表
@@ -248,6 +249,7 @@ async def execute_tool(
     except Exception as e:
         logger.error(f"执行工具 {name} 失败: {str(e)}")
         import traceback
+
         logger.error(traceback.format_exc())
         return {
             "success": False,
@@ -265,16 +267,19 @@ def discover_tools():
     通过导入各模块触发 @tool 装饰器执行
     """
     # 导入所有工具模块（装饰器会自动注册）
-    from services.tools.retrieval import es_fulltext_search_v2
-    from services.tools.retrieval import sql_structured_search_v2
-    from services.tools.document import get_document_contents_v2
-    from services.tools.document import skim_documents_v2
-    from services.tools.document import read_documents_v2
-    from services.tools.statistics import get_template_statistics_v2
-    from services.tools.statistics import search_documents_by_classification_v2
-    from services.tools.statistics import get_document_types_info_v2
-    from services.tools.statistics import list_all_templates_v2
     from services.tools.analysis import document_analyzer_v2
+    from services.tools.document import (
+        get_document_contents_v2,
+        read_documents_v2,
+        skim_documents_v2,
+    )
+    from services.tools.retrieval import es_fulltext_search_v2, sql_structured_search_v2
+    from services.tools.statistics import (
+        get_document_types_info_v2,
+        get_template_statistics_v2,
+        list_all_templates_v2,
+        search_documents_by_classification_v2,
+    )
 
     logger.info(f"工具发现完成，共注册 {len(_TOOL_REGISTRY)} 个工具")
     return _TOOL_REGISTRY

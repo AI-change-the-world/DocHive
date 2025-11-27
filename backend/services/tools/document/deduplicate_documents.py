@@ -8,6 +8,7 @@ import hashlib
 import re
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Set
+
 from loguru import logger
 
 
@@ -106,7 +107,7 @@ def _compute_shingles(text: str, k: int = 5) -> Set[str]:
 
     shingles = set()
     for i in range(len(text) - k + 1):
-        shingles.add(text[i: i + k])
+        shingles.add(text[i : i + k])
 
     return shingles
 
@@ -174,8 +175,7 @@ def _should_remove_duplicate(
     # 阶段4: 只对Jaccard在0.5-0.75之间的做精细difflib比对（避免O(n²)开销）
     if 0.5 < jac_sim <= 0.75:
         # difflib比对（较慢，只对候选执行）
-        ratio = SequenceMatcher(
-            None, doc_a["normalized"], doc_b["normalized"]).ratio()
+        ratio = SequenceMatcher(None, doc_a["normalized"], doc_b["normalized"]).ratio()
         if ratio > 0.80:  # 阈值可调
             logger.debug(
                 f"文档 {doc_a['document_id']} 和 {doc_b['document_id']} difflib={ratio:.3f}（精细比对重复）"
@@ -215,27 +215,31 @@ def deduplicate_documents(documents: List[Dict[str, Any]]) -> List[Dict[str, Any
         content = doc.get("content", "")
         if not content:
             # 没有内容的文档保留
-            processed_docs.append({
-                "document_id": doc.get("id") or doc.get("document_id"),
-                "original": doc,
-                "content": "",
-                "normalized": "",
-                "strong_hash": "",
-                "simhash": 0,
-                "shingles": set(),
-            })
+            processed_docs.append(
+                {
+                    "document_id": doc.get("id") or doc.get("document_id"),
+                    "original": doc,
+                    "content": "",
+                    "normalized": "",
+                    "strong_hash": "",
+                    "simhash": 0,
+                    "shingles": set(),
+                }
+            )
             continue
 
         normalized = _normalize_text(content)
-        processed_docs.append({
-            "document_id": doc.get("id") or doc.get("document_id"),
-            "original": doc,
-            "content": content,
-            "normalized": normalized,
-            "strong_hash": _compute_strong_hash(normalized),
-            "simhash": _compute_simhash(normalized),
-            "shingles": _compute_shingles(normalized),
-        })
+        processed_docs.append(
+            {
+                "document_id": doc.get("id") or doc.get("document_id"),
+                "original": doc,
+                "content": content,
+                "normalized": normalized,
+                "strong_hash": _compute_strong_hash(normalized),
+                "simhash": _compute_simhash(normalized),
+                "shingles": _compute_shingles(normalized),
+            }
+        )
 
     # 去重逻辑：两两比对
     to_remove = set()
@@ -248,19 +252,17 @@ def deduplicate_documents(documents: List[Dict[str, Any]]) -> List[Dict[str, Any
                 continue
 
             # 判断是否重复
-            dup_id = _should_remove_duplicate(
-                processed_docs[i], processed_docs[j])
+            dup_id = _should_remove_duplicate(processed_docs[i], processed_docs[j])
             if dup_id is not None:
                 to_remove.add(dup_id)
 
     # 过滤掉重复文档
     result = [
-        doc["original"]
-        for doc in processed_docs
-        if doc["document_id"] not in to_remove
+        doc["original"] for doc in processed_docs if doc["document_id"] not in to_remove
     ]
 
     logger.info(
-        f"✅ 文档去重完成: {len(documents)} -> {len(result)} 篇 (移除 {len(to_remove)} 篇重复)")
+        f"✅ 文档去重完成: {len(documents)} -> {len(result)} 篇 (移除 {len(to_remove)} 篇重复)"
+    )
 
     return result

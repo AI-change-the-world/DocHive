@@ -5,9 +5,10 @@
 """
 
 from typing import Any, Dict, List
+
 from loguru import logger
 
-from services.agents.base import agent, BaseAgent, AgentContext, AgentResult
+from services.agents.base import AgentContext, AgentResult, BaseAgent, agent
 
 
 @agent(
@@ -31,7 +32,7 @@ from services.agents.base import agent, BaseAgent, AgentContext, AgentResult
         "需要理解文档内容并生成答案",
         "已有文档列表，需要基于文档回答问题",
         "需要总结、分析、解释文档内容",
-    ]
+    ],
 )
 class QAAgentV2(BaseAgent):
     """问答智能体 V2"""
@@ -76,10 +77,14 @@ class QAAgentV2(BaseAgent):
         # Step 1: 筛选相关文档
         filtered_documents = await self._filter_documents(question, documents)
 
-        self.logger.info(f"✅ 文档筛选完成: {len(documents)} -> {len(filtered_documents)}")
+        self.logger.info(
+            f"✅ 文档筛选完成: {len(documents)} -> {len(filtered_documents)}"
+        )
 
         # Step 2: 生成答案
-        answer = await self._generate_answer(question, filtered_documents, max_context_length)
+        answer = await self._generate_answer(
+            question, filtered_documents, max_context_length
+        )
 
         self.logger.info(f"✅ 答案生成完成，长度: {len(answer)} 字符")
 
@@ -140,8 +145,7 @@ class QAAgentV2(BaseAgent):
             relevant_indices = response.get("relevant_indices", [])
 
             filtered = [
-                documents[idx] for idx in relevant_indices
-                if 0 <= idx < len(documents)
+                documents[idx] for idx in relevant_indices if 0 <= idx < len(documents)
             ]
 
             return filtered if filtered else documents[:3]

@@ -5,10 +5,11 @@
 """
 
 from typing import Any, Dict, List
+
 from loguru import logger
 from sqlalchemy import select
 
-from services.tools.base import tool, ToolContext
+from services.tools.base import ToolContext, tool
 
 
 @tool(
@@ -18,17 +19,17 @@ from services.tools.base import tool, ToolContext
         "document_ids": {
             "type": "array",
             "items": {"type": "integer"},
-            "description": "文档ID列表"
+            "description": "文档ID列表",
         },
         "max_documents": {
             "type": "integer",
             "description": "最多读取文档数，防止超过LLM上下文限制，默认10",
-            "default": 10
-        }
+            "default": 10,
+        },
     },
     required=["document_ids"],
     category="document",
-    tags=["文档", "精读", "全文"]
+    tags=["文档", "精读", "全文"],
 )
 async def read_documents(
     ctx: ToolContext,
@@ -75,7 +76,9 @@ async def read_documents(
     # 截断文档ID列表
     truncated = len(document_ids) > max_documents
     if truncated:
-        logger.warning(f"⚠️ 文档数量 {len(document_ids)} 超过限制 {max_documents}，将截断")
+        logger.warning(
+            f"⚠️ 文档数量 {len(document_ids)} 超过限制 {max_documents}，将截断"
+        )
         document_ids = document_ids[:max_documents]
 
     try:
@@ -106,6 +109,7 @@ async def read_documents(
     except Exception as e:
         logger.error(f"❌ 精读文档失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         return {
             "success": False,

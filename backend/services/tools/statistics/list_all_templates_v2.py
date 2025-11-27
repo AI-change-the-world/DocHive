@@ -5,10 +5,11 @@
 """
 
 from typing import Any, Dict, List
+
 from loguru import logger
 from sqlalchemy import func, select
 
-from services.tools.base import tool, ToolContext
+from services.tools.base import ToolContext, tool
 
 
 @tool(
@@ -17,7 +18,7 @@ from services.tools.base import tool, ToolContext
     parameters={},
     required=[],
     category="statistics",
-    tags=["模板", "列表", "系统信息"]
+    tags=["模板", "列表", "系统信息"],
 )
 async def list_all_templates(
     ctx: ToolContext,
@@ -86,6 +87,7 @@ async def list_all_templates(
     except Exception as e:
         logger.error(f"❌ 列出模板失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         return {
             "success": False,

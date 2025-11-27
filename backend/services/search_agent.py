@@ -1,14 +1,5 @@
 import json
 from typing import Any, Dict, List, Optional, Set, TypedDict
-# 注意：这些是deduplicate_documents模块的私有辅助函数，一般不应直接导入
-# 考虑重构或使用公开接口
-from services.tools.document.deduplicate_documents import (
-    _normalize_text as normalize_text,
-    _compute_strong_hash as compute_strong_hash,
-    _compute_simhash as compute_simhash,
-    _compute_shingles as compute_shingles,
-    _should_remove_duplicate as should_remove_duplicate,
-)
 
 from elasticsearch import AsyncElasticsearch
 from langchain_core.runnables import RunnableConfig
@@ -27,6 +18,24 @@ from models.database_models import (
 )
 from services.intent_router import format_tool_result_as_answer, function_calling_router
 from services.template_service import TemplateService
+
+# 注意：这些是deduplicate_documents模块的私有辅助函数，一般不应直接导入
+# 考虑重构或使用公开接口
+from services.tools.document.deduplicate_documents import (
+    _compute_shingles as compute_shingles,
+)
+from services.tools.document.deduplicate_documents import (
+    _compute_simhash as compute_simhash,
+)
+from services.tools.document.deduplicate_documents import (
+    _compute_strong_hash as compute_strong_hash,
+)
+from services.tools.document.deduplicate_documents import (
+    _normalize_text as normalize_text,
+)
+from services.tools.document.deduplicate_documents import (
+    _should_remove_duplicate as should_remove_duplicate,
+)
 from utils.llm_client import get_llm_client
 
 # 全局变量存储graph状态，用于支持中断和恢复
@@ -346,8 +355,7 @@ async def enhance_retrieval_query(
         llm_client = get_llm_client()
         llm_response = await llm_client.extract_json_response(prompt, db=db)
 
-        logger.info(
-            f"📊 LLM 解析结果: {json.dumps(llm_response, ensure_ascii=False)}")
+        logger.info(f"📊 LLM 解析结果: {json.dumps(llm_response, ensure_ascii=False)}")
 
         # 4. 提取结果
         parsed_fields = llm_response.get("fields", {})
@@ -432,8 +440,7 @@ async def es_fulltext_retrieval(
 
         hits = response.get("hits", {}).get("hits", [])
         state["es_fulltext_results"] = [hit["_source"] for hit in hits]
-        state["es_document_ids"] = set(
-            hit["_source"]["document_id"] for hit in hits)
+        state["es_document_ids"] = set(hit["_source"]["document_id"] for hit in hits)
 
         logger.info(f"✅ ES 全文检索召回 {len(hits)} 篇文档")
         logger.info(f"   文档 ID: {list(state['es_document_ids'])}")
@@ -665,8 +672,7 @@ async def merge_retrieval_results(
             # 没有交集,取并集
             logger.info(f"📌 策略: 并集 (ES {len(es_ids)} + SQL {len(sql_ids)})")
             state["fusion_strategy"] = "union"
-            merged_ids = list(es_ids) + \
-                [id for id in sql_ids if id not in es_ids]
+            merged_ids = list(es_ids) + [id for id in sql_ids if id not in es_ids]
 
     # 限制结果数量 (Top 10)
     merged_ids = merged_ids[:10]
@@ -737,8 +743,7 @@ async def refined_filtering(
         state["document_type_fields"] = []
         state["refined_conditions"] = {}
         state["final_es_query"] = None
-        state["final_results"] = _convert_docs_to_results(
-            state["merged_documents"])
+        state["final_results"] = _convert_docs_to_results(state["merged_documents"])
         return state
 
     # 1. 获取 DocumentType 和 DocumentTypeField
@@ -755,8 +760,7 @@ async def refined_filtering(
             logger.warning(f"⚠️ 未找到类别 '{category}' 的 DocumentType,跳过精细化筛选")
             state["document_type_fields"] = []
             state["refined_conditions"] = {}
-            state["final_results"] = _convert_docs_to_results(
-                state["merged_documents"])
+            state["final_results"] = _convert_docs_to_results(state["merged_documents"])
             return state
 
         document_type_fields_result = await db.execute(
@@ -764,23 +768,20 @@ async def refined_filtering(
                 DocumentTypeField.doc_type_id.in_([dt.id for dt in doc_types])
             )
         )
-        document_type_fields = list(
-            document_type_fields_result.scalars().all())
+        document_type_fields = list(document_type_fields_result.scalars().all())
         state["document_type_fields"] = document_type_fields
 
         if not document_type_fields:
             logger.info("📌 该类别无特定字段,跳过精细化筛选")
             state["refined_conditions"] = {}
-            state["final_results"] = _convert_docs_to_results(
-                state["merged_documents"])
+            state["final_results"] = _convert_docs_to_results(state["merged_documents"])
             return state
 
     except Exception as e:
         logger.error(f"❌ 获取文档类型字段失败: {e}")
         state["document_type_fields"] = []
         state["refined_conditions"] = {}
-        state["final_results"] = _convert_docs_to_results(
-            state["merged_documents"])
+        state["final_results"] = _convert_docs_to_results(state["merged_documents"])
         return state
 
     # 2. 使用 LLM 提取精细化条件
@@ -829,23 +830,20 @@ async def refined_filtering(
                 f"您的问题似乎有些宽泛。为了更精确地查找,能否提供: {missing_str}?"
             )
             logger.warning(f"⚠️ 检测到歧义,建议补充: {missing_str}")
-            state["final_results"] = _convert_docs_to_results(
-                state["merged_documents"])
+            state["final_results"] = _convert_docs_to_results(state["merged_documents"])
             return state
 
     except Exception as e:
         logger.error(f"❌ LLM 提取精细化条件失败: {e}")
         state["refined_conditions"] = {}
-        state["final_results"] = _convert_docs_to_results(
-            state["merged_documents"])
+        state["final_results"] = _convert_docs_to_results(state["merged_documents"])
         return state
 
     # 4. 构造精细化 ES 查询
     if not state["refined_conditions"]:
         logger.info("📌 无精细化条件,直接使用融合结果")
         state["final_es_query"] = None
-        state["final_results"] = _convert_docs_to_results(
-            state["merged_documents"])
+        state["final_results"] = _convert_docs_to_results(state["merged_documents"])
         return state
 
     # 只在融合后的文档中筛选
@@ -864,8 +862,7 @@ async def refined_filtering(
         elif field_type == "number":
             must_clauses.append({"term": {f"metadata.{field_name}": value}})
         elif field_type == "date":
-            must_clauses.append(
-                {"range": {f"metadata.{field_name}": {"gte": value}}})
+            must_clauses.append({"range": {f"metadata.{field_name}": {"gte": value}}})
         else:
             must_clauses.append({"term": {f"metadata.{field_name}": value}})
 
@@ -898,8 +895,7 @@ async def refined_filtering(
     except Exception as e:
         logger.error(f"❌ 精细化 ES 查询失败: {e}")
         # 降级: 使用融合结果
-        state["final_results"] = _convert_docs_to_results(
-            state["merged_documents"])
+        state["final_results"] = _convert_docs_to_results(state["merged_documents"])
 
     return state
 
@@ -990,8 +986,7 @@ async def deduplicate_documents(
                 continue
 
             # 判断是否重复
-            remove_id = should_remove_duplicate(
-                doc_features[i], doc_features[j])
+            remove_id = should_remove_duplicate(doc_features[i], doc_features[j])
 
             if remove_id is not None:
                 removed_ids.add(remove_id)
@@ -1035,8 +1030,7 @@ async def filter_documents_by_summary(
 
     if not results or len(results) <= 1:
         logger.info("📌 文档数量≤1，跳过摘要筛选")
-        state["filtered_document_ids"] = [
-            doc.get("document_id") for doc in results]
+        state["filtered_document_ids"] = [doc.get("document_id") for doc in results]
         state["filtered_results"] = results
         return state
 
@@ -1143,8 +1137,7 @@ async def filter_documents_by_summary(
 
         logger.error(traceback.format_exc())
         # 失败时保留所有文档
-        state["filtered_document_ids"] = [
-            doc.get("document_id") for doc in results]
+        state["filtered_document_ids"] = [doc.get("document_id") for doc in results]
         state["filtered_results"] = results
 
     return state
@@ -1473,8 +1466,7 @@ async def _generate_grouped_answer(
         try:
             doc_answer = await llm_client.chat_completion(single_prompt, db=db)
             doc_answers.append(
-                {"doc_index": i, "title": doc.get(
-                    "title"), "answer": doc_answer}
+                {"doc_index": i, "title": doc.get("title"), "answer": doc_answer}
             )
             logger.info(f"  ✅ 文档 {i} 问答完成")
         except Exception as e:
@@ -1558,8 +1550,7 @@ def should_use_tool(state: RetrievalState) -> str:
     execution_plan = state.get("execution_plan", [])
 
     # 检查执行计划中是否包含工具调用
-    has_tool_call = any(step.get("action") ==
-                        "tool_call" for step in execution_plan)
+    has_tool_call = any(step.get("action") == "tool_call" for step in execution_plan)
 
     if has_tool_call:
         logger.info("🔧 决策: 执行计划包含工具调用 -> tool_answer")
@@ -1637,8 +1628,7 @@ workflow.add_conditional_edges(
 # 4.5 工具调用后，根据执行计划决定是否继续检索
 workflow.add_conditional_edges(
     "tool_answer",  # 源节点
-    lambda state: "continue_retrieval" if state.get(
-        "need_retrieval", False) else "end",
+    lambda state: "continue_retrieval" if state.get("need_retrieval", False) else "end",
     {
         "continue_retrieval": "enhance_query",  # 继续检索 → 先增强查询
         "end": END,  # 直接结束

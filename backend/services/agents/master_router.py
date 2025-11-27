@@ -18,20 +18,21 @@ from langchain_core.runnables import RunnableConfig
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.agents.qa_agent_v2 import generate_answer_v2
+
 # 使用新版智能体
 from services.agents.retrieval_agent_v2 import retrieve_documents_v2
-from services.agents.qa_agent_v2 import generate_answer_v2
 from services.conversation_manager import get_conversation_manager
 from services.registry import (
-    get_system_capabilities,
-    get_tools_description,
     get_agents_description,
     get_execution_patterns_description,
+    get_system_capabilities,
+    get_tools_description,
 )
+
 # 导入新版工具基础设施
 from services.tools.base import ToolContext, execute_tool
 from utils.llm_client import get_llm_client
-
 
 # ==================== 用户意图识别 ====================
 
@@ -113,7 +114,7 @@ async def analyze_user_intent(
         logger.error(f"⚠️ 意图识别失败: {e}，默认为new_question")
         return {
             "intent_type": "new_question",
-            "reasoning": "意图识别失败，默认为新问题"
+            "reasoning": "意图识别失败，默认为新问题",
         }
 
 
@@ -192,6 +193,7 @@ class ExecutionState(TypedDict):
     """
     执行状态 - 记录整个执行过程（LangGraph状态）
     """
+
     # 输入
     query: str
     template_id: int
@@ -471,15 +473,16 @@ async def plan_execution(
                     context_summary.append(f"助手: {content[:100]}...")
 
             context_text = "\n".join(context_summary)
-            planning_messages.append({
-                "role": "user",
-                "content": f"【对话历史】\n{context_text}\n\n【当前问题】\n{query}\n\n请为这个问题制定执行方案。"
-            })
+            planning_messages.append(
+                {
+                    "role": "user",
+                    "content": f"【对话历史】\n{context_text}\n\n【当前问题】\n{query}\n\n请为这个问题制定执行方案。",
+                }
+            )
         else:
-            planning_messages.append({
-                "role": "user",
-                "content": f"请为这个问题制定执行方案：{query}"
-            })
+            planning_messages.append(
+                {"role": "user", "content": f"请为这个问题制定执行方案：{query}"}
+            )
 
         response = await llm_client.extract_json_response(
             messages=planning_messages,
@@ -488,8 +491,7 @@ async def plan_execution(
 
         logger.info(f"📋 规划结果: {json.dumps(response, ensure_ascii=False)}")
 
-        state["execution_pattern"] = response.get(
-            "execution_pattern", "llm_direct")
+        state["execution_pattern"] = response.get("execution_pattern", "llm_direct")
         state["reasoning"] = response.get("reasoning", "")
         state["execution_plan"] = response.get("execution_plan", [])
 
@@ -506,7 +508,10 @@ async def plan_execution(
 
                 # 构建消息列表
                 llm_messages = [
-                    {"role": "system", "content": "你是一个专业的问答助手。如果用户询问对话历史相关的问题（如'我问了几次XX'、'之前讨论了什么'），请基于对话历史进行统计和分析。"}
+                    {
+                        "role": "system",
+                        "content": "你是一个专业的问答助手。如果用户询问对话历史相关的问题（如'我问了几次XX'、'之前讨论了什么'），请基于对话历史进行统计和分析。",
+                    }
                 ]
 
                 # 添加对话历史（元问题需要）
@@ -532,6 +537,7 @@ async def plan_execution(
     except Exception as e:
         logger.error(f"❌ 任务规划失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         # 降级：直接让LLM回答
         state["execution_pattern"] = "llm_direct"
@@ -568,12 +574,9 @@ async def execute_steps(
     # 从 config 获取所需资源
     db: AsyncSession = config.get("configurable", {}).get("db")
     es_client = config.get("configurable", {}).get("es")
-    es_index: str = config.get("configurable", {}).get(
-        "es_index", "dochive_documents")
-    max_read_documents = config.get(
-        "configurable", {}).get("max_read_documents", 10)
-    rag_max_length = config.get(
-        "configurable", {}).get("rag_max_length", 10000)
+    es_index: str = config.get("configurable", {}).get("es_index", "dochive_documents")
+    max_read_documents = config.get("configurable", {}).get("max_read_documents", 10)
+    rag_max_length = config.get("configurable", {}).get("rag_max_length", 10000)
 
     # helper: 实际调用工具/智能体实现 - 使用新版工具系统
     async def _dispatch_to_impl(step_type: str, step_name: str):
@@ -596,9 +599,14 @@ async def execute_steps(
             arguments = {"template_id": template_id}
 
             # 特殊处理：从 state 中获取中间数据
-            if step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+            if step_name in [
+                "get_document_contents",
+                "skim_documents",
+                "read_documents",
+            ]:
                 arguments["document_ids"] = state["intermediate_data"].get(
-                    "document_ids", [])
+                    "document_ids", []
+                )
                 if step_name == "read_documents":
                     arguments["max_documents"] = max_read_documents
             elif step_name == "analyze_documents":
@@ -657,7 +665,7 @@ async def execute_steps(
                     "step": i + 1,
                     "name": step_name,
                     "description": step_desc,
-                    "result": result
+                    "result": result,
                 }
 
                 if step_type == "tool":
@@ -669,19 +677,30 @@ async def execute_steps(
                 if result.get("success"):
                     if step_type == "agent" and step_name == "retrieval_agent":
                         state["intermediate_data"]["documents"] = result.get(
-                            "documents", [])
+                            "documents", []
+                        )
                         state["documents"] = result.get("documents", [])
-                    elif step_type == "tool" and step_name == "search_documents_by_classification":
+                    elif (
+                        step_type == "tool"
+                        and step_name == "search_documents_by_classification"
+                    ):
                         state["intermediate_data"]["document_ids"] = result.get(
-                            "document_ids", [])
-                    elif step_type == "tool" and step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+                            "document_ids", []
+                        )
+                    elif step_type == "tool" and step_name in [
+                        "get_document_contents",
+                        "skim_documents",
+                        "read_documents",
+                    ]:
                         state["intermediate_data"]["documents"] = result.get(
-                            "documents", [])
+                            "documents", []
+                        )
 
                 logger.info(f"✅ 步骤{i+1}完成: {step_name}")
 
             except Exception as e:
                 import traceback
+
                 logger.error(f"❌ 步骤{i+1}失败: {step_name}, 错误: {e}")
                 logger.error(traceback.format_exc())
 
@@ -690,7 +709,7 @@ async def execute_steps(
                     "step": i + 1,
                     "name": step_name,
                     "description": step_desc,
-                    "result": {"success": False, "error": str(e)}
+                    "result": {"success": False, "error": str(e)},
                 }
 
                 if step_type == "tool":
@@ -706,6 +725,7 @@ async def execute_steps(
     except Exception as e:
         logger.error(f"❌ 执行步骤失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         state["error"] = str(e)
         state["success"] = False
@@ -776,42 +796,46 @@ async def finalize_answer(
                 # 根据不同工具类型格式化结果
                 if name == "get_template_statistics":
                     # get_template_statistics 直接返回数据，不是嵌套在statistics里
-                    total_docs = result.get('total_documents', 0)
+                    total_docs = result.get("total_documents", 0)
                     execution_summary.append(f"  - 文档总数：{total_docs}")
 
                     # 显示分类分布
-                    class_dist = result.get('class_code_distribution', [])
+                    class_dist = result.get("class_code_distribution", [])
                     if class_dist:
                         execution_summary.append(
-                            f"  - 分类分布：{len(class_dist)}个分类")
+                            f"  - 分类分布：{len(class_dist)}个分类"
+                        )
                         for item in class_dist[:3]:  # 只显示前3个
                             execution_summary.append(
-                                f"    * {item.get('class_code', '未知')}: {item.get('count', 0)}篇")
+                                f"    * {item.get('class_code', '未知')}: {item.get('count', 0)}篇"
+                            )
                 elif name == "search_documents_by_classification":
                     doc_ids = result.get("document_ids", [])
                     execution_summary.append(f"  - 找到{len(doc_ids)}篇文档")
-                elif name in ["get_document_contents", "skim_documents", "read_documents"]:
+                elif name in [
+                    "get_document_contents",
+                    "skim_documents",
+                    "read_documents",
+                ]:
                     docs = result.get("documents", [])
                     execution_summary.append(f"  - 读取{len(docs)}篇文档")
                     for doc in docs[:3]:  # 只显示前3篇
-                        execution_summary.append(
-                            f"    * {doc.get('title', '未命名')}")
+                        execution_summary.append(f"    * {doc.get('title', '未命名')}")
                 elif name == "analyze_documents":
                     analysis = result.get("analysis", "")
                     if analysis:
-                        execution_summary.append(
-                            f"  - 分析结果：{analysis[:200]}...")
+                        execution_summary.append(f"  - 分析结果：{analysis[:200]}...")
                 else:
                     # 通用处理
                     execution_summary.append(f"  - 执行成功")
             else:
                 execution_summary.append(
-                    f"  - 执行失败：{result.get('error', '未知错误')}")
+                    f"  - 执行失败：{result.get('error', '未知错误')}"
+                )
 
         # 添加智能体执行结果
         for i, agent_result in enumerate(state["agent_results"]):
-            step_num = agent_result.get(
-                "step", len(state["tool_results"]) + i + 1)
+            step_num = agent_result.get("step", len(state["tool_results"]) + i + 1)
             name = agent_result.get("name", "未知智能体")
             desc = agent_result.get("description", "")
             result = agent_result.get("result", {})
@@ -824,7 +848,8 @@ async def finalize_answer(
                     execution_summary.append(f"  - 检索到{len(docs)}篇相关文档")
                     for doc in docs[:5]:  # 显示前5篇
                         execution_summary.append(
-                            f"    * {doc.get('title', '未命名')} (相关度: {doc.get('score', 0):.2f})")
+                            f"    * {doc.get('title', '未命名')} (相关度: {doc.get('score', 0):.2f})"
+                        )
                 elif name == "qa_agent":
                     answer = result.get("answer", "")
                     execution_summary.append(f"  - 生成答案：{answer[:200]}...")
@@ -832,7 +857,8 @@ async def finalize_answer(
                     execution_summary.append(f"  - 执行成功")
             else:
                 execution_summary.append(
-                    f"  - 执行失败：{result.get('error', '未知错误')}")
+                    f"  - 执行失败：{result.get('error', '未知错误')}"
+                )
 
         execution_context = "\n".join(execution_summary)
 
@@ -874,11 +900,13 @@ async def finalize_answer(
     except Exception as e:
         logger.error(f"❌ 生成最终答案失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         state["error"] = str(e)
         state["success"] = False
 
     return state
+
 
 # ==================== 简单三步执行函数（不使用LangGraph） ====================
 
@@ -987,8 +1015,7 @@ async def execute_master_router(
             logger.info("✅ 用户选择继续使用当前结果")
 
             # 从会话的state中获取上次检索的文档
-            previous_documents = session_data.get(
-                "state", {}).get("documents", [])
+            previous_documents = session_data.get("state", {}).get("documents", [])
 
             if previous_documents:
                 logger.info(f"📚 使用上次检索的{len(previous_documents)}篇文档继续执行")
@@ -1001,7 +1028,7 @@ async def execute_master_router(
                     {
                         "type": "agent",
                         "name": "qa_agent",
-                        "description": "基于检索结果生成答案"
+                        "description": "基于检索结果生成答案",
                     }
                 ]
 
@@ -1025,7 +1052,9 @@ async def execute_master_router(
 
             # 将相关上下文合并到query中
             if relevant_context:
-                enhanced_query = f"【历史上下文】\n{relevant_context}\n\n【当前问题】\n{query}"
+                enhanced_query = (
+                    f"【历史上下文】\n{relevant_context}\n\n【当前问题】\n{query}"
+                )
                 state["query"] = enhanced_query
                 logger.info(f"📝 增强后的查询: {enhanced_query[:100]}...")
 
@@ -1037,8 +1066,7 @@ async def execute_master_router(
     if not state.get("execution_plan"):
         logger.info("🧠 ========== 第一步：规划 ===========")
 
-        config = {"configurable": {
-            "db": db, "es": es_client, "es_index": es_index}}
+        config = {"configurable": {"db": db, "es": es_client, "es_index": es_index}}
         state = await plan_execution(state, config)
 
         # Yield 执行计划
@@ -1049,7 +1077,7 @@ async def execute_master_router(
                 "execution_pattern": state["execution_pattern"],
                 "execution_plan": state["execution_plan"],
                 "reasoning": state["reasoning"],
-            }
+            },
         }
 
     # ========== 第二步：执行 ==========
@@ -1083,8 +1111,7 @@ async def execute_master_router(
         )
 
     # 标记会话完成
-    conversation_manager.complete_session(
-        session_id, state.get("final_answer"))
+    conversation_manager.complete_session(session_id, state.get("final_answer"))
 
     # Yield 最终结果
     yield {
@@ -1095,7 +1122,7 @@ async def execute_master_router(
             "documents": state["documents"],
             "success": state["success"],
             "error": state.get("error"),
-        }
+        },
     }
 
 
@@ -1150,14 +1177,21 @@ async def execute_steps_with_intervention(
 
                 arguments = {"template_id": template_id}
 
-                if step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+                if step_name in [
+                    "get_document_contents",
+                    "skim_documents",
+                    "read_documents",
+                ]:
                     arguments["document_ids"] = state["intermediate_data"].get(
-                        "document_ids", [])
+                        "document_ids", []
+                    )
                     if step_name == "read_documents":
                         arguments["max_documents"] = max_read_documents
                 elif step_name == "analyze_documents":
                     arguments["query"] = current_query
-                    arguments["documents"] = state["intermediate_data"].get("documents", [])
+                    arguments["documents"] = state["intermediate_data"].get(
+                        "documents", []
+                    )
                     arguments["max_context_length"] = rag_max_length
                 elif step_name == "search_documents_by_classification":
                     arguments["class_code"] = None
@@ -1195,7 +1229,7 @@ async def execute_steps_with_intervention(
                 "step": i + 1,
                 "name": step_name,
                 "description": step_desc,
-                "result": result
+                "result": result,
             }
 
             if step_type == "tool":
@@ -1227,7 +1261,7 @@ async def execute_steps_with_intervention(
                         # ⭐ 保存文档到会话中state，供下次用户选择继续时使用
                         conversation_manager.update_state(
                             session_id=session_id,
-                            state_updates={"documents": documents[:20]}
+                            state_updates={"documents": documents[:20]},
                         )
 
                         # 不继续执行后续步骤，直接break到总结
@@ -1235,12 +1269,21 @@ async def execute_steps_with_intervention(
 
                     # 如果检索结果正常（≤20篇），直接继续执行，不需要用户确认
 
-                elif step_type == "tool" and step_name == "search_documents_by_classification":
+                elif (
+                    step_type == "tool"
+                    and step_name == "search_documents_by_classification"
+                ):
                     state["intermediate_data"]["document_ids"] = result.get(
-                        "document_ids", [])
-                elif step_type == "tool" and step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+                        "document_ids", []
+                    )
+                elif step_type == "tool" and step_name in [
+                    "get_document_contents",
+                    "skim_documents",
+                    "read_documents",
+                ]:
                     state["intermediate_data"]["documents"] = result.get(
-                        "documents", [])
+                        "documents", []
+                    )
                 elif step_type == "agent" and step_name == "qa_agent":
                     state["final_answer"] = result.get("answer")
 
@@ -1256,12 +1299,15 @@ async def execute_steps_with_intervention(
                     "step_name": step_name,
                     "description": step_desc,
                     "result": result,
-                    "documents": state.get("documents", []) if step_type == "agent" else None,
-                }
+                    "documents": (
+                        state.get("documents", []) if step_type == "agent" else None
+                    ),
+                },
             }
 
         except Exception as e:
             import traceback
+
             logger.error(f"❌ 步骤{i+1}失败: {step_name}, 错误: {e}")
             logger.error(traceback.format_exc())
 
@@ -1269,7 +1315,7 @@ async def execute_steps_with_intervention(
                 "step": i + 1,
                 "name": step_name,
                 "description": step_desc,
-                "result": {"success": False, "error": str(e)}
+                "result": {"success": False, "error": str(e)},
             }
 
             if step_type == "tool":
@@ -1286,7 +1332,7 @@ async def execute_steps_with_intervention(
                     "step_name": step_name,
                     "description": step_desc,
                     "result": {"success": False, "error": str(e)},
-                }
+                },
             }
 
 

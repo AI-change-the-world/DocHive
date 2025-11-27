@@ -7,15 +7,15 @@
 """
 
 from typing import Any, Dict, List, TypedDict
-from loguru import logger
+
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.tools.tool_registry import execute_tool_call
 from services.tools.document.deduplicate_documents import deduplicate_documents
-
+from services.tools.tool_registry import execute_tool_call
 
 # ==================== 检索智能体状态定义 ====================
 
@@ -83,8 +83,9 @@ async def optimize_query(
     """
     logger.info("========== 检索智能体 - 节点0: 查询优化 ===========")
 
-    from utils.llm_client import get_llm_client
     import json
+
+    from utils.llm_client import get_llm_client
 
     db: AsyncSession = config.get("configurable", {}).get("db")
     query = state["query"]
@@ -153,6 +154,7 @@ async def optimize_query(
     except Exception as e:
         logger.error(f"❌ 查询优化失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         # 降级：直接使用原始查询
         state["optimized_query"] = {
@@ -179,8 +181,7 @@ async def es_fulltext_retrieval(
     logger.info("========== 检索智能体 - 节点1: ES全文检索 ===========")
 
     es_client = config.get("configurable", {}).get("es")
-    es_index = config.get("configurable", {}).get(
-        "es_index", "dochive_documents")
+    es_index = config.get("configurable", {}).get("es_index", "dochive_documents")
 
     query = state["query"]
     template_id = state["template_id"]
@@ -212,6 +213,7 @@ async def es_fulltext_retrieval(
     except Exception as e:
         logger.error(f"❌ ES检索异常: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         state["es_document_ids"] = []
 
@@ -232,11 +234,13 @@ async def sql_structured_retrieval(
     """
     logger.info("========== 检索智能体 - 节点2: SQL结构化检索 ===========")
 
-    from utils.llm_client import get_llm_client
-    from services.template_service import TemplateService
-    from models.database_models import TemplateDocumentMapping
-    from sqlalchemy import select, or_
     import json
+
+    from sqlalchemy import or_, select
+
+    from models.database_models import TemplateDocumentMapping
+    from services.template_service import TemplateService
+    from utils.llm_client import get_llm_client
 
     db: AsyncSession = config.get("configurable", {}).get("db")
 
@@ -346,8 +350,9 @@ async def evaluate_sql_quality(
     """
     logger.info("========== 检索智能体 - 节点2.5: SQL质量评估 ===========")
 
-    from utils.llm_client import get_llm_client
     import json
+
+    from utils.llm_client import get_llm_client
 
     db: AsyncSession = config.get("configurable", {}).get("db")
 
@@ -362,8 +367,7 @@ async def evaluate_sql_quality(
         return state
 
     # 1. 统计UNKNOWN数量
-    unknown_count = sum(
-        1 for cond in conditions if cond.get("value") == "UNKNOWN")
+    unknown_count = sum(1 for cond in conditions if cond.get("value") == "UNKNOWN")
     total_count = len(conditions)
 
     logger.info(f"📊 提取结果: 总计{total_count}个编码，其中{unknown_count}个UNKNOWN")
@@ -558,7 +562,8 @@ async def post_process_results(
                     before_count = len(documents)
                     documents = deduplicate_documents(documents)
                     logger.info(
-                        f"🗑️ 内容去重: {before_count} -> {len(documents)} 篇文档")
+                        f"🗑️ 内容去重: {before_count} -> {len(documents)} 篇文档"
+                    )
 
                 # 3. 按score降序排序
                 documents.sort(key=lambda x: x.get("score", 0.0), reverse=True)
@@ -577,6 +582,7 @@ async def post_process_results(
         except Exception as e:
             logger.error(f"❌ 后处理失败: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
             state["final_documents"] = []
     else:
@@ -625,7 +631,9 @@ def build_retrieval_agent_v2() -> CompiledStateGraph:
     app = workflow.compile()
 
     logger.info("✅ 检索智能体V2工作流编译完成")
-    logger.info("📋 工作流程: 查询优化 → ES检索 → SQL检索 → SQL质量评估 → 求交集 → 后处理")
+    logger.info(
+        "📋 工作流程: 查询优化 → ES检索 → SQL检索 → SQL质量评估 → 求交集 → 后处理"
+    )
 
     return app
 
@@ -709,6 +717,7 @@ async def retrieve_documents_v2(
     except Exception as e:
         logger.error(f"❌ 检索失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
 
         return {

@@ -231,8 +231,7 @@ async def ask_question_agent_stream(
                     }
                 },
             ):
-                logger.info(
-                    f"[LangGraph step_result.keys()] {step_result.keys()}")
+                logger.info(f"[LangGraph step_result.keys()] {step_result.keys()}")
                 # 获取节点名称和状态数据
                 node_name = list(step_result.keys())[0]
                 state_data = step_result[node_name]
@@ -344,8 +343,7 @@ async def ask_question_agent_stream(
                     execution_plan = state_data.get("execution_plan", [])
                     reasoning = state_data.get("reasoning", "")
                     tool_count = len(
-                        [s for s in execution_plan if s.get(
-                            "action") == "tool_call"]
+                        [s for s in execution_plan if s.get("action") == "tool_call"]
                     )
                     has_retrieval = any(
                         s.get("action") == "document_retrieval" for s in execution_plan
@@ -459,8 +457,7 @@ async def ask_question_agent_stream(
                     ).model_dump_json()
 
                     # 再发送stage_complete事件
-                    sql_doc_ids = list(state_data.get(
-                        "sql_document_ids", set()))
+                    sql_doc_ids = list(state_data.get("sql_document_ids", set()))
                     yield SSEEvent(
                         event="stage_complete",
                         data={
@@ -731,14 +728,16 @@ async def ask_question_beta_stream(
                         done=False,
                     ).model_dump_json()
                     logger.info(
-                        f"📊 [Beta] 已发送执行计划，共{len(data['execution_plan'])}步")
+                        f"📊 [Beta] 已发送执行计划，共{len(data['execution_plan'])}步"
+                    )
 
                 elif step_type == "step_result":
                     # 发送步骤结果
                     await asyncio.sleep(0.3)
 
-                    result_data = {data["step_type"] +
-                                   "_result": {"result": data["result"]}}
+                    result_data = {
+                        data["step_type"] + "_result": {"result": data["result"]}
+                    }
                     if data.get("documents"):
                         result_data["documents"] = data["documents"]
 
@@ -765,18 +764,22 @@ async def ask_question_beta_stream(
                     if hint_documents:
                         references = []
                         for doc in hint_documents:
-                            references.append({
-                                "document_id": doc.get("id") or doc.get("document_id"),
-                                "title": doc.get("title", "未命名文档"),
-                                "snippet": doc.get("ai_summary") or doc.get("content", "")[:200],
-                                "score": doc.get("score", 1.0),
-                            })
+                            references.append(
+                                {
+                                    "document_id": doc.get("id")
+                                    or doc.get("document_id"),
+                                    "title": doc.get("title", "未命名文档"),
+                                    "snippet": doc.get("ai_summary")
+                                    or doc.get("content", "")[:200],
+                                    "score": doc.get("score", 1.0),
+                                }
+                            )
 
                         yield SSEEvent(
                             event="documents",
                             data={
                                 "session_id": data.get("session_id"),
-                                "documents": references
+                                "documents": references,
                             },
                             id=task_id,
                             done=False,
@@ -788,7 +791,7 @@ async def ask_question_beta_stream(
                         event="answer",
                         data={
                             "session_id": data.get("session_id"),
-                            "content": hint_message
+                            "content": hint_message,
                         },
                         id=task_id,
                         done=False,
@@ -819,18 +822,22 @@ async def ask_question_beta_stream(
                     if data["documents"]:
                         await asyncio.sleep(0.5)
                         for doc in data["documents"]:
-                            references.append({
-                                "document_id": doc.get("id") or doc.get("document_id"),
-                                "title": doc.get("title", "未命名文档"),
-                                "snippet": doc.get("ai_summary") or doc.get("content", "")[:200],
-                                "score": doc.get("score", 1.0),
-                            })
+                            references.append(
+                                {
+                                    "document_id": doc.get("id")
+                                    or doc.get("document_id"),
+                                    "title": doc.get("title", "未命名文档"),
+                                    "snippet": doc.get("ai_summary")
+                                    or doc.get("content", "")[:200],
+                                    "score": doc.get("score", 1.0),
+                                }
+                            )
 
                         yield SSEEvent(
                             event="documents",
                             data={
                                 "session_id": data.get("session_id"),
-                                "documents": references
+                                "documents": references,
                             },
                             id=task_id,
                             done=False,
@@ -842,10 +849,7 @@ async def ask_question_beta_stream(
 
                     yield SSEEvent(
                         event="answer",
-                        data={
-                            "session_id": data.get("session_id"),
-                            "content": answer
-                        },
+                        data={"session_id": data.get("session_id"), "content": answer},
                         id=task_id,
                         done=False,
                     ).model_dump_json()

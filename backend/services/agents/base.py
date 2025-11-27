@@ -8,8 +8,8 @@ import inspect
 from abc import ABC, abstractmethod
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, TypedDict
-from loguru import logger
 
+from loguru import logger
 
 # ==================== 全局注册表 ====================
 
@@ -57,6 +57,7 @@ class AgentContext:
     def to_tool_context(self):
         """转换为 ToolContext（供智能体内部调用工具时使用）"""
         from services.tools.base import ToolContext
+
         return ToolContext(
             db=self.db,
             es_client=self.es_client,
@@ -73,6 +74,7 @@ class AgentContext:
 
 class AgentResult(TypedDict, total=False):
     """智能体执行结果的标准格式"""
+
     success: bool
     error: Optional[str]
     data: Dict[str, Any]  # 智能体特定的返回数据
@@ -154,6 +156,7 @@ class BaseAgent(ABC):
         except Exception as e:
             self.logger.error(f"智能体执行失败: {e}")
             import traceback
+
             self.logger.error(traceback.format_exc())
             return AgentResult(
                 success=False,
@@ -211,6 +214,7 @@ def agent(
         output_schema: 输出结果说明
         scenarios: 适用场景
     """
+
     def decorator(cls: type):
         # 设置类属性
         cls.name = name
@@ -335,6 +339,7 @@ async def execute_agent(
     except Exception as e:
         logger.error(f"执行智能体 {name} 失败: {str(e)}")
         import traceback
+
         logger.error(traceback.format_exc())
         return AgentResult(
             success=False,
@@ -352,8 +357,7 @@ def discover_agents():
 
     通过导入各模块触发 @agent 装饰器执行
     """
-    from services.agents import retrieval_agent_v2
-    from services.agents import qa_agent_v2
+    from services.agents import qa_agent_v2, retrieval_agent_v2
 
     logger.info(f"智能体发现完成，共注册 {len(_AGENT_REGISTRY)} 个智能体")
     return _AGENT_REGISTRY

@@ -6,10 +6,11 @@
 
 from datetime import datetime
 from typing import Any, Dict
+
 from loguru import logger
 from sqlalchemy import and_, func, select
 
-from services.tools.base import tool, ToolContext
+from services.tools.base import ToolContext, tool
 
 
 def _to_iso(t):
@@ -33,15 +34,10 @@ def _to_iso(t):
 @tool(
     name="get_template_statistics",
     description="获取指定模板的统计信息，包括文档总数、分类分布、文档类型分布、最近上传的文档等",
-    parameters={
-        "template_id": {
-            "type": "integer",
-            "description": "模板ID"
-        }
-    },
+    parameters={"template_id": {"type": "integer", "description": "模板ID"}},
     required=["template_id"],
     category="statistics",
-    tags=["统计", "模板", "概览"]
+    tags=["统计", "模板", "概览"],
 )
 async def get_template_statistics(
     ctx: ToolContext,
@@ -168,6 +164,7 @@ async def get_template_statistics(
     except Exception as e:
         logger.error(f"获取模板统计信息失败: {str(e)}")
         import traceback
+
         logger.error(traceback.format_exc())
         return {
             "success": False,

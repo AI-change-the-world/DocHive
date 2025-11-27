@@ -5,33 +5,31 @@
 """
 
 from typing import Any, Dict, List
+
 from loguru import logger
 
-from services.tools.base import tool, ToolContext
+from services.tools.base import ToolContext, tool
 
 
 @tool(
     name="analyze_documents",
     description="智能分析文档内容，根据文档数量自动选择批量分析或逐篇分析策略。适用于需要总结、归纳、对比文档内容的场景。",
     parameters={
-        "query": {
-            "type": "string",
-            "description": "用户的分析请求"
-        },
+        "query": {"type": "string", "description": "用户的分析请求"},
         "documents": {
             "type": "array",
             "items": {"type": "object"},
-            "description": "待分析的文档列表"
+            "description": "待分析的文档列表",
         },
         "max_context_length": {
             "type": "integer",
             "description": "最大上下文长度，默认10000",
-            "default": 10000
-        }
+            "default": 10000,
+        },
     },
     required=["query", "documents"],
     category="analysis",
-    tags=["分析", "总结", "归纳"]
+    tags=["分析", "总结", "归纳"],
 )
 async def analyze_documents(
     ctx: ToolContext,
@@ -81,7 +79,7 @@ async def analyze_documents(
 
                 # 截断内容
                 if len(content) > max_context_length // len(documents):
-                    content = content[:max_context_length // len(documents)] + "..."
+                    content = content[: max_context_length // len(documents)] + "..."
 
                 prompt = f"""请分析以下文档内容：
 
@@ -141,7 +139,10 @@ async def analyze_documents(
 
             analysis = await llm_client.chat_completion(
                 messages=[
-                    {"role": "system", "content": "你是一个专业的文档分析助手，擅长总结和归纳多篇文档。"},
+                    {
+                        "role": "system",
+                        "content": "你是一个专业的文档分析助手，擅长总结和归纳多篇文档。",
+                    },
                     {"role": "user", "content": prompt},
                 ],
                 db=db,
@@ -158,6 +159,7 @@ async def analyze_documents(
     except Exception as e:
         logger.error(f"❌ 文档分析失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         return {
             "success": False,

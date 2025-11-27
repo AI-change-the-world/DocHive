@@ -6,20 +6,16 @@
 """
 
 from typing import Any, Dict, List
+
 from loguru import logger
 
-# 导入新的基础设施
-from services.tools.base import (
-    get_all_tools,
-    get_tools_schema_list,
-    get_tools_description as _get_tools_description,
-)
-from services.agents.base import (
-    get_all_agents,
-    get_agents_schema_list,
-    get_agents_description as _get_agents_description,
-)
+from services.agents.base import get_agents_description as _get_agents_description
+from services.agents.base import get_agents_schema_list, get_all_agents
 
+# 导入新的基础设施
+from services.tools.base import get_all_tools
+from services.tools.base import get_tools_description as _get_tools_description
+from services.tools.base import get_tools_schema_list
 
 # ==================== 执行模式定义 ====================
 
@@ -99,6 +95,7 @@ def get_execution_patterns_description() -> str:
 
 
 # ==================== 向后兼容：保留旧的 TOOLS_SCHEMA 和 AGENTS_SCHEMA ====================
+
 
 # 这些变量现在动态生成，保持向后兼容
 def _get_tools_schema_compat():

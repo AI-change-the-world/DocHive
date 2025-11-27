@@ -5,14 +5,14 @@
 """
 
 from typing import Any, Dict, List, Optional, TypedDict
-from loguru import logger
+
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from utils.llm_client import get_llm_client
-
 
 # ==================== 问答智能体状态定义 ====================
 
@@ -75,12 +75,14 @@ async def filter_relevant_documents(
         title = doc.get("title", "未知标题")
         summary = doc.get("ai_summary") or doc.get("content", "")[:200]
 
-        summaries.append({
-            "index": i,
-            "document_id": doc_id,
-            "title": title,
-            "summary": summary,
-        })
+        summaries.append(
+            {
+                "index": i,
+                "document_id": doc_id,
+                "title": title,
+                "summary": summary,
+            }
+        )
 
     # 构建提示词
     summaries_text = "\n".join(
@@ -126,8 +128,7 @@ async def filter_relevant_documents(
 
         # 根据索引筛选文档
         filtered_documents = [
-            documents[idx] for idx in relevant_indices
-            if 0 <= idx < len(documents)
+            documents[idx] for idx in relevant_indices if 0 <= idx < len(documents)
         ]
 
         if not filtered_documents:
@@ -137,11 +138,13 @@ async def filter_relevant_documents(
 
         state["filtered_documents"] = filtered_documents
         logger.info(
-            f"✅ 筛选完成: {len(documents)} -> {len(filtered_documents)} 篇文档")
+            f"✅ 筛选完成: {len(documents)} -> {len(filtered_documents)} 篇文档"
+        )
 
     except Exception as e:
         logger.error(f"❌ 筛选失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         # 降级：保留前5个文档
         state["filtered_documents"] = documents[:5]
@@ -222,7 +225,10 @@ async def generate_answer_from_docs(
         # 调用LLM生成答案
         answer = await llm_client.chat_completion(
             messages=[
-                {"role": "system", "content": "你是一个专业的问答助手，基于文档内容准确回答问题"},
+                {
+                    "role": "system",
+                    "content": "你是一个专业的问答助手，基于文档内容准确回答问题",
+                },
                 {"role": "user", "content": prompt},
             ],
             db=db,
@@ -234,6 +240,7 @@ async def generate_answer_from_docs(
     except Exception as e:
         logger.error(f"❌ 生成答案失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         state["answer"] = f"抱歉，生成答案时出现错误: {str(e)}"
 
@@ -335,6 +342,7 @@ async def generate_answer_v2(
     except Exception as e:
         logger.error(f"❌ 问答失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
 
         return {

@@ -3,10 +3,11 @@
 支持多轮对话和用户干预
 """
 
+import asyncio
 import time
 from typing import Any, Dict, List, Optional
+
 from loguru import logger
-import asyncio
 
 
 class ConversationManager:
@@ -34,8 +35,7 @@ class ConversationManager:
     def start_cleanup_task(self):
         """启动后台清理任务"""
         if self._cleanup_task is None:
-            self._cleanup_task = asyncio.create_task(
-                self._cleanup_expired_sessions())
+            self._cleanup_task = asyncio.create_task(self._cleanup_expired_sessions())
             logger.info("🧹 启动会话清理任务")
 
     async def _cleanup_expired_sessions(self):
@@ -89,11 +89,9 @@ class ConversationManager:
             "updated_at": current_time,
             "expires_at": current_time + self._default_ttl,
             "last_interaction_at": current_time,
-
             # 会话状态
             "status": "active",  # active / waiting_input / completed / error
             "current_step": 0,
-
             # 执行状态
             "state": {
                 "query": initial_query,
@@ -110,7 +108,6 @@ class ConversationManager:
                 "success": False,
                 "error": None,
             },
-
             # 对话历史
             "messages": [
                 {
@@ -119,7 +116,6 @@ class ConversationManager:
                     "timestamp": current_time,
                 }
             ],
-
             # 用户干预
             "needs_user_input": False,
             "user_input_prompt": None,
@@ -156,11 +152,7 @@ class ConversationManager:
 
         return session_data
 
-    def update_session(
-        self,
-        session_id: str,
-        **updates
-    ) -> Optional[Dict[str, Any]]:
+    def update_session(self, session_id: str, **updates) -> Optional[Dict[str, Any]]:
         """
         更新会话数据
 
@@ -330,7 +322,7 @@ class ConversationManager:
             session_id=session_id,
             role="user",
             content=str(user_input),
-            metadata={"type": "user_input"}
+            metadata={"type": "user_input"},
         )
 
         # 清除等待状态
@@ -449,7 +441,10 @@ class ConversationManager:
             if user_id is not None and session_data.get("user_id") != user_id:
                 continue
 
-            if template_id is not None and session_data.get("template_id") != template_id:
+            if (
+                template_id is not None
+                and session_data.get("template_id") != template_id
+            ):
                 continue
 
             sessions.append(session_data)
@@ -460,7 +455,8 @@ class ConversationManager:
         """获取活跃会话数量"""
         current_time = int(time.time())
         count = sum(
-            1 for session_data in self._sessions.values()
+            1
+            for session_data in self._sessions.values()
             if current_time <= session_data.get("expires_at", 0)
         )
         return count

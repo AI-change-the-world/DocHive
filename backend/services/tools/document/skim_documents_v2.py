@@ -5,10 +5,11 @@
 """
 
 from typing import Any, Dict, List
+
 from loguru import logger
 from sqlalchemy import select
 
-from services.tools.base import tool, ToolContext
+from services.tools.base import ToolContext, tool
 
 
 @tool(
@@ -18,12 +19,12 @@ from services.tools.base import tool, ToolContext
         "document_ids": {
             "type": "array",
             "items": {"type": "integer"},
-            "description": "文档ID列表"
+            "description": "文档ID列表",
         }
     },
     required=["document_ids"],
     category="document",
-    tags=["文档", "粗读", "摘要"]
+    tags=["文档", "粗读", "摘要"],
 )
 async def skim_documents(
     ctx: ToolContext,
@@ -64,11 +65,9 @@ async def skim_documents(
 
     try:
         # 只查询 id, title, ai_summary
-        stmt = select(
-            Document.id,
-            Document.title,
-            Document.ai_summary
-        ).where(Document.id.in_(document_ids))
+        stmt = select(Document.id, Document.title, Document.ai_summary).where(
+            Document.id.in_(document_ids)
+        )
 
         result = await db.execute(stmt)
         rows = result.all()
@@ -93,6 +92,7 @@ async def skim_documents(
     except Exception as e:
         logger.error(f"❌ 粗读文档失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         return {
             "success": False,

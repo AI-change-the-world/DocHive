@@ -5,10 +5,11 @@
 """
 
 from typing import Any, Dict, List, Optional
+
 from loguru import logger
 from sqlalchemy import select
 
-from services.tools.base import tool, ToolContext
+from services.tools.base import ToolContext, tool
 
 
 @tool(
@@ -18,17 +19,17 @@ from services.tools.base import tool, ToolContext
         "document_ids": {
             "type": "array",
             "items": {"type": "integer"},
-            "description": "文档ID列表"
+            "description": "文档ID列表",
         },
         "include_fields": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "需要包含的字段，默认: id, title, content, ai_summary"
-        }
+            "description": "需要包含的字段，默认: id, title, content, ai_summary",
+        },
     },
     required=["document_ids"],
     category="document",
-    tags=["文档", "读取", "内容"]
+    tags=["文档", "读取", "内容"],
 )
 async def get_document_contents(
     ctx: ToolContext,
@@ -98,6 +99,7 @@ async def get_document_contents(
     except Exception as e:
         logger.error(f"❌ 获取文档内容失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         return {
             "success": False,

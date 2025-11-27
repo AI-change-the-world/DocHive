@@ -6,8 +6,8 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db
 from models.database_models import CustomAgent
@@ -18,9 +18,9 @@ from schemas.agent_schemas import (
 )
 from schemas.api_schemas import ResponseBase
 from services.agent_editor import (
-    AgentMarkdownParser,
     AgentExecutionBuilder,
     AgentLLMValidator,
+    AgentMarkdownParser,
 )
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -53,12 +53,11 @@ async def parse_agent_markdown(
                     "success": False,
                     "errors": result.errors,
                     "warnings": result.warnings,
-                }
+                },
             )
 
         # 2. 基础验证
-        is_valid, validation_errors = AgentExecutionBuilder.validate_agent(
-            result.agent)
+        is_valid, validation_errors = AgentExecutionBuilder.validate_agent(result.agent)
         if not is_valid:
             result.errors.extend(validation_errors)
             return ResponseBase(
@@ -70,14 +69,16 @@ async def parse_agent_markdown(
                     "errors": result.errors,
                     "warnings": result.warnings,
                     "mermaid_diagram": "",
-                }
+                },
             )
 
         # 3. 使用LLM验证流程可行性并生成Mermaid图
         logger.info("🤖 调用LLM验证流程")
-        llm_valid, llm_errors, llm_warnings, mermaid_diagram = await AgentLLMValidator.validate_with_llm(
-            agent=result.agent,
-            db=db,
+        llm_valid, llm_errors, llm_warnings, mermaid_diagram = (
+            await AgentLLMValidator.validate_with_llm(
+                agent=result.agent,
+                db=db,
+            )
         )
 
         # 合并验证结果
@@ -95,7 +96,7 @@ async def parse_agent_markdown(
                     "errors": all_errors,
                     "warnings": all_warnings,
                     "mermaid_diagram": mermaid_diagram,
-                }
+                },
             )
         else:
             logger.warning(f"⚠️ LLM验证失败: {llm_errors}")
@@ -108,12 +109,13 @@ async def parse_agent_markdown(
                     "errors": all_errors,
                     "warnings": all_warnings,
                     "mermaid_diagram": mermaid_diagram,
-                }
+                },
             )
 
     except Exception as e:
         logger.error(f"❌ 解析Agent失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"解析失败: {str(e)}")
 
@@ -139,30 +141,29 @@ async def create_agent(
         if not parse_result.success:
             raise HTTPException(
                 status_code=400,
-                detail=f"Agent定义解析失败: {'; '.join(parse_result.errors)}"
+                detail=f"Agent定义解析失败: {'; '.join(parse_result.errors)}",
             )
 
         agent = parse_result.agent
 
         # 2. 基础验证
-        is_valid, validation_errors = AgentExecutionBuilder.validate_agent(
-            agent)
+        is_valid, validation_errors = AgentExecutionBuilder.validate_agent(agent)
         if not is_valid:
             raise HTTPException(
-                status_code=400,
-                detail=f"Agent验证失败: {'; '.join(validation_errors)}"
+                status_code=400, detail=f"Agent验证失败: {'; '.join(validation_errors)}"
             )
 
         # 3. LLM验证并生成Mermaid图
-        llm_valid, llm_errors, llm_warnings, mermaid_diagram = await AgentLLMValidator.validate_with_llm(
-            agent=agent,
-            db=db,
+        llm_valid, llm_errors, llm_warnings, mermaid_diagram = (
+            await AgentLLMValidator.validate_with_llm(
+                agent=agent,
+                db=db,
+            )
         )
 
         if not llm_valid:
             raise HTTPException(
-                status_code=400,
-                detail=f"LLM验证失败: {'; '.join(llm_errors)}"
+                status_code=400, detail=f"LLM验证失败: {'; '.join(llm_errors)}"
             )
 
         # 4. 保存到数据库
@@ -191,7 +192,7 @@ async def create_agent(
             data={
                 "agent": db_agent.to_dict(),
                 "execution_plan": AgentExecutionBuilder.build_execution_plan(agent),
-            }
+            },
         )
 
     except HTTPException:
@@ -199,6 +200,7 @@ async def create_agent(
     except Exception as e:
         logger.error(f"❌ 创建Agent失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"创建失败: {str(e)}")
@@ -233,7 +235,7 @@ async def list_agents(
             data={
                 "agents": [agent.to_dict() for agent in agents],
                 "total": len(agents),
-            }
+            },
         )
 
     except Exception as e:
@@ -275,8 +277,4 @@ async def get_markdown_template() -> ResponseBase:
 - **描述**: 基于检索结果生成答案
 """
 
-    return ResponseBase(
-        code=200,
-        message="模板获取成功",
-        data={"template": template}
-    )
+    return ResponseBase(code=200, message="模板获取成功", data={"template": template})

@@ -1,12 +1,12 @@
 from models.database_models import (
     ClassTemplate,
     ClassTemplateConfigs,
+    CustomAgent,
     Document,
     OperationLog,
     SystemConfig,
     User,
     UserRole,
-    CustomAgent
 )
 
 __all__ = [

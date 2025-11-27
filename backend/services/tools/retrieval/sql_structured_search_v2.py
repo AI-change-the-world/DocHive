@@ -5,37 +5,32 @@ SQL结构化检索工具 V2
 """
 
 from typing import Any, Dict, List, Optional
-from loguru import logger
-from sqlalchemy import select, or_
 
-from services.tools.base import tool, ToolContext
+from loguru import logger
+from sqlalchemy import or_, select
+
+from services.tools.base import ToolContext, tool
 
 
 @tool(
     name="sql_structured_search",
     description="基于分类编码和类别字段进行结构化SQL查询。适用于需要精确匹配特定分类的场景。",
     parameters={
-        "template_id": {
-            "type": "integer",
-            "description": "模板ID"
-        },
+        "template_id": {"type": "integer", "description": "模板ID"},
         "class_code": {
             "type": "string",
-            "description": "分类编码，如'01.02'，不提供则查询所有"
+            "description": "分类编码，如'01.02'，不提供则查询所有",
         },
-        "category_field_code": {
-            "type": "string",
-            "description": "类别字段编码"
-        },
+        "category_field_code": {"type": "string", "description": "类别字段编码"},
         "top_k": {
             "type": "integer",
             "description": "返回文档数量，默认50",
-            "default": 50
-        }
+            "default": 50,
+        },
     },
     required=["template_id"],
     category="retrieval",
-    tags=["检索", "SQL", "结构化查询"]
+    tags=["检索", "SQL", "结构化查询"],
 )
 async def sql_structured_search(
     ctx: ToolContext,
@@ -114,6 +109,7 @@ async def sql_structured_search(
     except Exception as e:
         logger.error(f"❌ SQL结构化检索失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         return {
             "success": False,

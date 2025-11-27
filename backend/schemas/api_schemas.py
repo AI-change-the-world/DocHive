@@ -212,8 +212,7 @@ class DocumentSearchRequest(BaseModel):
 
     keyword: Optional[str] = Field(None, description="全文搜索关键词")
     template_id: Optional[int] = None
-    extracted_fields: Optional[Dict[str, Any]
-                               ] = Field(None, description="抽取字段过滤")
+    extracted_fields: Optional[Dict[str, Any]] = Field(None, description="抽取字段过滤")
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     status: Optional[str] = None
@@ -295,8 +294,7 @@ class ExtractionResponse(BaseModel):
 class DocumentTypeFieldSchema(BaseModel):
     """文档类型字段定义"""
 
-    field_name: str = Field(..., min_length=1,
-                            max_length=100, description="字段名称")
+    field_name: str = Field(..., min_length=1, max_length=100, description="字段名称")
     description: str = Field(..., description="字段描述")
     field_type: str = Field(
         "text", description="字段类型:text, number, array, date, boolean"
@@ -307,10 +305,8 @@ class DocumentTypeCreate(BaseModel):
     """创建文档类型"""
 
     template_id: int = Field(..., description="所属模板ID")
-    type_code: str = Field(..., min_length=1,
-                           max_length=50, description="类型编码")
-    type_name: str = Field(..., min_length=1,
-                           max_length=100, description="类型名称")
+    type_code: str = Field(..., min_length=1, max_length=50, description="类型编码")
+    type_name: str = Field(..., min_length=1, max_length=100, description="类型名称")
     description: Optional[str] = None
     extraction_prompt: Optional[str] = Field(None, description="AI提取Prompt")
     fields: Optional[List[DocumentTypeFieldSchema]] = Field(
@@ -415,12 +411,13 @@ class SystemConfigResponse(BaseModel):
 class QARequest(BaseModel):
     """问答请求"""
 
-    question: str = Field(..., min_length=1,
-                          max_length=1000, description="用户问题")
+    question: str = Field(..., min_length=1, max_length=1000, description="用户问题")
     template_id: Optional[int] = Field(None, description="限定模板ID范围")
     top_k: int = Field(5, ge=1, le=20, description="检索文档数量")
     session_id: Optional[str] = Field(None, description="会话ID（用于多轮对话）")
-    user_input: Optional[Any] = Field(None, description="用户干预输入（当会话等待用户输入时）")
+    user_input: Optional[Any] = Field(
+        None, description="用户干预输入（当会话等待用户输入时）"
+    )
 
 
 class QADocumentReference(BaseModel):
