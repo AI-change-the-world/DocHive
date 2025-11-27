@@ -645,24 +645,28 @@ async def ask_question_beta_stream(
     current_user: User = Depends(get_current_user),
 ):
     """
-    基于Master Router V2的流式问答接口（SSE）- Beta版本
+    基于Master Router V4的流式问答接口（SSE）- 支持多轮对话和用户干预
 
     新架构特性：
     - 统一的工具和智能体注册中心
     - LLM基于完整信息进行智能决策
     - 支持5种执行模式：tool_only, agent_only, agent_chain, hybrid, llm_direct
     - 完整的状态管理和中间结果追踪
+    - 支持多轮对话和用户干预
 
     参数：
     - **question**: 用户问题
     - **template_id**: 限定模板ID范围（必需）
     - **top_k**: 检索文档数量（默认5，范围1-20）
+    - **session_id**: 会话ID（可选，用于多轮对话）
+    - **user_input**: 用户输入（可选，当会话等待用户输入时）
 
     返回流式事件：
     - **plan**: 执行计划（包含execution_pattern和execution_plan）
     - **stage_start**: 阶段开始
     - **stage_complete**: 阶段完成（包含result数据）
     - **documents**: 检索到的文档
+    - **user_input_request**: 请求用户输入（用户干预）
     - **answer**: 流式生成的答案片段
     - **complete**: 回答完成标记
     - **error**: 错误信息
@@ -681,8 +685,13 @@ async def ask_question_beta_stream(
         task_id = str(uuid.uuid4())
 
         try:
-            # 生成会话ID
-            session_id = str(uuid.uuid4())
+            # 使用请求中的session_id，如果没有则生成新的
+            session_id = qa_request.session_id
+            if not session_id:
+                session_id = str(uuid.uuid4())
+                logger.info(f"🆕 [Beta] 生成新会话: {session_id}")
+            else:
+                logger.info(f"🔄 [Beta] 使用现有会话: {session_id}")
 
             # 初始化Elasticsearch客户端
             es_client = AsyncElasticsearch(
@@ -691,7 +700,7 @@ async def ask_question_beta_stream(
 
             logger.info(f"🚀 [Beta] 开始处理问题: {qa_request.question}")
 
-            # 使用新的三步执行函数
+            # 使用新的三步执行函数，支持多轮对话和用户干预
             from services.agents.master_router import execute_master_router
 
             async for step_data in execute_master_router(
@@ -700,6 +709,9 @@ async def ask_question_beta_stream(
                 db=db,
                 es_client=es_client,
                 es_index=config.ELASTICSEARCH_INDEX,
+                session_id=session_id,
+                user_id=current_user.id if current_user else None,
+                user_input=qa_request.user_input,
             ):
                 step_type = step_data["type"]
                 data = step_data["data"]
@@ -710,6 +722,7 @@ async def ask_question_beta_stream(
                     yield SSEEvent(
                         event="plan",
                         data={
+                            "session_id": data.get("session_id"),
                             "execution_pattern": data["execution_pattern"],
                             "execution_plan": data["execution_plan"],
                             "reasoning": data["reasoning"],
@@ -732,6 +745,7 @@ async def ask_question_beta_stream(
                     yield SSEEvent(
                         event="stage_complete",
                         data={
+                            "session_id": data.get("session_id"),
                             "stage": f"step_{data['step']}",
                             "step_index": data["step"],
                             "message": f"{data['description']}完成",
@@ -742,11 +756,68 @@ async def ask_question_beta_stream(
                     ).model_dump_json()
                     logger.info(f"📊 [Beta] 已发送步骤{data['step']}结果")
 
+                elif step_type == "hint":
+                    # 发送提示信息（检索结果过多/过少）
+                    await asyncio.sleep(0.3)
+
+                    # 先发送文档（如果有）
+                    hint_documents = data.get("documents", [])
+                    if hint_documents:
+                        references = []
+                        for doc in hint_documents:
+                            references.append({
+                                "document_id": doc.get("id") or doc.get("document_id"),
+                                "title": doc.get("title", "未命名文档"),
+                                "snippet": doc.get("ai_summary") or doc.get("content", "")[:200],
+                                "score": doc.get("score", 1.0),
+                            })
+
+                        yield SSEEvent(
+                            event="documents",
+                            data={
+                                "session_id": data.get("session_id"),
+                                "documents": references
+                            },
+                            id=task_id,
+                            done=False,
+                        ).model_dump_json()
+
+                    # 发送hint消息
+                    hint_message = data.get("message", "")
+                    yield SSEEvent(
+                        event="answer",
+                        data={
+                            "session_id": data.get("session_id"),
+                            "content": hint_message
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
+
+                    logger.info(f"💡 [Beta] 已发送hint提示: {data.get('hint_type')}")
+
+                elif step_type == "user_input_request":
+                    # 发送用户输入请求（用户干预）
+                    await asyncio.sleep(0.3)
+                    yield SSEEvent(
+                        event="user_input_request",
+                        data={
+                            "session_id": data.get("session_id"),
+                            "prompt": data.get("prompt"),
+                            "input_type": data.get("input_type"),
+                            "options": data.get("options"),
+                            "documents": data.get("documents", []),
+                        },
+                        id=task_id,
+                        done=False,
+                    ).model_dump_json()
+                    logger.info(f"⏸️ [Beta] 请求用户输入: {data.get('input_type')}")
+
                 elif step_type == "final":
                     # 发送文档引用（如果有）
+                    references = []
                     if data["documents"]:
                         await asyncio.sleep(0.5)
-                        references = []
                         for doc in data["documents"]:
                             references.append({
                                 "document_id": doc.get("id") or doc.get("document_id"),
@@ -757,7 +828,10 @@ async def ask_question_beta_stream(
 
                         yield SSEEvent(
                             event="documents",
-                            data={"documents": references},
+                            data={
+                                "session_id": data.get("session_id"),
+                                "documents": references
+                            },
                             id=task_id,
                             done=False,
                         ).model_dump_json()
@@ -768,7 +842,10 @@ async def ask_question_beta_stream(
 
                     yield SSEEvent(
                         event="answer",
-                        data={"content": answer},
+                        data={
+                            "session_id": data.get("session_id"),
+                            "content": answer
+                        },
                         id=task_id,
                         done=False,
                     ).model_dump_json()
@@ -777,9 +854,10 @@ async def ask_question_beta_stream(
                     yield SSEEvent(
                         event="complete",
                         data={
+                            "session_id": data.get("session_id"),
                             "message": "回答完成",
                             "answer": answer,  # 关键：带上答案
-                            "documents": references if data["documents"] else [],
+                            "documents": references,
                         },
                         id=task_id,
                         done=True,

@@ -76,7 +76,7 @@ export default function AppLayout() {
                             },
                             {
                                 key: 'qa',
-                                label: <span className="font-medium">智能问答</span>,
+                                label: <span className="font-medium">智能问答 <span className="ml-1 px-1.5 py-0.5 text-xs bg-purple-100 text-purple-600 rounded">已弃用</span></span>,
                                 onClick: () => navigate('/qa'),
                                 icon: <QuestionCircleOutlined className="text-primary-600" />,
                                 className: 'mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200'

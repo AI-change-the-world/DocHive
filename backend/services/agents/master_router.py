@@ -1,12 +1,13 @@
 """ 
-主路由器V3 - 简单三步执行流程
+主路由器V4 - 支持多轮对话和用户干预
 
 功能：
-1. 第一步：规划 - LLM选择合适的工具/智能体
-2. 第二步：执行 - 异步顺序执行规划的步骤
-3. 第三步：总结 - 格式化最终结果
+1. 基于session_id的会话状态管理
+2. 支持多轮对话
+3. 支持用户干预（检索结果过多/过少时请求用户输入）
+4. 三步执行流程：规划 → 执行 → 总结
 
-特点：不使用LangGraph，直接异步执行，每步实时yield
+特点：内存管理会话状态，支持暂停和恢复执行
 """
 
 import asyncio
@@ -14,13 +15,12 @@ import json
 from typing import Any, Dict, List, Optional, TypedDict
 
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import END, StateGraph
-from langgraph.graph.state import CompiledStateGraph
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agents.retrieval_agent import retrieve_documents_v2
 from services.agents.qa_agent import generate_answer_v2
+from services.conversation_manager import get_conversation_manager
 from services.registry import (
     get_system_capabilities,
     get_tools_description,
@@ -28,6 +28,158 @@ from services.registry import (
     get_execution_patterns_description,
 )
 from utils.llm_client import get_llm_client
+
+
+# ==================== 用户意图识别 ====================
+
+
+async def analyze_user_intent(
+    query: str,
+    conversation_history: List[Dict[str, Any]],
+    db: AsyncSession,
+) -> Dict[str, Any]:
+    """
+    分析用户意图
+
+    Args:
+        query: 当前用户输入
+        conversation_history: 对话历史
+        db: 数据库会话
+
+    Returns:
+        {
+            "intent_type": "response_to_hint" | "new_question" | "follow_up",
+            "reasoning": "判断理由"
+        }
+    """
+    llm_client = get_llm_client()
+
+    # 构建对话上下文（只取最后5轮）
+    recent_messages = conversation_history[-10:]  # 最后5轮对话
+    context_lines = []
+    for msg in recent_messages:
+        role = msg.get("role")
+        content = msg.get("content", "")
+        if role == "user":
+            context_lines.append(f"用户: {content}")
+        elif role == "assistant":
+            context_lines.append(f"助手: {content[:200]}...")  # 截断过长内容
+
+    conversation_context = "\n".join(context_lines)
+
+    system_prompt = """你是一个用户意图分析助手。分析用户输入属于以下哪种意图：
+
+1. **response_to_hint**: 用户回应了系统的提示（如"继续"、"使用前20篇"、"好的"、"行"等简短确认）
+   - 特征：用户输入非常简短，像是对上一条消息的回应
+   - 上一条assistant消息通常包含"检索到XX篇文档"、"请选择"等提示
+
+2. **new_question**: 用户提出了全新的问题，与之前的对话无关
+   - 特征：问题完整、独立，不依赖之前的上下文
+
+3. **follow_up**: 追问或延续之前的话题
+   - 特征：使用代词（它、这个、那个）、或者问题与之前的话题相关
+
+请返回JSON格式：
+{
+    "intent_type": "response_to_hint" | "new_question" | "follow_up",
+    "reasoning": "简要说明判断理由"
+}
+"""
+
+    user_prompt = f"""【对话上下文】
+{conversation_context}
+
+【当前用户输入】
+{query}
+
+请分析用户意图。"""
+
+    try:
+        response = await llm_client.extract_json_response(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            db=db,
+        )
+        logger.info(f"💡 意图识别结果: {response}")
+
+        return response
+
+    except Exception as e:
+        logger.error(f"⚠️ 意图识别失败: {e}，默认为new_question")
+        return {
+            "intent_type": "new_question",
+            "reasoning": "意图识别失败，默认为新问题"
+        }
+
+
+async def filter_relevant_context(
+    query: str,
+    conversation_history: List[Dict[str, Any]],
+    db: AsyncSession,
+) -> str:
+    """
+    从历史对话中过滤出与当前问题相关的上下文
+
+    Args:
+        query: 当前问题
+        conversation_history: 对话历史
+        db: 数据库会话
+
+    Returns:
+        过滤后的相关上下文字符串
+    """
+    llm_client = get_llm_client()
+
+    # 构建历史对话（只取最后5轮）
+    recent_messages = conversation_history[-10:]
+    context_lines = []
+    for i, msg in enumerate(recent_messages):
+        role = msg.get("role")
+        content = msg.get("content", "")
+        if role == "user":
+            context_lines.append(f"[{i+1}] 用户: {content}")
+        elif role == "assistant":
+            # 截取前500字符
+            context_lines.append(f"[{i+1}] 助手: {content[:500]}...")
+
+    conversation_context = "\n".join(context_lines)
+
+    system_prompt = """你是一个上下文过滤助手。从历史对话中提取与当前问题相关的关键信息。
+
+要求：
+1. 只保留与当前问题**直接相关**的内容
+2. 删除无关的对话轮次
+3. 精简提取，不要原样复制
+4. 如果没有相关上下文，返回空字符串
+
+返回格式：直接返回过滤后的上下文文本，不需要JSON。
+"""
+
+    user_prompt = f"""【历史对话】
+{conversation_context}
+
+【当前问题】
+{query}
+
+请提取与当前问题相关的上下文。"""
+
+    try:
+        response = await llm_client.chat_completion(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            db=db,
+        )
+
+        logger.info(f"📋 过滤后的上下文: {response[:200]}...")
+        return response.strip()
+
+    except Exception as e:
+        logger.error(f"⚠️ 上下文过滤失败: {e}")
+        return ""
 
 
 # ==================== 状态管理 ====================
@@ -668,25 +820,66 @@ async def execute_master_router(
     db: AsyncSession,
     es_client,
     es_index: str = "dochive_documents",
+    session_id: Optional[str] = None,
+    user_id: Optional[int] = None,
+    user_input: Optional[Any] = None,
 ):
     """
-    主路由器执行函数：三步流程
+    主路由器执行函数：支持多轮对话和用户干预
 
-    第一步：规划 - LLM选择合适的工具/智能体
-    第二步：执行 - 异步顺序执行每一步，yield结果
-    第三步：总结 - 格式化最终结果
+    核心改进：
+    1. 每次用户输入都创建全新的state对象
+    2. 会话管理器只保存历史消息
+    3. 生成答案时，如果需要历史上下文，从会话中获取并用大模型过滤
+
+    Args:
+        query: 用户查询
+        template_id: 模板ID
+        db: 数据库会话
+        es_client: ES客户端
+        es_index: ES索引
+        session_id: 会话ID（由前端传入，如果为None则自动生成）
+        user_id: 用户ID
+        user_input: 用户输入（当会话处于waiting_input状态时）
 
     Yields:
         dict: 每一步的执行结果
-            - type: 'plan' | 'step_result' | 'final'
+            - type: 'plan' | 'step_result' | 'user_input_request' | 'final'
             - data: 具体数据
     """
     import uuid
-    session_id = str(uuid.uuid4())
 
-    # ========== 第一步：规划 ==========
-    logger.info("🧠 ========== 第一步：规划 ===========")
+    # 获取会话管理器
+    conversation_manager = get_conversation_manager()
 
+    # 如果没有session_id，生成新的
+    if session_id is None:
+        session_id = str(uuid.uuid4())
+        logger.info(f"🆕 生成新会话: {session_id}")
+
+    # 检查会话是否存在
+    session_data = conversation_manager.get_session(session_id)
+
+    if session_data is None:
+        # 创建新会话
+        session_data = conversation_manager.create_session(
+            session_id=session_id,
+            template_id=template_id,
+            initial_query=query,
+            user_id=user_id,
+        )
+        logger.info(f"✨ 创建新会话: {session_id}")
+    else:
+        logger.info(f"🔄 恢复现有会话: {session_id}")
+
+        # 添加用户消息到对话历史
+        conversation_manager.add_message(
+            session_id=session_id,
+            role="user",
+            content=query,
+        )
+
+    # ⭐ 关键：每次都创建全新的state对象，不依赖会话中的旧state
     state: ExecutionState = {
         "query": query,
         "template_id": template_id,
@@ -703,183 +896,332 @@ async def execute_master_router(
         "error": None,
     }
 
-    config = {"configurable": {"db": db, "es": es_client, "es_index": es_index}}
-    state = await plan_execution(state, config)
+    # ⭐ 用户意图识别（仅在有历史对话时）
+    messages = session_data.get("messages", [])
+    if len(messages) > 1:  # 有历史对话（不包括当前query）
+        logger.info("🔍 检测到历史对话，开始用户意图识别")
 
-    # Yield 执行计划
-    yield {
-        "type": "plan",
-        "data": {
-            "execution_pattern": state["execution_pattern"],
-            "execution_plan": state["execution_plan"],
-            "reasoning": state["reasoning"],
+        intent_result = await analyze_user_intent(
+            query=query,
+            conversation_history=messages,
+            db=db,
+        )
+
+        # response_to_hint / new_question / follow_up
+        intent_type = intent_result.get("intent_type")
+        intent_reasoning = intent_result.get("reasoning", "")
+
+        logger.info(f"💡 用户意图: {intent_type}, 原因: {intent_reasoning}")
+
+        if intent_type == "response_to_hint":
+            # 用户回应了hint提示（如"继续"、"用前20篇"等）
+            logger.info("✅ 用户选择继续使用当前结果")
+
+            # 从会话的state中获取上次检索的文档
+            previous_documents = session_data.get(
+                "state", {}).get("documents", [])
+
+            if previous_documents:
+                logger.info(f"📚 使用上次检索的{len(previous_documents)}篇文档继续执行")
+
+                # 将文档放入state，然后直接执行QA生成
+                state["documents"] = previous_documents
+                state["intermediate_data"]["documents"] = previous_documents
+                state["execution_pattern"] = "retrieval_qa"  # 设置执行模式
+                state["execution_plan"] = [
+                    {
+                        "type": "agent",
+                        "name": "qa_agent",
+                        "description": "基于检索结果生成答案"
+                    }
+                ]
+
+                # 不再需要规划步骤，直接执行QA
+                logger.info("🔄 跳过规划步骤，直接执行QA生成")
+            else:
+                # 如果没有上次的文档，则当作新问题处理
+                logger.warning("⚠️ 未找到上次检索的文档，将当作新问题处理")
+                intent_type = "new_question"
+
+        elif intent_type == "follow_up":
+            # 追问或延续话题，需要结合历史上下文
+            logger.info("🔗 检测到追问，获取历史上下文进行归并")
+
+            # 从历史消息中获取相关上下文
+            relevant_context = await filter_relevant_context(
+                query=query,
+                conversation_history=messages,
+                db=db,
+            )
+
+            # 将相关上下文合并到query中
+            if relevant_context:
+                enhanced_query = f"【历史上下文】\n{relevant_context}\n\n【当前问题】\n{query}"
+                state["query"] = enhanced_query
+                logger.info(f"📝 增强后的查询: {enhanced_query[:100]}...")
+
+        # intent_type == "new_question" 时，直接使用原query，继续执行
+
+    logger.info(f"🆕 创建新的执行状态，query={state['query'][:100]}...")
+
+    # ========== 第一步：规划 ==========
+    if not state.get("execution_plan"):
+        logger.info("🧠 ========== 第一步：规划 ===========")
+
+        config = {"configurable": {
+            "db": db, "es": es_client, "es_index": es_index}}
+        state = await plan_execution(state, config)
+
+        # Yield 执行计划
+        yield {
+            "type": "plan",
+            "data": {
+                "session_id": session_id,
+                "execution_pattern": state["execution_pattern"],
+                "execution_plan": state["execution_plan"],
+                "reasoning": state["reasoning"],
+            }
         }
-    }
 
     # ========== 第二步：执行 ==========
-    if state["execution_pattern"] != "llm_direct":
+    if state["execution_pattern"] != "llm_direct" and not state.get("final_answer"):
         logger.info("🛠️ ========== 第二步：执行 ===========")
 
-        from services.tools.tool_registry import execute_tool_call
-        from services.tools.analysis.document_analyzer import analyze_documents
-
-        max_read_documents = 10
-        rag_max_length = 10000
-
-        # 逐步执行
-        for i, step in enumerate(state["execution_plan"]):
-            step_type = step.get("type")
-            step_name = step.get("name")
-            step_desc = step.get("description", "")
-
-            logger.info(f"🔧 执行第{i+1}步: {step_type}/{step_name}")
-
-            try:
-                result = None
-
-                # 执行工具或智能体
-                if step_type == "tool":
-                    arguments = {"template_id": template_id}
-
-                    if step_name in ["get_document_contents", "skim_documents", "read_documents"]:
-                        arguments["document_ids"] = state["intermediate_data"].get(
-                            "document_ids", [])
-                        if step_name == "read_documents":
-                            arguments["max_documents"] = max_read_documents
-                    elif step_name == "analyze_documents":
-                        # 特殊处理
-                        documents = state["intermediate_data"].get(
-                            "documents", [])
-                        result = await analyze_documents(
-                            query=query,
-                            documents=documents,
-                            db=db,
-                            max_context_length=rag_max_length,
-                        )
-                    elif step_name == "search_documents_by_classification":
-                        arguments["class_code"] = None
-
-                    if result is None:
-                        result = await execute_tool_call(
-                            tool_name=step_name,
-                            arguments=arguments,
-                            db=db,
-                            es_client=es_client,
-                            es_index=es_index,
-                        )
-
-                elif step_type == "agent":
-                    if step_name == "retrieval_agent":
-                        result = await retrieve_documents_v2(
-                            query=query,
-                            template_id=template_id,
-                            session_id=session_id,
-                            db=db,
-                            es_client=es_client,
-                            es_index=es_index,
-                            top_k=20,
-                            enable_deduplication=True,
-                        )
-                    elif step_name == "qa_agent":
-                        documents = state["intermediate_data"].get(
-                            "documents", [])
-                        result = await generate_answer_v2(
-                            query=query,
-                            documents=documents,
-                            db=db,
-                            max_context_length=rag_max_length,
-                        )
-                    else:
-                        raise RuntimeError(f"未知的智能体: {step_name}")
-                else:
-                    raise RuntimeError(f"未知的 step_type: {step_type}")
-
-                # 记录结果
-                result_entry = {
-                    "step": i + 1,
-                    "name": step_name,
-                    "description": step_desc,
-                    "result": result
-                }
-
-                if step_type == "tool":
-                    state["tool_results"].append(result_entry)
-                else:
-                    state["agent_results"].append(result_entry)
-
-                # 更新中间数据
-                if result.get("success"):
-                    if step_type == "agent" and step_name == "retrieval_agent":
-                        state["intermediate_data"]["documents"] = result.get(
-                            "documents", [])
-                        state["documents"] = result.get("documents", [])
-                    elif step_type == "tool" and step_name == "search_documents_by_classification":
-                        state["intermediate_data"]["document_ids"] = result.get(
-                            "document_ids", [])
-                    elif step_type == "tool" and step_name in ["get_document_contents", "skim_documents", "read_documents"]:
-                        state["intermediate_data"]["documents"] = result.get(
-                            "documents", [])
-                    elif step_type == "agent" and step_name == "qa_agent":
-                        state["final_answer"] = result.get("answer")
-
-                logger.info(f"✅ 步骤{i+1}完成: {step_name}")
-
-                # Yield 每一步的结果
-                yield {
-                    "type": "step_result",
-                    "data": {
-                        "step": i + 1,
-                        "step_type": step_type,
-                        "step_name": step_name,
-                        "description": step_desc,
-                        "result": result,
-                        "documents": state.get("documents", []) if step_type == "agent" else None,
-                    }
-                }
-
-            except Exception as e:
-                import traceback
-                logger.error(f"❌ 步骤{i+1}失败: {step_name}, 错误: {e}")
-                logger.error(traceback.format_exc())
-
-                result_entry = {
-                    "step": i + 1,
-                    "name": step_name,
-                    "description": step_desc,
-                    "result": {"success": False, "error": str(e)}
-                }
-
-                if step_type == "tool":
-                    state["tool_results"].append(result_entry)
-                else:
-                    state["agent_results"].append(result_entry)
-
-                yield {
-                    "type": "step_result",
-                    "data": {
-                        "step": i + 1,
-                        "step_type": step_type,
-                        "step_name": step_name,
-                        "description": step_desc,
-                        "result": {"success": False, "error": str(e)},
-                    }
-                }
+        # 执行步骤，支持用户干预
+        async for result in execute_steps_with_intervention(
+            session_id=session_id,
+            state=state,
+            db=db,
+            es_client=es_client,
+            es_index=es_index,
+            template_id=template_id,
+            query=query,
+        ):
+            yield result
 
     # ========== 第三步：总结 ==========
     logger.info("📝 ========== 第三步：总结 ===========")
 
+    config = {"configurable": {"db": db, "es": es_client, "es_index": es_index}}
     state = await finalize_answer(state, config)
+
+    # 添加AI回复到对话历史
+    if state.get("final_answer"):
+        conversation_manager.add_message(
+            session_id=session_id,
+            role="assistant",
+            content=state["final_answer"],
+        )
+
+    # 标记会话完成
+    conversation_manager.complete_session(
+        session_id, state.get("final_answer"))
 
     # Yield 最终结果
     yield {
         "type": "final",
         "data": {
+            "session_id": session_id,
             "final_answer": state["final_answer"],
             "documents": state["documents"],
             "success": state["success"],
             "error": state.get("error"),
         }
     }
+
+
+async def execute_steps_with_intervention(
+    session_id: str,
+    state: ExecutionState,
+    db: AsyncSession,
+    es_client,
+    es_index: str,
+    template_id: int,
+    query: str,  # 这个参数不再需要，使用state中的query
+):
+    """
+    执行步骤，支持用户干预
+
+    用户干预场景：
+    1. 检索结果过多（>20篇）：请求用户选择或精化查询
+    2. 检索结果过少（<3篇）：提示用户重新输入问题
+    3. 文档过多需要阅读：请求用户选择重点文档
+    """
+    from services.tools.tool_registry import execute_tool_call
+    from services.tools.analysis.document_analyzer import analyze_documents
+    from services.conversation_manager import get_conversation_manager
+
+    conversation_manager = get_conversation_manager()
+
+    max_read_documents = 10
+    rag_max_length = 10000
+
+    # 使用state中的query
+    current_query = state["query"]
+
+    # 逐步执行（不再使用current_step，每次都从头开始）
+    for i, step in enumerate(state["execution_plan"]):
+        step_type = step.get("type")
+        step_name = step.get("name")
+        step_desc = step.get("description", "")
+
+        logger.info(f"🔧 执行第{i+1}步: {step_type}/{step_name}")
+
+        try:
+            result = None
+
+            # 执行工具或智能体
+            if step_type == "tool":
+                arguments = {"template_id": template_id}
+
+                if step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+                    arguments["document_ids"] = state["intermediate_data"].get(
+                        "document_ids", [])
+                    if step_name == "read_documents":
+                        arguments["max_documents"] = max_read_documents
+                elif step_name == "analyze_documents":
+                    documents = state["intermediate_data"].get("documents", [])
+                    result = await analyze_documents(
+                        query=current_query,  # 使用current_query
+                        documents=documents,
+                        db=db,
+                        max_context_length=rag_max_length,
+                    )
+                elif step_name == "search_documents_by_classification":
+                    arguments["class_code"] = None
+
+                if result is None:
+                    result = await execute_tool_call(
+                        tool_name=step_name,
+                        arguments=arguments,
+                        db=db,
+                        es_client=es_client,
+                        es_index=es_index,
+                    )
+
+            elif step_type == "agent":
+                if step_name == "retrieval_agent":
+                    result = await retrieve_documents_v2(
+                        query=current_query,  # 使用current_query
+                        template_id=template_id,
+                        session_id=session_id,
+                        db=db,
+                        es_client=es_client,
+                        es_index=es_index,
+                        top_k=20,
+                        enable_deduplication=True,
+                    )
+                elif step_name == "qa_agent":
+                    documents = state["intermediate_data"].get("documents", [])
+                    result = await generate_answer_v2(
+                        query=current_query,  # 使用current_query
+                        documents=documents,
+                        db=db,
+                        max_context_length=rag_max_length,
+                    )
+                else:
+                    raise RuntimeError(f"未知的智能体: {step_name}")
+            else:
+                raise RuntimeError(f"未知的 step_type: {step_type}")
+
+            # 记录结果
+            result_entry = {
+                "step": i + 1,
+                "name": step_name,
+                "description": step_desc,
+                "result": result
+            }
+
+            if step_type == "tool":
+                state["tool_results"].append(result_entry)
+            else:
+                state["agent_results"].append(result_entry)
+
+            # 更新中间数据
+            if result.get("success"):
+                if step_type == "agent" and step_name == "retrieval_agent":
+                    documents = result.get("documents", [])
+                    state["intermediate_data"]["documents"] = documents
+                    state["documents"] = documents
+
+                    # ⭐ 检索结果检查：过多或过少时，在对话中提示用户
+                    doc_count = len(documents)
+
+                    if doc_count > 20:
+                        # 结果过多，生成提示消息并直接返回
+                        logger.info(f"⚠️ 检索到{doc_count}篇文档，过多，生成提示消息")
+
+                        hint_message = f"检索到{doc_count}篇文档，结果过多。\n\n您可以：\n1. 输入更具体的问题来精化查询\n2. 直接让我使用前20篇文档继续回答\n\n请告诉我您的选择。"
+
+                        # 直接设置为最终答案，不再yield hint事件
+                        state["final_answer"] = hint_message
+                        state["documents"] = documents[:20]
+                        state["success"] = True
+
+                        # ⭐ 保存文档到会话中state，供下次用户选择继续时使用
+                        conversation_manager.update_state(
+                            session_id=session_id,
+                            state_updates={"documents": documents[:20]}
+                        )
+
+                        # 不继续执行后续步骤，直接break到总结
+                        break
+
+                    # 如果检索结果正常（≤20篇），直接继续执行，不需要用户确认
+
+                elif step_type == "tool" and step_name == "search_documents_by_classification":
+                    state["intermediate_data"]["document_ids"] = result.get(
+                        "document_ids", [])
+                elif step_type == "tool" and step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+                    state["intermediate_data"]["documents"] = result.get(
+                        "documents", [])
+                elif step_type == "agent" and step_name == "qa_agent":
+                    state["final_answer"] = result.get("answer")
+
+            logger.info(f"✅ 步骤{i+1}完成: {step_name}")
+
+            # Yield 每一步的结果
+            yield {
+                "type": "step_result",
+                "data": {
+                    "session_id": session_id,
+                    "step": i + 1,
+                    "step_type": step_type,
+                    "step_name": step_name,
+                    "description": step_desc,
+                    "result": result,
+                    "documents": state.get("documents", []) if step_type == "agent" else None,
+                }
+            }
+
+        except Exception as e:
+            import traceback
+            logger.error(f"❌ 步骤{i+1}失败: {step_name}, 错误: {e}")
+            logger.error(traceback.format_exc())
+
+            result_entry = {
+                "step": i + 1,
+                "name": step_name,
+                "description": step_desc,
+                "result": {"success": False, "error": str(e)}
+            }
+
+            if step_type == "tool":
+                state["tool_results"].append(result_entry)
+            else:
+                state["agent_results"].append(result_entry)
+
+            yield {
+                "type": "step_result",
+                "data": {
+                    "session_id": session_id,
+                    "step": i + 1,
+                    "step_type": step_type,
+                    "step_name": step_name,
+                    "description": step_desc,
+                    "result": {"success": False, "error": str(e)},
+                }
+            }
 
 
 # ==================== 决策函数 ====================

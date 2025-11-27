@@ -16,6 +16,7 @@ import {
     Badge,
     Alert,
     List,
+    Radio,
 } from 'antd';
 import {
     SendOutlined,
@@ -35,11 +36,13 @@ import {
     InfoCircleOutlined,
     ThunderboltOutlined,
     ApiOutlined,
+    DeleteOutlined,
 } from '@ant-design/icons';
 import type { QADocumentReference, QARequest, TemplateSelection } from '../../types';
 import { qaService } from '../../services/qa';
 import { documentService } from '../../services/document';
 import ReactMarkdown from 'react-markdown';
+import { v4 as uuidv4 } from 'uuid';
 
 const { TextArea } = Input;
 const { Title, Text, Paragraph } = Typography;
@@ -92,6 +95,17 @@ export default function QABetaPage() {
     const [currentReferences, setCurrentReferences] = useState<QADocumentReference[]>([]);
     const [agentStages, setAgentStages] = useState<AgentStage[]>([]);
     const [executionPattern, setExecutionPattern] = useState<string>('');
+
+    // 会话管理
+    const [sessionId, setSessionId] = useState<string>(uuidv4());
+
+    // 用户干预
+    const [showUserInputModal, setShowUserInputModal] = useState(false);
+    const [userInputPrompt, setUserInputPrompt] = useState('');
+    const [userInputType, setUserInputType] = useState('');
+    const [userInputOptions, setUserInputOptions] = useState<any[]>([]);
+    const [userInputDocuments, setUserInputDocuments] = useState<any[]>([]);
+    const [selectedUserInput, setSelectedUserInput] = useState<any>(null);
 
     // 使用ref保存最新值
     const currentAnswerRef = useRef('');
@@ -206,8 +220,8 @@ export default function QABetaPage() {
     };
 
     // 发送问题
-    const handleAsk = async () => {
-        if (!question.trim()) {
+    const handleAsk = async (userInput?: any) => {
+        if (!userInput && !question.trim()) {
             message.warning('请输入问题');
             return;
         }
@@ -217,14 +231,16 @@ export default function QABetaPage() {
             return;
         }
 
-        // 添加用户消息
-        const userMessage: Message = {
-            id: Date.now().toString(),
-            type: 'user',
-            content: question,
-            timestamp: new Date(),
-        };
-        setMessages(prev => [...prev, userMessage]);
+        // 如果不是用户干预，添加用户消息
+        if (!userInput) {
+            const userMessage: Message = {
+                id: Date.now().toString(),
+                type: 'user',
+                content: question,
+                timestamp: new Date(),
+            };
+            setMessages(prev => [...prev, userMessage]);
+        }
 
         // 重置状态
         setCurrentAnswer('');
@@ -244,9 +260,11 @@ export default function QABetaPage() {
 
         try {
             const requestData: QARequest = {
-                question: question.trim(),
+                question: userInput ? '' : question.trim(),
                 template_id: templateId,
                 top_k: 5,
+                session_id: sessionId,  // 传入session_id
+                user_input: userInput,   // 传入用户输入
             };
 
             // 使用新的beta接口
@@ -328,6 +346,29 @@ export default function QABetaPage() {
                                     agentStagesRef.current = updated;
                                     return updated;
                                 });
+                                break;
+
+                            case 'hint':
+                                // 收到提示信息（检索结果过多/过少）
+                                console.log('[收到提示]', eventData.data);
+
+                                const hintMessage = eventData.data?.message || '';
+                                const hintDocs = eventData.data?.documents || [];
+
+                                // 将提示消息显示为助手回复
+                                setCurrentAnswer(hintMessage);
+                                currentAnswerRef.current = hintMessage;
+
+                                // 显示相关文档
+                                if (hintDocs.length > 0) {
+                                    setCurrentReferences(hintDocs);
+                                    currentReferencesRef.current = hintDocs;
+                                }
+                                break;
+
+                            case 'user_input_request':
+                                // 旧的用户输入请求（已废弃）
+                                console.log('[请求用户输入-已废弃]', eventData.data);
                                 break;
 
                             case 'documents':
@@ -429,6 +470,31 @@ export default function QABetaPage() {
         currentReferencesRef.current = [];
         agentStagesRef.current = [];
         executionPatternRef.current = '';
+
+        // 生成新的session_id
+        setSessionId(uuidv4());
+    };
+
+    // 提交用户输入
+    const handleSubmitUserInput = () => {
+        if (!selectedUserInput) {
+            message.warning('请选择或输入内容');
+            return;
+        }
+
+        setShowUserInputModal(false);
+
+        // 添加用户选择的消息
+        const userMessage: Message = {
+            id: Date.now().toString(),
+            type: 'user',
+            content: typeof selectedUserInput === 'string' ? selectedUserInput : JSON.stringify(selectedUserInput),
+            timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, userMessage]);
+
+        // 使用同一个session_id继续执行
+        handleAsk(selectedUserInput);
     };
 
     // 渲染执行模式标签
@@ -840,7 +906,7 @@ export default function QABetaPage() {
                         <span className="text-sm text-gray-600 whitespace-nowrap">模板:</span>
                         <Select
                             size="small"
-                            className="flex-1 min-w-[150px]"
+                            // className="flex-1 min-w-[150px]"
                             placeholder="选择模板"
                             value={templateId}
                             onChange={setTemplateId}
@@ -880,7 +946,7 @@ export default function QABetaPage() {
                                 <Button
                                     type="primary"
                                     icon={<SendOutlined />}
-                                    onClick={handleAsk}
+                                    onClick={() => handleAsk()}
                                     disabled={!question.trim() || !templateId}
                                     size="small"
                                     style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}
@@ -954,6 +1020,106 @@ export default function QABetaPage() {
                 ) : (
                     <Empty description="无法加载文档" />
                 )}
+            </Modal>
+
+            {/* 用户输入模态框（用户干预） */}
+            <Modal
+                title={
+                    <div className="flex items-center space-x-2">
+                        <InfoCircleOutlined className="text-orange-500" />
+                        <span>需要您的帮助</span>
+                    </div>
+                }
+                open={showUserInputModal}
+                onOk={handleSubmitUserInput}
+                onCancel={() => setShowUserInputModal(false)}
+                okText="提交"
+                cancelText="取消"
+                width={700}
+            >
+                <div className="space-y-4 py-4">
+                    <Alert
+                        message={userInputPrompt}
+                        type="info"
+                        showIcon
+                    />
+
+                    {/* 选项列表 */}
+                    {userInputOptions.length > 0 && (
+                        <div>
+                            <Text strong className="block mb-2">请选择：</Text>
+                            <Radio.Group
+                                value={selectedUserInput}
+                                onChange={(e) => setSelectedUserInput(e.target.value)}
+                                className="w-full"
+                            >
+                                <Space direction="vertical" className="w-full">
+                                    {userInputOptions.map((option, idx) => (
+                                        <Radio key={idx} value={option.value}>
+                                            {option.label}
+                                        </Radio>
+                                    ))}
+                                </Space>
+                            </Radio.Group>
+                        </div>
+                    )}
+
+                    {/* 如果是精化查询，显示文本输入 */}
+                    {userInputType === 'refine_query' && selectedUserInput === 'refine' && (
+                        <div>
+                            <Text strong className="block mb-2">请输入更具体的问题：</Text>
+                            <TextArea
+                                placeholder="输入更具体的查询问题..."
+                                rows={3}
+                                onChange={(e) => {
+                                    const newQuery = e.target.value;
+                                    setSelectedUserInput({ action: 'refine', query: newQuery });
+                                }}
+                            />
+                        </div>
+                    )}
+
+                    {/* 显示文档列表（如果有） */}
+                    {userInputDocuments.length > 0 && selectedUserInput === 'select' && (
+                        <div>
+                            <Text strong className="block mb-2">请选择相关文档：</Text>
+                            <div className="max-h-60 overflow-y-auto border rounded p-2">
+                                <List
+                                    dataSource={userInputDocuments}
+                                    renderItem={(doc: any, idx) => (
+                                        <List.Item
+                                            className="cursor-pointer hover:bg-gray-50 p-2 rounded"
+                                            onClick={() => {
+                                                const currentSelection = (selectedUserInput as any)?.document_ids || [];
+                                                const docId = doc.id || doc.document_id;
+                                                const newSelection = currentSelection.includes(docId)
+                                                    ? currentSelection.filter((id: number) => id !== docId)
+                                                    : [...currentSelection, docId];
+                                                setSelectedUserInput({ action: 'select', document_ids: newSelection });
+                                            }}
+                                        >
+                                            <div className="flex items-center space-x-2 w-full">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={(selectedUserInput as any)?.document_ids?.includes(doc.id || doc.document_id)}
+                                                    readOnly
+                                                />
+                                                <div className="flex-1">
+                                                    <Text strong>{doc.title}</Text>
+                                                    {doc.score && (
+                                                        <Tag color="blue" className="ml-2">
+                                                            {(doc.score * 100).toFixed(0)}%
+                                                        </Tag>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </List.Item>
+                                    )}
+                                />
+                            </div>
+                        </div>
+                    )}
+                </div>
             </Modal>
         </div>
     );

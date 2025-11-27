@@ -204,6 +204,8 @@ export interface QARequest {
     question: string;
     template_id?: number;
     top_k?: number;
+    session_id?: string;  // 会话ID（用于多轮对话）
+    user_input?: any;     // 用户干预输入（当会话等待用户输入时）
 }
 
 export interface QADocumentReference {
