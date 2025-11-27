@@ -18,8 +18,9 @@ from langchain_core.runnables import RunnableConfig
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.agents.retrieval_agent import retrieve_documents_v2
-from services.agents.qa_agent import generate_answer_v2
+# 使用新版智能体
+from services.agents.retrieval_agent_v2 import retrieve_documents_v2
+from services.agents.qa_agent_v2 import generate_answer_v2
 from services.conversation_manager import get_conversation_manager
 from services.registry import (
     get_system_capabilities,
@@ -27,6 +28,8 @@ from services.registry import (
     get_agents_description,
     get_execution_patterns_description,
 )
+# 导入新版工具基础设施
+from services.tools.base import ToolContext, execute_tool
 from utils.llm_client import get_llm_client
 
 
@@ -572,16 +575,22 @@ async def execute_steps(
     rag_max_length = config.get(
         "configurable", {}).get("rag_max_length", 10000)
 
-    # helper: 实际调用工具/智能体实现 - 使用通用调用机制
+    # helper: 实际调用工具/智能体实现 - 使用新版工具系统
     async def _dispatch_to_impl(step_type: str, step_name: str):
         """
         通用的工具/智能体调度器
-        - 工具调用：使用 tool_registry.execute_tool_call 统一处理
+        - 工具调用：使用新版 execute_tool 统一处理
         - 智能体调用：直接调用智能体函数
         """
         if step_type == "tool":
-            # 使用通用的工具执行器
-            from services.tools.tool_registry import execute_tool_call
+            # 创建工具上下文
+            tool_ctx = ToolContext(
+                db=db,
+                es_client=es_client,
+                es_index=es_index,
+                template_id=template_id,
+                session_id=session_id,
+            )
 
             # 准备工具参数
             arguments = {"template_id": template_id}
@@ -593,26 +602,15 @@ async def execute_steps(
                 if step_name == "read_documents":
                     arguments["max_documents"] = max_read_documents
             elif step_name == "analyze_documents":
-                # analyze_documents 需要特殊处理（参数不标准）
-                from services.tools.analysis.document_analyzer import analyze_documents
-                documents = state["intermediate_data"].get("documents", [])
-                return await analyze_documents(
-                    query=query,
-                    documents=documents,
-                    db=db,
-                    max_context_length=rag_max_length,
-                )
+                # analyze_documents 参数
+                arguments["query"] = query
+                arguments["documents"] = state["intermediate_data"].get("documents", [])
+                arguments["max_context_length"] = rag_max_length
             elif step_name == "search_documents_by_classification":
                 arguments["class_code"] = None  # 默认返回所有文档
 
-            # 调用通用执行器
-            return await execute_tool_call(
-                tool_name=step_name,
-                arguments=arguments,
-                db=db,
-                es_client=es_client,
-                es_index=es_index,
-            )
+            # 调用新版工具执行器
+            return await execute_tool(step_name, arguments, tool_ctx)
 
         elif step_type == "agent":
             # 智能体调用：直接调用智能体函数
@@ -1118,8 +1116,6 @@ async def execute_steps_with_intervention(
     2. 检索结果过少（<3篇）：提示用户重新输入问题
     3. 文档过多需要阅读：请求用户选择重点文档
     """
-    from services.tools.tool_registry import execute_tool_call
-    from services.tools.analysis.document_analyzer import analyze_documents
     from services.conversation_manager import get_conversation_manager
 
     conversation_manager = get_conversation_manager()
@@ -1143,6 +1139,15 @@ async def execute_steps_with_intervention(
 
             # 执行工具或智能体
             if step_type == "tool":
+                # 创建工具上下文
+                tool_ctx = ToolContext(
+                    db=db,
+                    es_client=es_client,
+                    es_index=es_index,
+                    template_id=template_id,
+                    session_id=session_id,
+                )
+
                 arguments = {"template_id": template_id}
 
                 if step_name in ["get_document_contents", "skim_documents", "read_documents"]:
@@ -1151,24 +1156,14 @@ async def execute_steps_with_intervention(
                     if step_name == "read_documents":
                         arguments["max_documents"] = max_read_documents
                 elif step_name == "analyze_documents":
-                    documents = state["intermediate_data"].get("documents", [])
-                    result = await analyze_documents(
-                        query=current_query,  # 使用current_query
-                        documents=documents,
-                        db=db,
-                        max_context_length=rag_max_length,
-                    )
+                    arguments["query"] = current_query
+                    arguments["documents"] = state["intermediate_data"].get("documents", [])
+                    arguments["max_context_length"] = rag_max_length
                 elif step_name == "search_documents_by_classification":
                     arguments["class_code"] = None
 
-                if result is None:
-                    result = await execute_tool_call(
-                        tool_name=step_name,
-                        arguments=arguments,
-                        db=db,
-                        es_client=es_client,
-                        es_index=es_index,
-                    )
+                # 调用新版工具执行器
+                result = await execute_tool(step_name, arguments, tool_ctx)
 
             elif step_type == "agent":
                 if step_name == "retrieval_agent":

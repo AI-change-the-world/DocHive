@@ -17,6 +17,7 @@ from langgraph.graph.state import CompiledStateGraph
 from loguru import logger
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing_extensions import deprecated
 
 from models.database_models import (
     Document,
@@ -33,6 +34,7 @@ from utils.llm_client import get_llm_client
 graph_state_storage: Dict[str, Dict[str, Any]] = {}
 
 
+@deprecated("这个已经不太好用了，没有用智能规划，现在只是作为参考")
 class RetrievalState(TypedDict):
     """
     优化后的 RAG 智能体状态机
