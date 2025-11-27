@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+import uuid
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from loguru import logger
@@ -265,6 +266,56 @@ class TemplateService:
         return True
 
     @staticmethod
+    async def _process_doc_type_level(
+        db: AsyncSession, template: ClassTemplate
+    ) -> Dict[str, Any]:
+        """处理模板中的文档类型层级，自动创建/更新 DocumentType(非流式)"""
+        result = {"success": False, "message": "", "doc_types_count": 0, "errors": []}
+
+        try:
+            # 获取 levels 列表
+            levels_list = template.levels if isinstance(template.levels, list) else []
+
+            # 查找 is_doc_type 层级
+            doc_type_level: Optional[Dict[str, Any]] = None
+            for level in levels_list:
+                if isinstance(level, dict) and level.get("is_doc_type"):
+                    doc_type_level = level
+                    break
+
+            if doc_type_level is None:
+                # 没有文档类型层级，跳过
+                result["message"] = "无文档类型层级，跳过处理"
+                return result
+
+            extraction_prompt = doc_type_level.get("extraction_prompt")
+            if not extraction_prompt:
+                result["message"] = "未配置提取prompt，跳过处理"
+                return result
+
+            # 使用大模型解析 prompt，识别文档类型
+            doc_types_data = await TemplateService._parse_doc_types_from_prompt(
+                extraction_prompt
+            )
+
+            # 为每个识别出的文档类型创建/更新记录
+            for type_data in doc_types_data:
+                await TemplateService._create_or_update_doc_type(
+                    db, template.id, type_data
+                )
+
+            result["success"] = True
+            result["message"] = f"文档类型处理完成，共 {len(doc_types_data)} 个"
+            result["doc_types_count"] = len(doc_types_data)
+
+        except Exception as e:
+            result["success"] = False
+            result["message"] = f"处理文档类型时出错: {str(e)}"
+            result["errors"].append(str(e))
+
+        return result
+
+    @staticmethod
     async def _process_doc_type_level_stream(
         db: AsyncSession, template: ClassTemplate, task_id: str
     ) -> AsyncGenerator[str, None]:
@@ -497,3 +548,63 @@ class TemplateService:
             id=task_id,
         ).model_dump_json()
         await asyncio.sleep(0.1)
+
+    @staticmethod
+    async def _generate_level_options(
+        db: AsyncSession,
+        template: ClassTemplate,
+        levels_data: List[Dict[str, Any]],
+    ):
+        """使用大模型生成层级值域选项(流式)"""
+        llm_client = get_llm_client()
+        # 过滤掉 is_doc_type 的层级
+        normal_levels = [
+            level for level in levels_data if not level.get("is_doc_type", False)
+        ]
+
+        if not normal_levels:
+            # yield SSEEvent(
+            #     event="stage_skip",
+            #     data={"stage": "generate_options", "message": "无需生成层级选项"},
+            #     id=task_id,
+            # ).model_dump_json()
+            # return
+            raise Exception("无需生成层级选项")
+
+        # 构建 prompt
+        prompt = """你是一个文档分类系统的助手。请为每个层级生成合理的可选值列表。
+
+层级定义：
+{levels_json}
+
+请以JSON格式返回，格式：
+{{
+  "YEAR": null,
+  "DEPT": [
+    {{"name": "BGT", "description": "办公厅"}},
+    {{"name": "FGW", "description": "发展和改革委员会"}}
+  ]
+}}
+
+规则：
+1. 键名使用层级的code字段
+2. 时间类型（年/月/日）设为null
+3. 有明确值域的返回数组，每项包含name和description
+4. 优先使用extraction_prompt中的值域映射
+5. 无明确值域且非时间类型设为null
+6. 只输出JSON，不要其他内容
+7. 每个层级的选项数量不要超过50个，选择最常用的
+""".replace(
+            "{levels_json}", json.dumps(normal_levels, ensure_ascii=False, indent=2)
+        )
+
+        # 调用 LLM 生成值域选项
+        level_options = await llm_client.extract_json_response(
+            prompt, db=db, max_tokens=4096 * 2
+        )
+
+        # 保存到模板
+        template.level_options = level_options
+        await db.commit()
+
+        logger.info(f"模板 {template.id} 的层级值域选项生成成功: {level_options}")

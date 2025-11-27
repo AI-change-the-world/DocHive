@@ -1,6 +1,7 @@
 from models.database_models import (
     ClassTemplate,
     ClassTemplateConfigs,
+    CustomAgent,
     Document,
     OperationLog,
     SystemConfig,
@@ -16,4 +17,5 @@ __all__ = [
     "OperationLog",
     "SystemConfig",
     "ClassTemplateConfigs",
+    "CustomAgent",
 ]

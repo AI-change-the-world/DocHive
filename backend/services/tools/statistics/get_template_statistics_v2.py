@@ -1,33 +1,27 @@
 """
-获取模板统计信息工具
+获取模板统计信息工具 V2
+
+使用 @tool 装饰器重构
 """
 
 from datetime import datetime
 from typing import Any, Dict
+
 from loguru import logger
 from sqlalchemy import and_, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database_models import (
-    ClassTemplate,
-    Document,
-    DocumentType,
-    TemplateDocumentMapping,
-)
+from services.tools.base import ToolContext, tool
 
 
 def _to_iso(t):
-    """
-    将时间戳转换为ISO格式字符串（私有辅助函数）
-    """
+    """将时间戳转换为ISO格式字符串"""
     if t is None:
         return None
 
     if isinstance(t, int):
-        # 自动判断是秒还是毫秒
-        if t > 1e12:  # 毫秒级
+        if t > 1e12:
             t = datetime.fromtimestamp(t / 1000)
-        else:  # 秒级
+        else:
             t = datetime.fromtimestamp(t)
         return t.isoformat()
 
@@ -37,19 +31,43 @@ def _to_iso(t):
     return None
 
 
-async def get_template_statistics(db: AsyncSession, template_id: int) -> Dict[str, Any]:
+@tool(
+    name="get_template_statistics",
+    description="获取指定模板的统计信息，包括文档总数、分类分布、文档类型分布、最近上传的文档等",
+    parameters={"template_id": {"type": "integer", "description": "模板ID"}},
+    required=["template_id"],
+    category="statistics",
+    tags=["统计", "模板", "概览"],
+)
+async def get_template_statistics(
+    ctx: ToolContext,
+    template_id: int,
+) -> Dict[str, Any]:
     """
-    获取指定模板的统计信息
-
-    包括：文档总数、各分类文档数量、文档类型分布等
+    获取模板统计信息
 
     Args:
-        db: 数据库会话
+        ctx: 工具上下文
         template_id: 模板ID
 
     Returns:
         统计信息字典
     """
+    from models.database_models import (
+        ClassTemplate,
+        Document,
+        DocumentType,
+        TemplateDocumentMapping,
+    )
+
+    db = ctx.db
+
+    if not db:
+        return {
+            "success": False,
+            "error": "数据库会话未配置",
+        }
+
     try:
         # 1. 获取模板信息
         template_result = await db.execute(
@@ -63,7 +81,7 @@ async def get_template_statistics(db: AsyncSession, template_id: int) -> Dict[st
                 "error": f"模板ID {template_id} 不存在",
             }
 
-        # 2. 获取该模板下的文档总数
+        # 2. 获取文档总数
         total_docs_result = await db.execute(
             select(func.count(TemplateDocumentMapping.document_id)).where(
                 TemplateDocumentMapping.template_id == template_id
@@ -71,7 +89,7 @@ async def get_template_statistics(db: AsyncSession, template_id: int) -> Dict[st
         )
         total_docs = total_docs_result.scalar() or 0
 
-        # 3. 获取各分类编码的文档数量分布
+        # 3. 获取分类编码分布
         class_code_stats_result = await db.execute(
             select(
                 TemplateDocumentMapping.class_code,
@@ -85,7 +103,7 @@ async def get_template_statistics(db: AsyncSession, template_id: int) -> Dict[st
             for row in class_code_stats_result.all()
         ]
 
-        # 4. 获取文档类型分布（如果有）
+        # 4. 获取文档类型分布
         doc_type_stats_result = await db.execute(
             select(
                 DocumentType.type_name,
@@ -113,7 +131,7 @@ async def get_template_statistics(db: AsyncSession, template_id: int) -> Dict[st
             for row in doc_type_stats_result.all()
         ]
 
-        # 5. 获取最近上传的文档（前5个）
+        # 5. 获取最近上传的文档
         recent_docs_result = await db.execute(
             select(Document.id, Document.title, Document.upload_time)
             .join(
@@ -145,6 +163,9 @@ async def get_template_statistics(db: AsyncSession, template_id: int) -> Dict[st
 
     except Exception as e:
         logger.error(f"获取模板统计信息失败: {str(e)}")
+        import traceback
+
+        logger.error(traceback.format_exc())
         return {
             "success": False,
             "error": f"查询失败: {str(e)}",

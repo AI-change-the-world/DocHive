@@ -414,6 +414,10 @@ class QARequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=1000, description="用户问题")
     template_id: Optional[int] = Field(None, description="限定模板ID范围")
     top_k: int = Field(5, ge=1, le=20, description="检索文档数量")
+    session_id: Optional[str] = Field(None, description="会话ID（用于多轮对话）")
+    user_input: Optional[Any] = Field(
+        None, description="用户干预输入（当会话等待用户输入时）"
+    )
 
 
 class QADocumentReference(BaseModel):

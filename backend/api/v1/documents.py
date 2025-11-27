@@ -2,7 +2,17 @@ import json
 import traceback
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    status,
+)
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
@@ -25,6 +35,65 @@ from utils.llm_client import LLMClient
 from utils.storage import StorageClient
 
 router = APIRouter(prefix="/documents", tags=["文档上传与管理"])
+
+
+# 文本上传请求模型
+class TextUploadRequest(BaseModel):
+    text_content: str
+    title: str
+    template_id: int
+
+
+@router.post("/upload-text")
+async def upload_text(
+    request: TextUploadRequest = Body(...),
+    db: AsyncSession = Depends(get_db),
+    llm: LLMClient = Depends(get_llm),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    直接上传文本内容创建文档（流式传输）
+
+    - **text_content**: 文本内容
+    - **title**: 文档标题
+    - **template_id**: 关联的分类模板ID
+    """
+    if not request.template_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请选择分类模板",
+        )
+
+    if not request.text_content or not request.text_content.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="文本内容不能为空",
+        )
+
+    if not request.title or not request.title.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="文档标题不能为空",
+        )
+
+    try:
+        # 使用流式创建
+        return EventSourceResponse(
+            DocumentService.create_document_from_text(
+                db,
+                llm,
+                request.text_content,
+                request.title,
+                request.template_id,
+                getattr(current_user, "id"),
+            )
+        )
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"创建文档失败: {str(e)}",
+        )
 
 
 @router.get("/statistics", response_model=ResponseBase)

@@ -2,67 +2,22 @@
 工具和智能体注册中心
 
 统一管理所有可用的工具和智能体，提供完整的清单给LLM
+使用新的装饰器模式，自动从注册表获取工具和智能体信息
 """
 
 from typing import Any, Dict, List
-from services.tools.tool_registry import TOOLS_SCHEMA
 
+from loguru import logger
 
-# ==================== 智能体注册表 ====================
+from services.agents.base import get_agents_description as _get_agents_description
+from services.agents.base import get_agents_schema_list, get_all_agents
 
-AGENTS_SCHEMA = [
-    {
-        "name": "retrieval_agent",
-        "description": "检索智能体 - 负责从文档库中检索相关文档",
-        "capabilities": [
-            "分析用户查询意图",
-            "自动选择最优检索策略（ES全文检索/SQL结构化检索/混合检索）",
-            "执行检索工具组合",
-            "对检索结果进行去重和后处理",
-        ],
-        "input": {
-            "query": "用户查询文本",
-            "template_id": "模板ID",
-            "top_k": "返回文档数量（默认20）",
-        },
-        "output": {
-            "documents": "文档列表，包含id、title、content、ai_summary",
-            "total_count": "文档数量",
-            "retrieval_strategy": "使用的检索策略",
-        },
-        "适用场景": [
-            "需要获取文档列表",
-            "需要基于语义或结构化条件查找文档",
-            "作为问答的前置步骤",
-        ],
-    },
-    {
-        "name": "qa_agent",
-        "description": "问答智能体 - 基于给定文档生成答案",
-        "capabilities": [
-            "筛选与查询最相关的文档",
-            "理解文档内容",
-            "生成准确、简洁的自然语言答案",
-        ],
-        "input": {
-            "query": "用户问题",
-            "documents": "文档列表（通常来自检索智能体）",
-            "max_context_length": "最大上下文长度（默认10000）",
-        },
-        "output": {
-            "answer": "生成的答案",
-            "filtered_documents": "使用的文档列表",
-        },
-        "适用场景": [
-            "需要理解文档内容并生成答案",
-            "已有文档列表，需要基于文档回答问题",
-            "需要总结、分析、解释文档内容",
-        ],
-    },
-]
+# 导入新的基础设施
+from services.tools.base import get_all_tools
+from services.tools.base import get_tools_description as _get_tools_description
+from services.tools.base import get_tools_schema_list
 
-
-# ==================== 组合方案定义 ====================
+# ==================== 执行模式定义 ====================
 
 EXECUTION_PATTERNS = {
     "tool_only": {
@@ -104,43 +59,20 @@ def get_system_capabilities() -> Dict[str, Any]:
         包含所有工具、智能体、执行模式的完整描述
     """
     return {
-        "tools": TOOLS_SCHEMA,
-        "agents": AGENTS_SCHEMA,
+        "tools": get_tools_schema_list(),
+        "agents": get_agents_schema_list(),
         "execution_patterns": EXECUTION_PATTERNS,
     }
 
 
 def get_tools_description() -> str:
     """获取工具的文本描述"""
-    tools_list = []
-    for i, tool in enumerate(TOOLS_SCHEMA):
-        func = tool.get("function", {})
-        name = func.get("name", "")
-        desc = func.get("description", "")
-        tools_list.append(f"{i+1}. **{name}**: {desc}")
-
-    return "\n".join(tools_list)
+    return _get_tools_description()
 
 
 def get_agents_description() -> str:
     """获取智能体的文本描述"""
-    agents_list = []
-    for i, agent in enumerate(AGENTS_SCHEMA):
-        name = agent.get("name", "")
-        desc = agent.get("description", "")
-        capabilities = agent.get("capabilities", [])
-        scenarios = agent.get("适用场景", [])
-
-        cap_text = "\n     - ".join(capabilities)
-        scenario_text = "\n     - ".join(scenarios)
-
-        agents_list.append(
-            f"{i+1}. **{name}**: {desc}\n"
-            f"   能力:\n     - {cap_text}\n"
-            f"   适用场景:\n     - {scenario_text}"
-        )
-
-    return "\n\n".join(agents_list)
+    return _get_agents_description()
 
 
 def get_execution_patterns_description() -> str:
@@ -160,3 +92,44 @@ def get_execution_patterns_description() -> str:
         )
 
     return "\n\n".join(patterns_list)
+
+
+# ==================== 向后兼容：保留旧的 TOOLS_SCHEMA 和 AGENTS_SCHEMA ====================
+
+
+# 这些变量现在动态生成，保持向后兼容
+def _get_tools_schema_compat():
+    """兼容旧代码的 TOOLS_SCHEMA"""
+    return get_tools_schema_list()
+
+
+def _get_agents_schema_compat():
+    """兼容旧代码的 AGENTS_SCHEMA"""
+    return get_agents_schema_list()
+
+
+# 延迟加载，避免循环导入
+class _LazySchema:
+    def __init__(self, getter):
+        self._getter = getter
+        self._cache = None
+
+    def __iter__(self):
+        if self._cache is None:
+            self._cache = self._getter()
+        return iter(self._cache)
+
+    def __len__(self):
+        if self._cache is None:
+            self._cache = self._getter()
+        return len(self._cache)
+
+    def __getitem__(self, index):
+        if self._cache is None:
+            self._cache = self._getter()
+        return self._cache[index]
+
+
+# 保持向后兼容
+TOOLS_SCHEMA = _LazySchema(_get_tools_schema_compat)
+AGENTS_SCHEMA = _LazySchema(_get_agents_schema_compat)

@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from api.v1 import (
+    agent_editor,
     auth,
     document_types,
     documents,
@@ -25,3 +26,4 @@ api_v1_router.include_router(
 api_v1_router.include_router(qa.router)
 api_v1_router.include_router(llm_logs.router)
 api_v1_router.include_router(template_configs.router)
+api_v1_router.include_router(agent_editor.router)

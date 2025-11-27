@@ -1,19 +1,40 @@
 """
-ES全文检索工具
+ES全文检索工具 V2
 
-使用Elasticsearch进行全文检索，基于BM25算法
+使用 @tool 装饰器重构
 """
 
 from typing import Any, Dict, List, Optional
+
 from loguru import logger
-from elasticsearch import AsyncElasticsearch
+
+from services.tools.base import ToolContext, tool
 
 
+@tool(
+    name="es_fulltext_search",
+    description="使用Elasticsearch进行全文检索，基于BM25算法召回相关文档。适用于需要基于关键词匹配的检索场景。",
+    parameters={
+        "query": {"type": "string", "description": "用户查询文本"},
+        "template_id": {"type": "integer", "description": "模板ID"},
+        "top_k": {
+            "type": "integer",
+            "description": "返回文档数量，默认10",
+            "default": 10,
+        },
+        "optimized_query": {
+            "type": "object",
+            "description": "优化后的查询（包含 primary_keywords/context_keywords/related_keywords）",
+        },
+    },
+    required=["query", "template_id"],
+    category="retrieval",
+    tags=["检索", "ES", "全文搜索"],
+)
 async def es_fulltext_search(
+    ctx: ToolContext,
     query: str,
     template_id: int,
-    es_client: AsyncElasticsearch,
-    es_index: str = "dochive_documents",
     top_k: int = 10,
     optimized_query: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -24,100 +45,112 @@ async def es_fulltext_search(
     支持优化查询（必须/相关/排除关键词）
 
     Args:
+        ctx: 工具上下文
         query: 用户查询
         template_id: 模板ID
-        es_client: Elasticsearch客户端
-        es_index: ES索引名
         top_k: 返回文档数量
-        optimized_query: 优化后的查询（包含 must/should/must_not 关键词）
+        optimized_query: 优化后的查询
 
     Returns:
         {
             "success": bool,
-            "document_ids": List[int],  # 文档ID列表
-            "documents": List[Dict],    # 文档详情（包含title, content片段等）
+            "document_ids": List[int],
+            "documents": List[Dict],
             "count": int
         }
     """
+    es_client = ctx.es_client
+    es_index = ctx.es_index
+
+    if not es_client:
+        return {
+            "success": False,
+            "error": "ES客户端未配置",
+            "document_ids": [],
+            "documents": [],
+            "count": 0,
+        }
+
     try:
         # 处理特殊查询：空查询或match_all标记
         if query == "__match_all__" or query == "":
-            # 使用match_all查询返回所有文档
             es_query = {
                 "bool": {
-                    "must": [
-                        {"match_all": {}}  # 匹配所有文档
-                    ],
-                    "filter": [
-                        {"term": {"template_id": template_id}}
-                    ],
+                    "must": [{"match_all": {}}],
+                    "filter": [{"term": {"template_id": template_id}}],
                 }
             }
             logger.info(f"🔍 使用match_all查询所有文档，template_id={template_id}")
+
         elif optimized_query and optimized_query.get("primary_keywords"):
-            # 使用优化后的查询（主查询 + 上下文扩展 + 相关词）
+            # 使用优化后的查询
             primary_keywords = optimized_query.get("primary_keywords", [])
             context_keywords = optimized_query.get("context_keywords", [])
             related_keywords = optimized_query.get("related_keywords", [])
 
-            # 构建 bool 查询
             bool_clauses = {
                 "must": [],
                 "should": [],
-                "filter": [{"term": {"template_id": template_id}}]
+                "filter": [{"term": {"template_id": template_id}}],
             }
 
-            # 主查询条件：必须包含所有主关键词
+            # 主查询条件
             for keyword in primary_keywords:
-                bool_clauses["must"].append({
-                    "multi_match": {
-                        "query": keyword,
-                        "fields": ["title^3", "content", "ai_summary^2"],
-                        "type": "best_fields",
+                bool_clauses["must"].append(
+                    {
+                        "multi_match": {
+                            "query": keyword,
+                            "fields": ["title^3", "content", "ai_summary^2"],
+                            "type": "best_fields",
+                        }
                     }
-                })
+                )
 
-            # 上下文扩展：放宽查询范围（should，不强制）
+            # 上下文扩展
             for keyword in context_keywords:
-                bool_clauses["should"].append({
-                    "multi_match": {
-                        "query": keyword,
-                        "fields": ["title^1.5", "content", "ai_summary"],
-                        "type": "best_fields",
+                bool_clauses["should"].append(
+                    {
+                        "multi_match": {
+                            "query": keyword,
+                            "fields": ["title^1.5", "content", "ai_summary"],
+                            "type": "best_fields",
+                        }
                     }
-                })
+                )
 
-            # 相关词：提升相关文档排序（should）
+            # 相关词
             for keyword in related_keywords:
-                bool_clauses["should"].append({
-                    "multi_match": {
-                        "query": keyword,
-                        "fields": ["title^2", "content", "ai_summary"],
-                        "type": "best_fields",
+                bool_clauses["should"].append(
+                    {
+                        "multi_match": {
+                            "query": keyword,
+                            "fields": ["title^2", "content", "ai_summary"],
+                            "type": "best_fields",
+                        }
                     }
-                })
+                )
 
-            # 如果没有must子句，则使用原始查询作为must
             if not bool_clauses["must"]:
-                bool_clauses["must"].append({
-                    "multi_match": {
-                        "query": query,
-                        "fields": ["title^3", "content", "ai_summary^2"],
-                        "type": "best_fields",
+                bool_clauses["must"].append(
+                    {
+                        "multi_match": {
+                            "query": query,
+                            "fields": ["title^3", "content", "ai_summary^2"],
+                            "type": "best_fields",
+                        }
                     }
-                })
+                )
 
-            # 清理空数组
             bool_clauses = {k: v for k, v in bool_clauses.items() if v}
-
             es_query = {"bool": bool_clauses}
 
             logger.info(f"🔍 使用优化查询:")
-            logger.info(f"   ⭐ 主查询(必须包含): {primary_keywords}")
-            logger.info(f"   🌐 上下文扩展(辅助加分): {context_keywords}")
-            logger.info(f"   💡 相关词(提升排序): {related_keywords}")
+            logger.info(f"   ⭐ 主查询: {primary_keywords}")
+            logger.info(f"   🌐 上下文扩展: {context_keywords}")
+            logger.info(f"   💡 相关词: {related_keywords}")
+
         else:
-            # 构建常规ES查询
+            # 常规ES查询
             es_query = {
                 "bool": {
                     "must": [
@@ -129,9 +162,7 @@ async def es_fulltext_search(
                             }
                         }
                     ],
-                    "filter": [
-                        {"term": {"template_id": template_id}}
-                    ],
+                    "filter": [{"term": {"template_id": template_id}}],
                 }
             }
 
@@ -159,7 +190,6 @@ async def es_fulltext_search(
             doc_id = source.get("document_id")
             document_ids.append(doc_id)
 
-            # 提取高亮片段
             highlight = hit.get("highlight", {})
             snippet = (
                 " ... ".join(highlight.get("content", []))
@@ -167,12 +197,14 @@ async def es_fulltext_search(
                 else source.get("content", "")[:200]
             )
 
-            documents.append({
-                "document_id": doc_id,
-                "title": source.get("title", ""),
-                "snippet": snippet,
-                "score": hit["_score"],
-            })
+            documents.append(
+                {
+                    "document_id": doc_id,
+                    "title": source.get("title", ""),
+                    "snippet": snippet,
+                    "score": hit["_score"],
+                }
+            )
 
         logger.info(f"✅ ES全文检索完成: 召回 {len(document_ids)} 篇文档")
 
@@ -186,6 +218,7 @@ async def es_fulltext_search(
     except Exception as e:
         logger.error(f"❌ ES全文检索失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         return {
             "success": False,

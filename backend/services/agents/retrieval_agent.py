@@ -7,15 +7,15 @@
 """
 
 from typing import Any, Dict, List, TypedDict
-from loguru import logger
+
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.tools.tool_registry import execute_tool_call
 from services.tools.document.deduplicate_documents import deduplicate_documents
-
+from services.tools.tool_registry import execute_tool_call
 
 # ==================== 检索智能体状态定义 ====================
 
@@ -83,8 +83,9 @@ async def optimize_query(
     """
     logger.info("========== 检索智能体 - 节点0: 查询优化 ===========")
 
-    from utils.llm_client import get_llm_client
     import json
+
+    from utils.llm_client import get_llm_client
 
     db: AsyncSession = config.get("configurable", {}).get("db")
     query = state["query"]
@@ -153,6 +154,7 @@ async def optimize_query(
     except Exception as e:
         logger.error(f"❌ 查询优化失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         # 降级：直接使用原始查询
         state["optimized_query"] = {
@@ -179,8 +181,7 @@ async def es_fulltext_retrieval(
     logger.info("========== 检索智能体 - 节点1: ES全文检索 ===========")
 
     es_client = config.get("configurable", {}).get("es")
-    es_index = config.get("configurable", {}).get(
-        "es_index", "dochive_documents")
+    es_index = config.get("configurable", {}).get("es_index", "dochive_documents")
 
     query = state["query"]
     template_id = state["template_id"]
@@ -212,6 +213,7 @@ async def es_fulltext_retrieval(
     except Exception as e:
         logger.error(f"❌ ES检索异常: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         state["es_document_ids"] = []
 
@@ -232,11 +234,13 @@ async def sql_structured_retrieval(
     """
     logger.info("========== 检索智能体 - 节点2: SQL结构化检索 ===========")
 
-    from utils.llm_client import get_llm_client
-    from services.template_service import TemplateService
-    from models.database_models import TemplateDocumentMapping
-    from sqlalchemy import select, or_
     import json
+
+    from sqlalchemy import or_, select
+
+    from models.database_models import TemplateDocumentMapping
+    from services.template_service import TemplateService
+    from utils.llm_client import get_llm_client
 
     db: AsyncSession = config.get("configurable", {}).get("db")
 
@@ -346,8 +350,9 @@ async def evaluate_sql_quality(
     """
     logger.info("========== 检索智能体 - 节点2.5: SQL质量评估 ===========")
 
-    from utils.llm_client import get_llm_client
     import json
+
+    from utils.llm_client import get_llm_client
 
     db: AsyncSession = config.get("configurable", {}).get("db")
 
@@ -362,8 +367,7 @@ async def evaluate_sql_quality(
         return state
 
     # 1. 统计UNKNOWN数量
-    unknown_count = sum(
-        1 for cond in conditions if cond.get("value") == "UNKNOWN")
+    unknown_count = sum(1 for cond in conditions if cond.get("value") == "UNKNOWN")
     total_count = len(conditions)
 
     logger.info(f"📊 提取结果: 总计{total_count}个编码，其中{unknown_count}个UNKNOWN")
@@ -483,12 +487,15 @@ async def post_process_results(
     节点4: 后处理
 
     1. 获取文档完整内容
-    2. 内容去重
-    3. 截断到top_k
+    2. 合并ES返回的score信息
+    3. 内容去重
+    4. 截断到top_k
     """
     logger.info("========== 检索智能体 - 节点4: 后处理 ===========")
 
     db: AsyncSession = config.get("configurable", {}).get("db")
+    es_client = config.get("configurable", {}).get("es")
+    es_index = config.get("configurable", {}).get("es_index", "dochive_documents")
 
     document_ids = state.get("final_document_ids", [])
     enable_deduplication = state.get("enable_deduplication", True)
@@ -497,6 +504,31 @@ async def post_process_results(
     # 1. 获取文档内容（直接查询数据库，获取完整内容）
     if document_ids:
         try:
+            # 1.1 获取ES检索的原始结果（包含score）
+            es_result = await execute_tool_call(
+                tool_name="es_fulltext_search",
+                arguments={
+                    "query": state.get("query", ""),
+                    "template_id": state.get("template_id"),
+                    "top_k": 100,  # 获取足够多的结果
+                    "optimized_query": state.get("optimized_query"),
+                },
+                es_client=es_client,
+                es_index=es_index,
+                db=db,
+            )
+
+            # 构建 document_id -> score 的映射
+            score_map = {}
+            if es_result.get("success"):
+                for doc in es_result.get("documents", []):
+                    doc_id = doc.get("document_id")
+                    score = doc.get("score", 0.0)
+                    if doc_id:
+                        score_map[doc_id] = score
+                logger.info(f"📊 获取到 {len(score_map)} 个文档的score信息")
+
+            # 1.2 获取完整文档内容
             result = await execute_tool_call(
                 tool_name="read_documents",
                 arguments={
@@ -510,14 +542,34 @@ async def post_process_results(
                 documents = result.get("documents", [])
                 logger.info(f"📄 获取到文档: {len(documents)} 篇")
 
+                # 1.3 合并score信息到文档
+                for doc in documents:
+                    doc_id = doc.get("id") or doc.get("document_id")
+                    if doc_id in score_map:
+                        doc["score"] = score_map[doc_id]
+                    else:
+                        # 如果没有score（可能是SQL检索的结果），设置为0
+                        doc["score"] = 0.0
+
+                    # 统一document_id字段名
+                    if "id" in doc and "document_id" not in doc:
+                        doc["document_id"] = doc["id"]
+
+                logger.info(f"✅ 已合并score信息到 {len(documents)} 篇文档")
+
                 # 2. 基于内容的高级去重（如果开启了去重）
                 if enable_deduplication and len(documents) > 1:
                     before_count = len(documents)
                     documents = deduplicate_documents(documents)
                     logger.info(
-                        f"🗑️ 内容去重: {before_count} -> {len(documents)} 篇文档")
+                        f"🗑️ 内容去重: {before_count} -> {len(documents)} 篇文档"
+                    )
 
-                # 3. 截断到top_k
+                # 3. 按score降序排序
+                documents.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+                logger.info("📊 已按score排序文档")
+
+                # 4. 截断到top_k
                 if len(documents) > top_k:
                     logger.info(f"✂️ 截断: {len(documents)} -> {top_k} 篇文档")
                     documents = documents[:top_k]
@@ -530,6 +582,7 @@ async def post_process_results(
         except Exception as e:
             logger.error(f"❌ 后处理失败: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
             state["final_documents"] = []
     else:
@@ -578,7 +631,9 @@ def build_retrieval_agent_v2() -> CompiledStateGraph:
     app = workflow.compile()
 
     logger.info("✅ 检索智能体V2工作流编译完成")
-    logger.info("📋 工作流程: 查询优化 → ES检索 → SQL检索 → SQL质量评估 → 求交集 → 后处理")
+    logger.info(
+        "📋 工作流程: 查询优化 → ES检索 → SQL检索 → SQL质量评估 → 求交集 → 后处理"
+    )
 
     return app
 
@@ -662,6 +717,7 @@ async def retrieve_documents_v2(
     except Exception as e:
         logger.error(f"❌ 检索失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
 
         return {
