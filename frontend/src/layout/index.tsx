@@ -85,8 +85,8 @@ export default function AppLayout() {
                                 key: 'qa-beta',
                                 label: (
                                     <span className="font-medium">
-                                        智能体问答-Beta
-                                        <span className="ml-1 px-1.5 py-0.5 text-xs bg-purple-100 text-purple-600 rounded">V2</span>
+                                        智能体问答
+                                        <span className="ml-1 px-1.5 py-0.5 text-xs bg-purple-100 text-purple-600 rounded">Beta</span>
                                     </span>
                                 ),
                                 onClick: () => navigate('/qa-beta'),
@@ -95,7 +95,7 @@ export default function AppLayout() {
                             },
                             {
                                 key: 'agent-editor',
-                                label: <span className="font-medium">Agent编辑</span>,
+                                label: <span className="font-medium">Agent编辑 <span className="ml-1 px-1.5 py-0.5 text-xs bg-purple-100 text-purple-600 rounded">Beta</span></span>,
                                 onClick: () => navigate('/agent-editor'),
                                 icon: <RobotOutlined className="text-blue-600" />,
                                 className: 'mx-2 mb-1 rounded-lg hover:bg-blue-50 transition-all duration-200'

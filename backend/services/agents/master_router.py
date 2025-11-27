@@ -899,37 +899,3 @@ def should_execute_steps(state: ExecutionState) -> str:
     else:
         logger.info("🔀 决策: 需要执行步骤 -> execute")
         return "execute"
-
-
-# ==================== 构建LangGraph工作流 ====================
-
-# 1. 初始化 StateGraph
-workflow = StateGraph(ExecutionState)
-
-# 2. 添加所有节点
-workflow.add_node("plan", plan_execution)  # 节点: 执行计划
-workflow.add_node("execute", execute_steps)  # 节点: 执行步骤
-workflow.add_node("finalize", finalize_answer)  # 节点: 生成最终答案
-
-# 3. 设置图的入口点
-workflow.set_entry_point("plan")
-
-# 4. 添加条件边：规划后决定走向
-workflow.add_conditional_edges(
-    "plan",
-    should_execute_steps,
-    {
-        "execute": "execute",  # 需要执行步骤
-        "finalize": "finalize",  # LLM直接回答
-    },
-)
-
-# 5. 添加线性边
-workflow.add_edge("execute", "finalize")  # 执行完成 -> 生成答案
-workflow.add_edge("finalize", END)  # 生成答案 -> 结束
-
-# 6. 编译图
-master_router_app: CompiledStateGraph = workflow.compile()
-
-logger.info("✅ LangGraph 主路由器工作流编译完成")
-logger.info("📊 工作流程: 执行计划 -> [执行步骤 | 跳过] -> 生成答案")
