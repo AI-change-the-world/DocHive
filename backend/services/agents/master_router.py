@@ -226,11 +226,17 @@ async def plan_execution(
 
     query = state["query"]
     template_id = state["template_id"]
+    session_id = state["session_id"]
 
     # 从 config 获取 db
     db: AsyncSession = config.get("configurable", {}).get("db")  # type: ignore
 
     llm_client = get_llm_client()
+
+    # 获取对话历史（用于元问题识别和回答）
+    conversation_manager = get_conversation_manager()
+    session_data = conversation_manager.get_session(session_id)
+    conversation_history = session_data.get("messages", []) if session_data else []
 
     # 构建系统能力描述
     tools_desc = get_tools_description()
@@ -255,13 +261,20 @@ async def plan_execution(
 
 【决策规则】
 1. **分析查询**：理解用户真正的需求
-2. **选择模式**：根据查询类型选择最适合的执行模式
-3. **选择组件**：
+2. **识别问题类型**：
+   - **元问题（Meta Query）**：关于对话本身的统计问题
+     * 示例："我问了几次XX？"、"这是第几个问题？"、"我们讨论了什么？"
+     * 处理：直接使用 llm_direct 模式回答，不要检索文档
+   - **文档查询**：关于文档内容的实际问题
+     * 示例："XX文档讲了什么？"、"XX的主要内容是？"
+     * 处理：使用检索+问答流程
+3. **选择模式**：根据查询类型选择最适合的执行模式
+4. **选择组件**：
    - tool_only: 列出需要调用的工具名称
    - agent_only: 指定要调用的智能体名称
    - agent_chain: 按顺序列出要调用的智能体名称
    - hybrid: 混合工具和智能体名称
-   - llm_direct: 直接使用你的知识回答
+   - llm_direct: 直接使用你的知识回答（用于元问题、通用知识问题等）
 
 **重要**：你只需要选择调用哪些工具/智能体，不需要指定具体参数。每个工具/智能体会自行分析用户查询并生成所需参数。
 
@@ -398,7 +411,7 @@ async def plan_execution(
     "direct_answer": null
 }}
 
-示例6 - LLM直接回答：
+示例6 - LLM直接回答（通用知识）：
 问题: "什么是人工智能？"
 返回:
 {{
@@ -408,7 +421,23 @@ async def plan_execution(
     "direct_answer": "人工智能（Artificial Intelligence, AI）是计算机科学的一个分支..."
 }}
 
+示例7 - 元问题（对话统计）：
+问题: "我问了几次 国家地震应急预案？"
+返回:
+{{
+    "execution_pattern": "llm_direct",
+    "reasoning": "这是一个元问题，用户询问的是对话历史中提及某主题的次数统计，需要直接分析对话记录，不需要检索文档",
+    "execution_plan": [],
+    "direct_answer": "根据对话历史，您提到'国家地震应急预案'共X次..."
+}}
+
+示例8 - 元问题vs文档查询的区分：
+问题A: "我之前问过什么问题？" -> llm_direct（元问题，关于对话本身）
+问题B: "之前查到的文档都讲了什么？" -> llm_direct（基于对话历史回答，不需要重新检索）
+问题C: "国家地震应急预案的主要内容是什么？" -> agent_chain（文档查询，需要检索+问答）
+
 【重要提示】
+- **元问题识别**：凡是询问"我问了几次"、"我们讨论了什么"、"之前的对话"等关于对话本身的问题，必须使用 llm_direct
 - 如果用户要分析文档内容（"总结"、"归纳"、"都讲了什么"），使用 analyze_documents 工具（它会内部决定批量or逐份）
 - 如果用户问"查找XXX相关的文档"等语义检索问题，使用 retrieval_agent 智能体
 - 区分"文档分析"和"语义检索"两种场景
@@ -420,11 +449,37 @@ async def plan_execution(
         logger.info("🧠 调用LLM进行任务规划...")
         await asyncio.sleep(0.3)  # 规划延迟
 
+        # 构建规划请求消息
+        planning_messages = [
+            {"role": "system", "content": system_prompt},
+        ]
+
+        # 如果有对话历史，附加最近的对话（用于元问题识别）
+        if conversation_history and len(conversation_history) > 1:
+            # 取最近5轮对话
+            recent_messages = conversation_history[-10:]
+            context_summary = []
+            for msg in recent_messages:
+                role = msg.get("role")
+                content = msg.get("content", "")
+                if role == "user":
+                    context_summary.append(f"用户: {content[:100]}...")
+                elif role == "assistant":
+                    context_summary.append(f"助手: {content[:100]}...")
+
+            context_text = "\n".join(context_summary)
+            planning_messages.append({
+                "role": "user",
+                "content": f"【对话历史】\n{context_text}\n\n【当前问题】\n{query}\n\n请为这个问题制定执行方案。"
+            })
+        else:
+            planning_messages.append({
+                "role": "user",
+                "content": f"请为这个问题制定执行方案：{query}"
+            })
+
         response = await llm_client.extract_json_response(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"请为这个问题制定执行方案：{query}"},
-            ],
+            messages=planning_messages,
             db=db,
         )
 
@@ -443,12 +498,28 @@ async def plan_execution(
                 state["success"] = True
                 logger.info("✅ LLM直接回答完成")
             else:
-                # 没有直接答案，让LLM生成一个
+                # 没有直接答案，让LLM生成一个（带上对话历史，用于元问题）
+                logger.info("📋 LLM未返回直接答案，生成回答（带对话历史）")
+
+                # 构建消息列表
+                llm_messages = [
+                    {"role": "system", "content": "你是一个专业的问答助手。如果用户询问对话历史相关的问题（如'我问了几次XX'、'之前讨论了什么'），请基于对话历史进行统计和分析。"}
+                ]
+
+                # 添加对话历史（元问题需要）
+                if conversation_history and len(conversation_history) > 1:
+                    # 添加历史消息
+                    for msg in conversation_history[-20:]:  # 最近10轮对话
+                        role = msg.get("role")
+                        content = msg.get("content", "")
+                        if role in ["user", "assistant"]:
+                            llm_messages.append({"role": role, "content": content})
+
+                # 添加当前问题
+                llm_messages.append({"role": "user", "content": query})
+
                 fallback_answer = await llm_client.chat_completion(
-                    messages=[
-                        {"role": "system", "content": "你是一个专业的问答助手"},
-                        {"role": "user", "content": query},
-                    ],
+                    messages=llm_messages,
                     db=db,
                 )
                 state["final_answer"] = fallback_answer

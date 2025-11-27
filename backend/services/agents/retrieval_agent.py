@@ -483,12 +483,15 @@ async def post_process_results(
     节点4: 后处理
 
     1. 获取文档完整内容
-    2. 内容去重
-    3. 截断到top_k
+    2. 合并ES返回的score信息
+    3. 内容去重
+    4. 截断到top_k
     """
     logger.info("========== 检索智能体 - 节点4: 后处理 ===========")
 
     db: AsyncSession = config.get("configurable", {}).get("db")
+    es_client = config.get("configurable", {}).get("es")
+    es_index = config.get("configurable", {}).get("es_index", "dochive_documents")
 
     document_ids = state.get("final_document_ids", [])
     enable_deduplication = state.get("enable_deduplication", True)
@@ -497,6 +500,31 @@ async def post_process_results(
     # 1. 获取文档内容（直接查询数据库，获取完整内容）
     if document_ids:
         try:
+            # 1.1 获取ES检索的原始结果（包含score）
+            es_result = await execute_tool_call(
+                tool_name="es_fulltext_search",
+                arguments={
+                    "query": state.get("query", ""),
+                    "template_id": state.get("template_id"),
+                    "top_k": 100,  # 获取足够多的结果
+                    "optimized_query": state.get("optimized_query"),
+                },
+                es_client=es_client,
+                es_index=es_index,
+                db=db,
+            )
+
+            # 构建 document_id -> score 的映射
+            score_map = {}
+            if es_result.get("success"):
+                for doc in es_result.get("documents", []):
+                    doc_id = doc.get("document_id")
+                    score = doc.get("score", 0.0)
+                    if doc_id:
+                        score_map[doc_id] = score
+                logger.info(f"📊 获取到 {len(score_map)} 个文档的score信息")
+
+            # 1.2 获取完整文档内容
             result = await execute_tool_call(
                 tool_name="read_documents",
                 arguments={
@@ -510,6 +538,21 @@ async def post_process_results(
                 documents = result.get("documents", [])
                 logger.info(f"📄 获取到文档: {len(documents)} 篇")
 
+                # 1.3 合并score信息到文档
+                for doc in documents:
+                    doc_id = doc.get("id") or doc.get("document_id")
+                    if doc_id in score_map:
+                        doc["score"] = score_map[doc_id]
+                    else:
+                        # 如果没有score（可能是SQL检索的结果），设置为0
+                        doc["score"] = 0.0
+
+                    # 统一document_id字段名
+                    if "id" in doc and "document_id" not in doc:
+                        doc["document_id"] = doc["id"]
+
+                logger.info(f"✅ 已合并score信息到 {len(documents)} 篇文档")
+
                 # 2. 基于内容的高级去重（如果开启了去重）
                 if enable_deduplication and len(documents) > 1:
                     before_count = len(documents)
@@ -517,7 +560,11 @@ async def post_process_results(
                     logger.info(
                         f"🗑️ 内容去重: {before_count} -> {len(documents)} 篇文档")
 
-                # 3. 截断到top_k
+                # 3. 按score降序排序
+                documents.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+                logger.info("📊 已按score排序文档")
+
+                # 4. 截断到top_k
                 if len(documents) > top_k:
                     logger.info(f"✂️ 截断: {len(documents)} -> {top_k} 篇文档")
                     documents = documents[:top_k]

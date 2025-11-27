@@ -624,17 +624,31 @@ export default function QABetaPage() {
                 {documents && documents.length > 0 && (
                     <div className="p-3 bg-green-50 rounded-lg border border-green-200">
                         <Text strong className="text-xs text-green-700">📚 检索到 {documents.length} 篇文档</Text>
-                        <div className="mt-2 flex flex-wrap gap-1">
+                        <div className="mt-2 space-y-1">
                             {documents.slice(0, 10).map((doc: any, idx: number) => (
-                                <Tag
+                                <div
                                     key={idx}
-                                    color="green"
-                                    className="cursor-pointer"
-                                    onClick={() => handlePreviewDocument(doc.document_id)}
+                                    className="flex items-center justify-between p-2 bg-white rounded border border-green-300 hover:shadow-sm transition-shadow cursor-pointer"
+                                    onClick={() => handlePreviewDocument(doc.document_id || doc.id)}
                                 >
-                                    #{doc.document_id}
-                                </Tag>
+                                    <div className="flex items-center space-x-2 flex-1 min-w-0">
+                                        <Badge count={idx + 1} style={{ backgroundColor: '#52c41a' }} />
+                                        <Text className="text-xs font-medium truncate">
+                                            {doc.title || doc.filename || `文档#${doc.document_id || doc.id}`}
+                                        </Text>
+                                    </div>
+                                    {doc.score !== undefined && doc.score > 0 && (
+                                        <Tag color="green" className="ml-2 flex-shrink-0">
+                                            {(doc.score * 10).toFixed(1)}分
+                                        </Tag>
+                                    )}
+                                </div>
                             ))}
+                            {documents.length > 10 && (
+                                <Text type="secondary" className="text-xs block mt-1">
+                                    还有 {documents.length - 10} 篇文档未显示...
+                                </Text>
+                            )}
                         </div>
                     </div>
                 )}
@@ -804,9 +818,9 @@ export default function QABetaPage() {
                                                                                 {ref.snippet}
                                                                             </Paragraph>
                                                                         </div>
-                                                                        {ref.score !== undefined && (
+                                                                        {ref.score !== undefined && ref.score > 0 && (
                                                                             <Tag color="blue" className="flex-shrink-0">
-                                                                                {(ref.score * 100).toFixed(0)}%
+                                                                                {(ref.score * 10).toFixed(1)}分
                                                                             </Tag>
                                                                         )}
                                                                     </div>
@@ -922,9 +936,9 @@ export default function QABetaPage() {
                                                                     {ref.snippet}
                                                                 </Paragraph>
                                                             </div>
-                                                            {ref.score !== undefined && (
+                                                            {ref.score !== undefined && ref.score > 0 && (
                                                                 <Tag color="purple" className="flex-shrink-0">
-                                                                    {(ref.score * 100).toFixed(0)}%
+                                                                    {(ref.score * 10).toFixed(1)}分
                                                                 </Tag>
                                                             )}
                                                         </div>
