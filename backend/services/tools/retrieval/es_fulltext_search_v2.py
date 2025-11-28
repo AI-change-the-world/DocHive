@@ -4,6 +4,7 @@ ES全文检索工具 V2
 使用 @tool 装饰器重构
 """
 
+import json
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -88,6 +89,10 @@ async def es_fulltext_search(
             context_keywords = optimized_query.get("context_keywords", [])
             related_keywords = optimized_query.get("related_keywords", [])
 
+            if len(primary_keywords) > 2:
+                context_keywords.extend(primary_keywords[1:])
+                primary_keywords = primary_keywords[:1]
+
             bool_clauses = {
                 "must": [],
                 "should": [],
@@ -165,6 +170,8 @@ async def es_fulltext_search(
                     "filter": [{"term": {"template_id": template_id}}],
                 }
             }
+
+        logger.info(f"🔍 使用query={json.dumps(es_query, ensure_ascii=False)}")
 
         # 执行检索
         response = await es_client.search(

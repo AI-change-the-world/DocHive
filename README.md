@@ -89,6 +89,23 @@ pnpm dev
 - [开发指南](docs/development.md) - 了解如何进行二次开发
 - [API 参考文档](docs/api-reference.md) - 查看详细的 API 接口说明
 
+## 🐱 一些截图
+
+- 知识库问答
+	
+	![image](./docs/images/agentic-rag.gif)
+	
+- 系统截图
+
+  | ![image](./docs/images/dashboard.png) | ![image](./docs/images/rag1.png)      |
+  | ------------------------------------- | ------------------------------------- |
+  | ![image](./docs/images/rag2.png)      | ![image](./docs/images/template1.png) |
+  | ![image](./docs/images/template2.png) | ![image](./docs/images/doc.png)       |
+  | ![image](./docs/images/llm1.png)      | ![image](./docs/images/llm2.png)      |
+
+  
+
+
 ## 🤝 贡献
 
 欢迎提交 Issue 和 Pull Request!
