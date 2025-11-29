@@ -1155,7 +1155,7 @@ async def execute_steps_with_intervention(
     2. 检索结果过少（<3篇）：提示用户重新输入问题
     3. 文档过多需要阅读：请求用户选择重点文档
     """
-    from backend.core.conversation_manager import get_conversation_manager
+    from core.conversation_manager import get_conversation_manager
 
     conversation_manager = get_conversation_manager()
 

@@ -24,6 +24,7 @@ from core.tools.document.deduplicate_documents import deduplicate_documents
 from core.tools.document.get_document_contents_v2 import get_document_contents
 from core.tools.document.read_documents_v2 import read_documents
 from core.tools.document.skim_documents_v2 import skim_documents
+from core.tools.document.generate_outline import generate_outline
 
 # 检索工具
 from core.tools.retrieval.es_fulltext_search_v2 import es_fulltext_search
@@ -55,6 +56,7 @@ __all__ = [
     "get_document_contents",
     "skim_documents",
     "read_documents",
+    "generate_outline"
     # 统计工具
     "get_template_statistics",
     "search_documents_by_classification",

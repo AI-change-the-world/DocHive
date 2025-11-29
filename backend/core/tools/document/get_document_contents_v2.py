@@ -24,7 +24,7 @@ from core.tools.base import ToolContext, tool
         "include_fields": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "需要包含的字段，默认: id, title, content, ai_summary",
+            "description": "需要包含的字段，默认: id, title, content_text, ai_summary",
         },
     },
     required=["document_ids"],
@@ -71,7 +71,7 @@ async def get_document_contents(
         }
 
     # 默认字段
-    default_fields = ["id", "title", "content", "ai_summary"]
+    default_fields = ["id", "title", "content_text", "ai_summary"]
     fields = include_fields or default_fields
 
     try:
