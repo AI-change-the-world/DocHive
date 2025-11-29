@@ -17,7 +17,7 @@ from schemas.agent_schemas import (
     AgentResponse,
 )
 from schemas.api_schemas import ResponseBase
-from services.agent_editor import (
+from core.agent_editor import (
     AgentExecutionBuilder,
     AgentLLMValidator,
     AgentMarkdownParser,
@@ -287,7 +287,7 @@ async def execute_agent(
     这是主要入口：根据已保存的Agent定义执行工作流
     """
     from fastapi.responses import StreamingResponse
-    from services.agents.custom_agent_executor import CustomAgentExecutor
+    from core.agents.custom_agent_executor import CustomAgentExecutor
     from database import get_es_client
     import json
 

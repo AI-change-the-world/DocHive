@@ -1,6 +1,3 @@
-from core.agents import get_agents_description
-from core.tools import get_tools_description
-
 EXECUTION_PATTERNS = {
     "tool_only": {
         "description": "仅工具调用 - 直接使用工具获取结果",
@@ -47,3 +44,15 @@ def get_execution_patterns_description() -> str:
         )
 
     return "\n\n".join(patterns_list)
+
+
+def get_agents_description():
+    """获取智能体描述"""
+    from core.agents import get_agents_description as _get_agents_description
+    return _get_agents_description()
+
+
+def get_tools_description():
+    """获取工具描述"""
+    from core.tools import get_tools_description as _get_tools_description
+    return _get_tools_description()

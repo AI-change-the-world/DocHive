@@ -22,7 +22,7 @@ from core.agents.qa_agent_v2 import generate_answer_v2
 
 # 使用新版智能体
 from core.agents.retrieval_agent_v2 import retrieve_documents_v2
-from backend.core.conversation_manager import get_conversation_manager
+from core.conversation_manager import get_conversation_manager
 from core.registry import (
     get_agents_description,
     get_execution_patterns_description,
