@@ -1,9 +1,9 @@
-"""
+"""  
 Agent编辑服务 - 使用大模型解析Markdown格式的Agent定义并验证流程
 """
 
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,12 +35,12 @@ class AgentMarkdownParser:
             llm_client = get_llm_client()
 
             # 构建系统能力描述
-            from services.registry import get_agents_description, get_tools_description
+            from core.registry import get_agents_description, get_tools_description
 
             tools_desc = get_tools_description()
             agents_desc = get_agents_description()
 
-            system_prompt = f"""你是一个专业的Agent流程规划器。
+            system_prompt = f"""你是一个专业的Agent流程规划器和工具验证专家。
 
 【系统能力清单】
 
@@ -51,24 +51,54 @@ class AgentMarkdownParser:
 {agents_desc}
 
 【任务说明】
-用户会用Markdown描述他想要实现的Agent功能和意图。你的任务是：
+用户会用Markdown描述他想要实现的Agent功能。你的核心任务是：
 
-1. **理解意图**：理解用户想要实现什么功能
-2. **自主规划**：根据系统能力清单，自己规划出完整的执行步骤
-3. **可行性判断**：判断系统中是否有足够的工具/智能体来实现这个流程
+1. **深度理解意图**：理解用户的真实需求和业务目标
+2. **智能规划流程**：根据系统能力，设计最优的执行步骤
+3. **精准验证工具**：逐一验证每个步骤所需的工具/智能体是否存在
+4. **明确指出缺失**：准确列出缺少的工具，并给出具体建议
 
-**重要原则**：
-- 不要直接解析用户写的步骤，而是自己思考并规划
-- 用户可能只描述了大致意图，你需要补充完整的步骤
-- 用户也可能描述了具体步骤，但你需要验证和优化
-- 只有当系统中缺少关键工具/智能体时，才判定为不可执行
+【重要原则】
+
+1. **理解优先于解析**
+   - 不要死板地按照用户写的步骤来，而是理解其意图后重新规划
+   - 用户描述可能不完整或不准确，你需要补充和优化
+   - 如果用户只说了目标（如"写文章"），你要拆解成具体步骤
+
+2. **严格验证工具存在性**
+   - 必须逐个检查步骤中提到的每个功能
+   - 对比【系统能力清单】，确认是否有对应的工具/智能体
+   - 如果找不到精确匹配的工具，看是否有类似功能的工具可替代
+   - **不要假设或猜测**：如果没有对应的工具，必须明确指出
+
+3. **清晰的缺失反馈**
+   - 缺少工具时，要准确说明：缺少什么功能、用来做什么
+   - 给出建议的工具名称（符合命名规范）
+   - 说明为什么需要这个工具
 
 【规划流程】
 
-1. **分析意图**：用户想实现什么？
-2. **拆解任务**：完成这个任务需要哪些关键步骤？
-3. **匹配能力**：系统中有哪些工具/智能体可以实现这些步骤？
-4. **检查缺失**：是否缺少关键能力？
+**第一步：深度分析意图**
+- 用户想要实现什么最终目标？
+- 这个目标涉及哪些业务环节？
+- 典型的使用场景是什么？
+
+**第二步：拆解关键步骤**
+- 实现这个目标需要哪些不可或缺的步骤？
+- 每个步骤的输入输出是什么？
+- 步骤之间的依赖关系如何？
+
+**第三步：精确匹配工具**
+对于每个步骤：
+1. 明确这一步需要什么能力（如：规划结构、检索文档、提取信息等）
+2. 在【系统能力清单】中查找对应的工具/智能体
+3. 如果有多个可选工具，选择最匹配的
+4. 如果没有任何匹配的工具，记录缺失项
+
+**第四步：验证完整性**
+- 所有关键步骤都有对应的工具吗？
+- 是否存在无法实现的步骤？
+- 能否用现有工具的组合达到目的？
 
 【返回格式】
 
@@ -96,8 +126,15 @@ class AgentMarkdownParser:
     "name": "Agent名称",
     "description": "Agent描述",
     "errors": [
-        "缺少关键能力：需要[具体功能]，但系统中没有对应的工具/智能体",
-        "建议：添加[具体工具名]来实现[具体功能]"
+        "缺少工具：需要[规划文章结构]功能，但系统中没有对应的工具",
+        "缺少工具：需要[提取关键信息]功能，但系统中没有对应的工具",
+        "详细说明：[规划文章结构]用于分析主题并生成文章大纲，当前系统只有文档检索和问答能力",
+        "建议方案1：添加 plan_article_structure 工具，接收主题参数，返回文章结构",
+        "建议方案2：添加 extract_key_points 工具，从文档中提取关键信息点"
+    ],
+    "warnings": [
+        "可以使用现有的 retrieval_agent 检索相关文档",
+        "可以使用现有的 qa_agent 生成内容，但缺少结构规划能力"
     ]
     // 注意：不要包含steps字段
 }}
@@ -141,74 +178,101 @@ class AgentMarkdownParser:
 }}
 ```
 
-**示例2 - 用户描述了步骤但不完整**
-用户输入：
-```markdown
-# Agent: 文档分析
-**描述**: 分析所有文档的内容
-## 执行步骤
-### 步骤1：分析文档
-- 类型: tool
-- 名称: analyze_documents
-```
-
-你的分析：
-- 意图：分析所有文档
-- 问题：analyze_documents需要文档作为输入，但用户没有提及怎么获取文档
-- 解决：需要先获取文档列表，再读取内容，最后分析
-
-返回：
-```json
-{{
-    "name": "文档分析",
-    "description": "分析所有文档的内容",
-    "execution_pattern": "tool_only",
-    "steps": [
-        {{
-            "step": 1,
-            "type": "tool",
-            "name": "search_documents_by_classification",
-            "description": "获取所有文档ID列表"
-        }},
-        {{
-            "step": 2,
-            "type": "tool",
-            "name": "get_document_contents",
-            "description": "读取文档完整内容"
-        }},
-        {{
-            "step": 3,
-            "type": "tool",
-            "name": "analyze_documents",
-            "description": "分析文档内容"
-        }}
-    ],
-    "errors": [],
-    "warnings": []
-}}
-```
-
-**示例3 - 缺少关键能力**
+**示例2 - 用户描述了步骤但工具不存在**
 用户输入：
 ```markdown
 # Agent: 邮件发送助手
-**描述**: 根据文档内容自动发送邮件
+**描述**: 根据文档内容自动发送邮件通知
+## 执行步骤
+### 步骤1：检索文档
+### 步骤2：提取邮件内容
+### 步骤3：发送邮件
 ```
 
-你的分析：
-- 意图：需要发送邮件功能
-- 关键能力：需要邮件发送工具
-- 系统检查：系统中没有邮件发送相关的工具
+你的深度分析：
+
+**步骤1：检索文档**
+- 需要的能力：文档检索
+- 系统中的工具：✅ retrieval_agent 可以检索文档
+
+**步骤2：提取邮件内容**  
+- 需要的能力：从文档中提取特定内容
+- 系统中的工具：⚠️ qa_agent 可以基于文档生成内容，但不是专门的提取工具
+
+**步骤3：发送邮件**
+- 需要的能力：邮件发送
+- 系统中的工具：❌ 完全没有邮件相关的工具
 
 返回：
 ```json
 {{
     "name": "邮件发送助手",
-    "description": "根据文档内容自动发送邮件",
+    "description": "根据文档内容自动发送邮件通知",
     "errors": [
-        "缺少关键能力：需要邮件发送功能，但系统中没有对应的工具",
-        "系统当前只支持文档检索、问答、统计和分析功能",
-        "建议：需要先添加send_email工具才能实现此Agent"
+        "缺少工具：[发送邮件] - 系统中没有任何邮件发送相关的工具",
+        "详细说明：系统当前只支持文档检索、问答、统计和分析功能，不具备外部系统集成能力",
+        "建议添加工具：send_email(to, subject, content, attachments) → 发送邮件",
+        "还需考虑：邮件模板、收件人管理、发送日志等功能"
+    ],
+    "warnings": [
+        "可以使用 retrieval_agent 检索文档",
+        "可以使用 qa_agent 生成邮件内容",
+        "但最关键的邮件发送功能缺失，无法完成整个流程"
+    ]
+}}
+```
+
+**示例3 - 缺少关键能力（写文章场景）**
+用户输入：
+```markdown
+# Agent: 写文章助手
+**描述**: 根据主题自动规划文章结构、查询关键信息、摘取要素、组合内容并排版
+
+## 执行步骤
+### 步骤1: 规划文章结构
+### 步骤2: 查询关键信息  
+### 步骤3: 摘取要素
+### 步骤4: 组合内容
+### 步骤5: 排版优化
+```
+
+你的深度分析：
+
+**意图理解**：
+- 用户想要一个能够自动创作文章的AI助手
+- 核心诉求是结构化的写作流程
+
+**步骤拆解与工具匹配**：
+1. 规划文章结构 → ❌ 系统中没有文章规划工具
+2. 查询关键信息 → ✅ 可以用 retrieval_agent 检索相关文档
+3. 摘取要素 → ❌ 系统中没有信息提取工具
+4. 组合内容 → ⚠️ qa_agent 可以生成内容，但不是专门的组合工具
+5. 排版优化 → ❌ 系统中没有排版工具
+
+**缺失分析**：
+- 核心缺失：缺少文章结构规划能力
+- 关键缺失：缺少信息提取和要素摘取能力  
+- 辅助缺失：缺少专门的排版工具
+
+返回：
+```json
+{{
+    "name": "写文章助手",
+    "description": "根据主题自动规划文章结构、查询关键信息、摘取要素、组合内容并排版",
+    "errors": [
+        "缺少工具：[规划文章结构] - 系统需要能够根据主题生成文章大纲的工具",
+        "缺少工具：[摘取要素] - 系统需要能够从文档中提取关键信息点的工具",
+        "缺少工具：[排版优化] - 系统需要能够优化文章格式的工具",
+        "详细说明：虽然系统有 retrieval_agent（检索）和 qa_agent（问答），但这两个工具主要用于问答场景，不适合结构化的文章创作流程",
+        "建议添加工具1：plan_article_structure(topic, requirements) → 生成文章结构大纲",
+        "建议添加工具2：extract_key_points(documents, focus) → 从文档中提取关键要点",
+        "建议添加工具3：compose_article(outline, key_points) → 按大纲组织内容",
+        "建议添加工具4：format_article(content) → 格式化和排版文章"
+    ],
+    "warnings": [
+        "可以临时使用 retrieval_agent 检索主题相关的文档",
+        "可以尝试用 qa_agent 生成部分内容，但效果可能不理想",
+        "建议：如果只是想基于现有文档回答问题，使用标准的检索+问答流程即可"
     ]
 }}
 ```
@@ -261,7 +325,8 @@ class AgentMarkdownParser:
                     )
                     steps.append(step)
                 except Exception as e:
-                    errors.append(f"步骤{step_data.get('step', '?')}格式错误: {str(e)}")
+                    errors.append(
+                        f"步骤{step_data.get('step', '?')}格式错误: {str(e)}")
 
             if errors:
                 return AgentMarkdownParseResponse(
@@ -332,7 +397,8 @@ class AgentMarkdownParser:
                     [
                         "- **参数**:",
                         "```json",
-                        json.dumps(step.parameters, ensure_ascii=False, indent=2),
+                        json.dumps(step.parameters,
+                                   ensure_ascii=False, indent=2),
                         "```",
                     ]
                 )
@@ -430,7 +496,7 @@ class AgentLLMValidator:
         llm_client = get_llm_client()
 
         # 构建验证prompt
-        from services.registry import get_agents_description, get_tools_description
+        from core.registry import get_agents_description, get_tools_description
 
         tools_desc = get_tools_description()
         agents_desc = get_agents_description()

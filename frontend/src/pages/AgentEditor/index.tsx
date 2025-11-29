@@ -14,6 +14,9 @@ import {
   Alert,
   Tag,
   Typography,
+  Table,
+  Modal,
+  Drawer,
 } from "antd";
 import {
   SaveOutlined,
@@ -22,13 +25,19 @@ import {
   CheckCircleOutlined,
   ExclamationCircleOutlined,
   RobotOutlined,
+  PlusOutlined,
+  PlayCircleOutlined,
+  DeleteOutlined,
+  EditOutlined,
 } from "@ant-design/icons";
 import mermaid from "mermaid";
 import { agentEditorService } from "../../services/agentEditor";
 import { templateService } from "../../services/template";
+import { v4 as uuidv4 } from "uuid";
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
+const { Search } = Input;
 
 interface ParseResult {
   success: boolean;
@@ -51,12 +60,25 @@ interface ParseResult {
 }
 
 export default function AgentEditorPage() {
+  // 列表相关
+  const [agents, setAgents] = useState<any[]>([]);
+  const [loadingAgents, setLoadingAgents] = useState(false);
+  const [selectedAgent, setSelectedAgent] = useState<any>(null);
+
+  // 创建相关
+  const [createDrawerVisible, setCreateDrawerVisible] = useState(false);
   const [markdown, setMarkdown] = useState("");
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [templateId, setTemplateId] = useState<number | undefined>();
   const [templates, setTemplates] = useState<any[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
+
+  // 执行相关
+  const [executeModalVisible, setExecuteModalVisible] = useState(false);
+  const [executeQuery, setExecuteQuery] = useState("");
+  const [executing, setExecuting] = useState(false);
+  const [executionResult, setExecutionResult] = useState<any>(null);
 
   // Mermaid初始化
   useEffect(() => {
@@ -71,10 +93,29 @@ export default function AgentEditorPage() {
     });
   }, []);
 
-  // 加载分类模板列表
+  // 加载Agent列表和分类模板
   useEffect(() => {
+    loadAgents();
     loadTemplates();
   }, []);
+
+  // 加载Agent列表
+  const loadAgents = async () => {
+    try {
+      setLoadingAgents(true);
+      const response = await agentEditorService.listAgents({
+        is_active: true,
+      });
+      if (response.data?.agents) {
+        setAgents(response.data.agents);
+      }
+    } catch (error) {
+      message.error("加载Agent列表失败");
+      console.error(error);
+    } finally {
+      setLoadingAgents(false);
+    }
+  };
 
   const loadTemplates = async () => {
     try {
@@ -121,6 +162,11 @@ export default function AgentEditorPage() {
     }
 
     try {
+      if (!templateId) {
+        message.warning("请选择模板");
+        return;
+      }
+
       setLoading(true);
       const response = await agentEditorService.parseMarkdown({
         content: markdown,
@@ -160,12 +206,88 @@ export default function AgentEditorPage() {
       message.success("Agent创建成功");
       setMarkdown("");
       setParseResult(null);
+      setCreateDrawerVisible(false);
+      loadAgents(); // 刷新列表
     } catch (error) {
       message.error("创建失败");
       console.error(error);
     } finally {
       setLoading(false);
     }
+  };
+
+  // 执行Agent
+  const handleExecuteAgent = async () => {
+    if (!selectedAgent || !executeQuery.trim()) {
+      message.warning("请输入查询内容");
+      return;
+    }
+
+    try {
+      setExecuting(true);
+      setExecutionResult({ stages: [], answer: null });
+
+      await agentEditorService.executeAgent(
+        selectedAgent.id,
+        {
+          query: executeQuery,
+          template_id: selectedAgent.template_id,
+          session_id: uuidv4(),
+        },
+        (event) => {
+          console.log("收到事件:", event);
+
+          switch (event.event) {
+            case "execution_plan":
+              setExecutionResult((prev: any) => ({
+                ...prev,
+                plan: event.data,
+              }));
+              break;
+            case "stage_complete":
+              setExecutionResult((prev: any) => ({
+                ...prev,
+                stages: [...(prev.stages || []), event.data],
+              }));
+              break;
+            case "answer":
+              setExecutionResult((prev: any) => ({
+                ...prev,
+                answer: event.data.answer,
+                documents: event.data.documents,
+              }));
+              break;
+            case "done":
+              setExecuting(false);
+              message.success("执行完成");
+              break;
+            case "error":
+              setExecuting(false);
+              message.error(event.data.error || "执行失败");
+              break;
+          }
+        }
+      );
+    } catch (error: any) {
+      setExecuting(false);
+      message.error(`执行失败: ${error.message}`);
+      console.error(error);
+    }
+  };
+
+  // 打开创建抽屉
+  const handleOpenCreateDrawer = () => {
+    setMarkdown("");
+    setParseResult(null);
+    setCreateDrawerVisible(true);
+  };
+
+  // 打开执行弹窗
+  const handleOpenExecuteModal = (agent: any) => {
+    setSelectedAgent(agent);
+    setExecuteQuery("");
+    setExecutionResult(null);
+    setExecuteModalVisible(true);
   };
 
   const renderErrors = () => {
@@ -293,105 +415,281 @@ export default function AgentEditorPage() {
     );
   };
 
+  // Agent列表列配置
+  const columns = [
+    {
+      title: "名称",
+      dataIndex: "name",
+      key: "name",
+      render: (text: string, record: any) => (
+        <Space>
+          <RobotOutlined />
+          <Text strong>{text}</Text>
+        </Space>
+      ),
+    },
+    {
+      title: "描述",
+      dataIndex: "description",
+      key: "description",
+      ellipsis: true,
+    },
+    {
+      title: "执行模式",
+      dataIndex: "execution_pattern",
+      key: "execution_pattern",
+      render: (pattern: string) => (
+        <Tag color="blue">{pattern}</Tag>
+      ),
+    },
+    {
+      title: "步骤数",
+      dataIndex: "steps",
+      key: "steps",
+      render: (steps: any[]) => steps?.length || 0,
+    },
+    {
+      title: "创建时间",
+      dataIndex: "created_at",
+      key: "created_at",
+      render: (time: number) => new Date(time * 1000).toLocaleString(),
+    },
+    {
+      title: "操作",
+      key: "action",
+      render: (_: any, record: any) => (
+        <Space>
+          <Button
+            type="primary"
+            icon={<PlayCircleOutlined />}
+            onClick={() => handleOpenExecuteModal(record)}
+          >
+            执行
+          </Button>
+        </Space>
+      ),
+    },
+  ];
+
   return (
     <div style={{ padding: 24, height: "100%" }}>
+      {/* 页面标题 */}
       <Card style={{ marginBottom: 16 }}>
-        <Title level={2}>
-          <RobotOutlined /> Agent编辑器
-        </Title>
-        <Paragraph>
-          使用Markdown格式定义Agent流程，大模型自动验证并生成流程图
-        </Paragraph>
+        <Row justify="space-between" align="middle">
+          <Col>
+            <Title level={2}>
+              <RobotOutlined /> 自定义Agent管理
+            </Title>
+            <Paragraph>
+              管理和执行自定义的智能体工作流
+            </Paragraph>
+          </Col>
+          <Col>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              size="large"
+              onClick={handleOpenCreateDrawer}
+            >
+              创建Agent
+            </Button>
+          </Col>
+        </Row>
       </Card>
 
-      <Row gutter={16} style={{ height: "calc(100% - 140px)" }}>
-        {/* 左侧 - Markdown编辑器 */}
-        <Col span={12} style={{ height: "100%" }}>
-          <Card
-            title="Markdown编辑"
-            style={{ height: "100%", display: "flex", flexDirection: "column" }}
-            bodyStyle={{
-              flex: 1,
-              overflow: "hidden",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <div style={{ marginBottom: 16 }}>
-              <Text strong>关联分类模板（可选）:</Text>
-              <Select
-                placeholder="选择关联的分类模板"
-                style={{ width: "100%", marginTop: 8 }}
-                value={templateId}
-                onChange={setTemplateId}
-                loading={loadingTemplates}
-                options={templates.map((t) => ({
-                  label: t.name,
-                  value: t.id,
-                }))}
-              />
-            </div>
+      {/* Agent列表 */}
+      <Card>
+        <Table
+          columns={columns}
+          dataSource={agents}
+          rowKey="id"
+          loading={loadingAgents}
+          pagination={{
+            pageSize: 10,
+            showTotal: (total) => `共 ${total} 个Agent`,
+          }}
+        />
+      </Card>
 
-            <div
-              style={{
+      {/* 创建Agent抽屉 */}
+      <Drawer
+        title="创建新Agent"
+        placement="right"
+        width="80%"
+        onClose={() => setCreateDrawerVisible(false)}
+        open={createDrawerVisible}
+      >
+        <Row gutter={16} style={{ height: "100%" }}>
+          {/* 左侧 - Markdown编辑器 */}
+          <Col span={12} style={{ height: "100%" }}>
+            <Card
+              title="Markdown编辑"
+              style={{ height: "100%", display: "flex", flexDirection: "column" }}
+              bodyStyle={{
                 flex: 1,
                 overflow: "hidden",
                 display: "flex",
                 flexDirection: "column",
               }}
             >
-              <Text strong style={{ marginBottom: 8 }}>
-                Agent定义:
-              </Text>
-              <TextArea
-                value={markdown}
-                onChange={(e) => setMarkdown(e.target.value)}
-                placeholder="输入Agent的Markdown定义..."
+              <div style={{ marginBottom: 16 }}>
+                <Text strong>关联分类模板:</Text>
+                <Select
+                  placeholder="选择关联的分类模板"
+                  style={{ width: "100%", marginTop: 8 }}
+                  value={templateId}
+                  onChange={setTemplateId}
+                  loading={loadingTemplates}
+                  options={templates.map((t) => ({
+                    label: t.name,
+                    value: t.id,
+                  }))}
+                />
+              </div>
+
+              <div
                 style={{
                   flex: 1,
-                  fontFamily: "monospace",
-                  fontSize: 13,
-                  resize: "none",
+                  overflow: "hidden",
+                  display: "flex",
+                  flexDirection: "column",
                 }}
-              />
-            </div>
+              >
+                <Text strong style={{ marginBottom: 8 }}>
+                  Agent定义:
+                </Text>
+                <TextArea
+                  value={markdown}
+                  onChange={(e) => setMarkdown(e.target.value)}
+                  placeholder="输入Agent的Markdown定义..."
+                  style={{
+                    flex: 1,
+                    fontFamily: "monospace",
+                    fontSize: 13,
+                    resize: "none",
+                  }}
+                />
+              </div>
 
-            <Divider />
+              <Divider />
 
-            <div>
-              <Space>
-                <Button
-                  type="primary"
-                  icon={<EyeOutlined />}
-                  onClick={handleParse}
-                  loading={loading}
-                >
-                  解析
-                </Button>
-                <Button
-                  icon={<SaveOutlined />}
-                  onClick={handleCreateAgent}
-                  disabled={!parseResult?.success}
-                  loading={loading}
-                >
-                  创建
-                </Button>
-              </Space>
-            </div>
-          </Card>
-        </Col>
+              <div>
+                <Space>
+                  <Button
+                    type="primary"
+                    icon={<EyeOutlined />}
+                    onClick={handleParse}
+                    loading={loading}
+                  >
+                    解析
+                  </Button>
+                  <Button
+                    icon={<SaveOutlined />}
+                    onClick={handleCreateAgent}
+                    disabled={!parseResult?.success}
+                    loading={loading}
+                  >
+                    创建
+                  </Button>
+                </Space>
+              </div>
+            </Card>
+          </Col>
 
-        {/* 右侧 - 流程图和验证结果 */}
-        <Col span={12} style={{ height: "100%" }}>
-          <Card
-            title="流程预览"
-            style={{ height: "100%", display: "flex", flexDirection: "column" }}
-            bodyStyle={{ flex: 1, overflow: "auto" }}
+          {/* 右侧 - 流程图和验证结果 */}
+          <Col span={12} style={{ height: "100%" }}>
+            <Card
+              title="流程预览"
+              style={{ height: "100%", display: "flex", flexDirection: "column" }}
+              bodyStyle={{ flex: 1, overflow: "auto" }}
+            >
+              {renderRightPanel()}
+            </Card>
+          </Col>
+        </Row>
+      </Drawer>
+
+      {/* 执行Agent弹窗 */}
+      <Modal
+        title={`执行Agent: ${selectedAgent?.name}`}
+        open={executeModalVisible}
+        onCancel={() => setExecuteModalVisible(false)}
+        width={800}
+        footer={[
+          <Button key="cancel" onClick={() => setExecuteModalVisible(false)}>
+            关闭
+          </Button>,
+          <Button
+            key="execute"
+            type="primary"
+            icon={<PlayCircleOutlined />}
+            loading={executing}
+            onClick={handleExecuteAgent}
           >
-            {renderRightPanel()}
-          </Card>
-        </Col>
-      </Row>
+            执行
+          </Button>,
+        ]}
+      >
+        <Space direction="vertical" style={{ width: "100%" }} size="large">
+          {/* 查询输入 */}
+          <div>
+            <Text strong>查询内容:</Text>
+            <TextArea
+              value={executeQuery}
+              onChange={(e) => setExecuteQuery(e.target.value)}
+              placeholder="输入你的查询或任务..."
+              rows={3}
+              style={{ marginTop: 8 }}
+            />
+          </div>
+
+          {/* 执行结果 */}
+          {executionResult && (
+            <div>
+              <Divider>执行结果</Divider>
+
+              {/* 执行计划 */}
+              {executionResult.plan && (
+                <Card title="执行计划" size="small" style={{ marginBottom: 16 }}>
+                  <Text>{executionResult.plan.description}</Text>
+                  <div style={{ marginTop: 8 }}>
+                    {executionResult.plan.plan?.map((step: any, i: number) => (
+                      <Tag key={i} color="blue" style={{ marginBottom: 4 }}>
+                        步骤{step.step}: {step.description}
+                      </Tag>
+                    ))}
+                  </div>
+                </Card>
+              )}
+
+              {/* 步骤执行状态 */}
+              {executionResult.stages && executionResult.stages.length > 0 && (
+                <Card title="执行进度" size="small" style={{ marginBottom: 16 }}>
+                  {executionResult.stages.map((stage: any, i: number) => (
+                    <div key={i} style={{ marginBottom: 8 }}>
+                      <CheckCircleOutlined style={{ color: "#52c41a", marginRight: 8 }} />
+                      {stage.message}
+                    </div>
+                  ))}
+                </Card>
+              )}
+
+              {/* 最终答案 */}
+              {executionResult.answer && (
+                <Card title="答案" size="small">
+                  <Paragraph>{executionResult.answer}</Paragraph>
+                </Card>
+              )}
+
+              {executing && (
+                <div style={{ textAlign: "center" }}>
+                  <Spin tip="执行中..." />
+                </div>
+              )}
+            </div>
+          )}
+        </Space>
+      </Modal>
     </div>
   );
 }

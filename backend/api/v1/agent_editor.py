@@ -57,7 +57,8 @@ async def parse_agent_markdown(
             )
 
         # 2. 基础验证
-        is_valid, validation_errors = AgentExecutionBuilder.validate_agent(result.agent)
+        is_valid, validation_errors = AgentExecutionBuilder.validate_agent(
+            result.agent)
         if not is_valid:
             result.errors.extend(validation_errors)
             return ResponseBase(
@@ -147,7 +148,8 @@ async def create_agent(
         agent = parse_result.agent
 
         # 2. 基础验证
-        is_valid, validation_errors = AgentExecutionBuilder.validate_agent(agent)
+        is_valid, validation_errors = AgentExecutionBuilder.validate_agent(
+            agent)
         if not is_valid:
             raise HTTPException(
                 status_code=400, detail=f"Agent验证失败: {'; '.join(validation_errors)}"
@@ -243,38 +245,147 @@ async def list_agents(
         raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")
 
 
+@router.get("/{agent_id}", response_model=ResponseBase)
+async def get_agent(
+    agent_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> ResponseBase:
+    """
+    获取单个Agent详情
+    """
+    try:
+        result = await db.execute(
+            select(CustomAgent).where(CustomAgent.id == agent_id)
+        )
+        agent = result.scalar_one_or_none()
+
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent不存在")
+
+        return ResponseBase(
+            code=200,
+            message="获取成功",
+            data={"agent": agent.to_dict()},
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ 获取Agent失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")
+
+
+@router.post("/execute/{agent_id}")
+async def execute_agent(
+    agent_id: int,
+    request: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    执行自定义Agent
+
+    这是主要入口：根据已保存的Agent定义执行工作流
+    """
+    from fastapi.responses import StreamingResponse
+    from services.agents.custom_agent_executor import CustomAgentExecutor
+    from database import get_es_client
+    import json
+
+    try:
+        logger.info(f"📝 执行自定义Agent: ID={agent_id}")
+
+        # 1. 获取Agent定义
+        result = await db.execute(
+            select(CustomAgent).where(
+                CustomAgent.id == agent_id,
+                CustomAgent.is_active == True,
+            )
+        )
+        agent = result.scalar_one_or_none()
+
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent不存在或未激活")
+
+        # 2. 提取请求参数
+        query = request.get("query", "")
+        template_id = request.get("template_id") or agent.template_id
+        session_id = request.get("session_id")
+
+        if not query:
+            raise HTTPException(status_code=400, detail="缺少query参数")
+
+        # 3. 获取ES客户端
+        es_client = get_es_client()
+        es_index = request.get("es_index", "dochive_documents")
+
+        # 4. 创建SSE生成器
+        async def event_generator():
+            try:
+                async for event in CustomAgentExecutor.execute(
+                    agent=agent,
+                    query=query,
+                    template_id=template_id,
+                    session_id=session_id,
+                    db=db,
+                    es_client=es_client,
+                    es_index=es_index,
+                ):
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                logger.error(f"❌ 执行过程出错: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                error_event = {
+                    "event": "error",
+                    "data": {"error": str(e)}
+                }
+                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+
+        # 5. 返回SSE响应
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ 执行Agent失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"执行失败: {str(e)}")
+
+
 @router.post("/markdown-template")
 async def get_markdown_template() -> ResponseBase:
     """
     获取Agent Markdown模板
     """
-    template = """# Agent: 我的Agent名称
+    template = """# Agent: 写文章助手
 
-**描述**: 这是一个Agent的描述，说明它的用途
-
-**执行模式**: hybrid
+**描述**: 根据主题自动规划文章结构、查询关键信息、摘取要素、组合内容并排版
 
 ## 执行步骤
 
-### 步骤1: 获取统计信息
-- **类型**: tool
-- **名称**: get_template_statistics
-- **描述**: 获取模板的统计信息
+### 步骤1: 规划文章结构
+- **描述**: 分析主题,规划文章需要几个章节,每个章节写什么
 
-### 步骤2: 搜索文档
-- **类型**: tool
-- **名称**: search_documents_by_classification
-- **描述**: 根据分类搜索文档
+### 步骤2: 查询关键信息
+- **描述**: 检索与主题相关的文档和资料
 
-### 步骤3: 检索相关文档
-- **类型**: agent
-- **名称**: retrieval_agent
-- **描述**: 检索与查询相关的文档
+### 步骤3: 摘取要素
+- **描述**: 从文档中提取关键信息点
 
-### 步骤4: 生成答案
-- **类型**: agent
-- **名称**: qa_agent
-- **描述**: 基于检索结果生成答案
+### 步骤4: 组合内容
+- **描述**: 将信息按照规划的结构组织成文章
+
+### 步骤5: 排版优化
+- **描述**: 优化文章格式和排版
 """
 
     return ResponseBase(code=200, message="模板获取成功", data={"template": template})
