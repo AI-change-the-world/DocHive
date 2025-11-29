@@ -1,3 +1,9 @@
+"""
+智能生成文档大纲
+
+使用 @tool 装饰器重构
+"""
+
 from typing import Any, Dict
 from core.tools.base import ToolContext, tool
 
@@ -11,11 +17,52 @@ from loguru import logger
     适用于自动生成方案、报告、规划、设计文档等大纲。
     """,
     parameters={
-        "query": {"type": "string", "description": "用户的生成大纲请求，如“帮我写一个xxx方案的大纲”"},
+        "query": {"type": "string", "description": "用户的生成大纲请求，如"帮我写一个xxx方案的大纲""},
     },
     required=["query"],
     category="document",
     tags=["文档", "大纲", "outline"],
+    output_schema={
+        "success": {
+            "type": "boolean",
+            "description": "执行是否成功"
+        },
+        "title": {
+            "type": "string",
+            "description": "文档标题"
+        },
+        "outline": {
+            "type": "array",
+            "description": "大纲章节列表",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "section_title": {"type": "string", "description": "章节标题"},
+                    "description": {"type": "string", "description": "章节说明"},
+                    "subsections": {
+                        "type": "array",
+                        "description": "子章节列表（可选）",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": {"type": "string"},
+                                "description": {"type": "string"}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "search_query": {
+            "type": "array",
+            "description": "后续写作所需的检索关键词列表",
+            "items": {"type": "string"}
+        },
+        "error": {
+            "type": "string",
+            "description": "错误信息（仅在失败时返回）"
+        }
+    }
 )
 async def generate_outline(
     ctx: ToolContext,

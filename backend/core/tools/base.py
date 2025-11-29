@@ -54,6 +54,7 @@ def tool(
     required: Optional[List[str]] = None,
     category: str = "general",
     tags: Optional[List[str]] = None,
+    output_schema: Optional[Dict[str, Any]] = None,
 ):
     """
     工具装饰器 - 将函数注册为可调用的工具
@@ -71,7 +72,11 @@ def tool(
         },
         required=["template_id"],
         category="statistics",
-        tags=["统计", "模板"]
+        tags=["统计", "模板"],
+        output_schema={
+            "success": {"type": "boolean", "description": "执行是否成功"},
+            "data": {"type": "object", "description": "统计数据"}
+        }
     )
     async def get_template_statistics(ctx: ToolContext, template_id: int):
         ...
@@ -84,6 +89,7 @@ def tool(
         required: 必需参数列表
         category: 工具分类（retrieval/document/statistics/analysis）
         tags: 标签列表（用于筛选和分组）
+        output_schema: 输出结构定义（可选，用于标准化输出和参数自动装配）
     """
 
     def decorator(func: Callable):
@@ -113,6 +119,7 @@ def tool(
             "category": category,
             "tags": tags or [],
             "is_async": inspect.iscoroutinefunction(func),
+            "output_schema": output_schema,  # 新增：输出结构定义
         }
 
         logger.debug(f"注册工具: {name} (category={category})")
@@ -205,6 +212,71 @@ def get_tools_description() -> str:
     return "\n".join(tools_list)
 
 
+def get_tool_output_schema(name: str) -> Optional[Dict[str, Any]]:
+    """
+    获取指定工具的输出结构定义
+
+    Args:
+        name: 工具名称
+
+    Returns:
+        输出结构定义，如果未定义则返回 None
+    """
+    tool_info = _TOOL_REGISTRY.get(name)
+    if not tool_info:
+        return None
+    return tool_info.get("output_schema")
+
+
+def get_tool_metadata(name: str) -> Optional[Dict[str, Any]]:
+    """
+    获取指定工具的完整元数据
+
+    包括参数schema、描述、分类等所有信息
+
+    Args:
+        name: 工具名称
+
+    Returns:
+        工具元数据字典，如果工具不存在则返回 None
+    """
+    tool_info = _TOOL_REGISTRY.get(name)
+    if not tool_info:
+        return None
+
+    # 提取参数schema
+    schema = tool_info.get("schema", {})
+    function_info = schema.get("function", {})
+    parameters = function_info.get("parameters", {})
+
+    return {
+        "name": name,
+        "description": tool_info.get("description", ""),
+        "category": tool_info.get("category", "general"),
+        "tags": tool_info.get("tags", []),
+        "parameters": parameters,
+        "output_schema": tool_info.get("output_schema"),
+    }
+
+
+def get_all_tools_with_output_schema() -> Dict[str, Dict[str, Any]]:
+    """
+    获取所有定义了输出结构的工具
+
+    Returns:
+        包含输出结构的工具字典
+    """
+    return {
+        name: {
+            "description": info["description"],
+            "output_schema": info["output_schema"],
+            "category": info["category"],
+        }
+        for name, info in _TOOL_REGISTRY.items()
+        if info.get("output_schema") is not None
+    }
+
+
 # ==================== 工具执行器 ====================
 
 
@@ -272,8 +344,13 @@ def discover_tools():
         get_document_contents_v2,
         read_documents_v2,
         skim_documents_v2,
+        generate_outline
     )
-    from core.tools.retrieval import es_fulltext_search_v2, sql_structured_search_v2
+    from core.tools.retrieval import (
+        es_fulltext_search_v2,
+        sql_structured_search_v2,
+        multi_query_search,
+    )
     from core.tools.statistics import (
         get_document_types_info_v2,
         get_template_statistics_v2,

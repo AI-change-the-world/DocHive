@@ -10,4 +10,5 @@ __all__ = [
     "get_document_contents",
     "skim_documents",
     "read_documents",
+    "generate_outline",
 ]

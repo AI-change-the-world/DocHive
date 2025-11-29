@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # 从新版基础设施导入
 from core.tools.base import ToolContext
 from core.tools.base import execute_tool as _execute_tool_new
-from core.tools.base import get_tools_schema_list
+from core.tools.base import get_tools_schema_list, get_tool_metadata
 
 # ==================== 向后兼容：TOOLS_SCHEMA ====================
 

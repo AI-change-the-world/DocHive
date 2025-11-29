@@ -1,0 +1,103 @@
+{
+  "name": "写作智能体",
+  "description": "根据用户要求，按步骤调用工具完成文档写作",
+  "execution_pattern": "sequential",
+  "steps": [
+    {
+      "step": 1,
+      "type": "tool",
+      "name": "generate_outline",
+      "description": "根据用户要求生成文档大纲",
+      "parameter_mappings": {
+        "query": {
+          "source": "query",
+          "description": "直接使用用户查询"
+        },
+        "user_requirements": {
+          "source": "query",
+          "description": "用户需求等同于查询"
+        },
+        "template_id": {
+          "source": "context",
+          "description": "从上下文获取模板ID"
+        }
+      }
+    },
+    {
+      "step": 2,
+      "type": "tool",
+      "name": "multi_query_search",
+      "description": "根据大纲中的多个部分需求进行检索",
+      "parameter_mappings": {
+        "queries": {
+          "source": "intermediate",
+          "path": "outline.sections",
+          "description": "从大纲的sections中提取查询需求，会自动提取data_requirements或title字段"
+        },
+        "template_id": {
+          "source": "context"
+        },
+        "top_k_per_query": {
+          "source": "value",
+          "value": 5
+        },
+        "deduplication": {
+          "source": "value",
+          "value": true
+        }
+      }
+    },
+    {
+      "step": 3,
+      "type": "tool",
+      "name": "get_document_contents",
+      "description": "获取检索到的文档完整内容",
+      "parameter_mappings": {
+        "document_ids": {
+          "source": "intermediate",
+          "path": "document_ids",
+          "description": "使用上一步检索到的文档ID列表"
+        },
+        "template_id": {
+          "source": "context"
+        }
+      }
+    },
+    {
+      "step": 4,
+      "type": "custom",
+      "name": "generate_document",
+      "description": "根据大纲和检索到的内容生成文档",
+      "notes": "此步骤需要调用LLM，使用intermediate_data中的outline和documents"
+    },
+    {
+      "step": 5,
+      "type": "custom",
+      "name": "polish_document",
+      "description": "校对并润色生成的文档",
+      "notes": "此步骤需要调用LLM对文档进行润色"
+    }
+  ],
+  "notes": {
+    "parameter_mappings_说明": {
+      "source选项": {
+        "query": "直接使用用户的查询文本",
+        "context": "从执行上下文获取（如template_id, session_id）",
+        "intermediate": "从intermediate_data中获取，可使用path指定嵌套路径",
+        "previous": "从上一步的结果（last_result）中获取",
+        "value": "使用固定值，通过value字段指定"
+      },
+      "path说明": "使用点号分隔的路径，如 'outline.sections' 或 'result.data.items'",
+      "自动映射规则": "如果不配置parameter_mappings，系统会使用内置规则自动构造参数（兼容旧配置）"
+    },
+    "intermediate_data结构": {
+      "documents": "文档列表",
+      "document_ids": "文档ID列表",
+      "tool_results": "所有工具执行结果历史",
+      "agent_results": "所有智能体执行结果历史",
+      "last_result": "上一步的执行结果（最常用）",
+      "outline": "文档大纲（generate_outline工具生成）"
+    },
+    "内置规则说明": "对于常见工具（如es_fulltext_search, get_document_contents等），如果不配置parameter_mappings，系统会自动从intermediate_data中提取合适的参数"
+  }
+}
