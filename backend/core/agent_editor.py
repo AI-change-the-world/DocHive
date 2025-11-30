@@ -325,8 +325,7 @@ class AgentMarkdownParser:
                     )
                     steps.append(step)
                 except Exception as e:
-                    errors.append(
-                        f"步骤{step_data.get('step', '?')}格式错误: {str(e)}")
+                    errors.append(f"步骤{step_data.get('step', '?')}格式错误: {str(e)}")
 
             if errors:
                 return AgentMarkdownParseResponse(
@@ -397,8 +396,7 @@ class AgentMarkdownParser:
                     [
                         "- **参数**:",
                         "```json",
-                        json.dumps(step.parameters,
-                                   ensure_ascii=False, indent=2),
+                        json.dumps(step.parameters, ensure_ascii=False, indent=2),
                         "```",
                     ]
                 )

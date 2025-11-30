@@ -21,13 +21,13 @@ from core.tools.base import (
 
 # 文档处理工具
 from core.tools.document.deduplicate_documents import deduplicate_documents
+from core.tools.document.document_compose import document_compose
+from core.tools.document.document_extraction import document_extraction
+from core.tools.document.document_review import document_review
+from core.tools.document.generate_outline import generate_outline
 from core.tools.document.get_document_contents_v2 import get_document_contents
 from core.tools.document.read_documents_v2 import read_documents
 from core.tools.document.skim_documents_v2 import skim_documents
-from core.tools.document.generate_outline import generate_outline
-from core.tools.document.document_extraction import document_extraction
-from core.tools.document.document_compose import document_compose
-from core.tools.document.document_review import document_review
 
 # 检索工具
 from core.tools.retrieval.es_fulltext_search_v2 import es_fulltext_search

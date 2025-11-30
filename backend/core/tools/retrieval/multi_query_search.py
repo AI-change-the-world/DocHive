@@ -37,14 +37,11 @@ from core.tools.base import ToolContext, tool
     category="retrieval",
     tags=["检索", "ES", "多查询", "全文搜索"],
     output_schema={
-        "success": {
-            "type": "boolean",
-            "description": "执行是否成功"
-        },
+        "success": {"type": "boolean", "description": "执行是否成功"},
         "document_ids": {
             "type": "array",
             "description": "检索到的文档ID列表",
-            "items": {"type": "integer"}
+            "items": {"type": "integer"},
         },
         "documents": {
             "type": "array",
@@ -56,23 +53,17 @@ from core.tools.base import ToolContext, tool
                     "title": {"type": "string", "description": "文档标题"},
                     "snippet": {"type": "string", "description": "文档摘要"},
                     "score": {"type": "number", "description": "相关性分数"},
-                    "query": {"type": "string", "description": "召回该文档的查询词"}
-                }
-            }
+                    "query": {"type": "string", "description": "召回该文档的查询词"},
+                },
+            },
         },
         "query_results": {
             "type": "object",
-            "description": "每个查询的原始结果（键为查询词，值为文档列表）"
+            "description": "每个查询的原始结果（键为查询词，值为文档列表）",
         },
-        "count": {
-            "type": "integer",
-            "description": "检索到的文档总数"
-        },
-        "error": {
-            "type": "string",
-            "description": "错误信息（仅在失败时返回）"
-        }
-    }
+        "count": {"type": "integer", "description": "检索到的文档总数"},
+        "error": {"type": "string", "description": "错误信息（仅在失败时返回）"},
+    },
 )
 async def multi_query_search(
     ctx: ToolContext,
@@ -198,7 +189,10 @@ async def multi_query_search(
 
                 # 去重处理：保留最高分数的结果
                 if deduplication:
-                    if doc_id not in all_documents or score > all_documents[doc_id]["score"]:
+                    if (
+                        doc_id not in all_documents
+                        or score > all_documents[doc_id]["score"]
+                    ):
                         all_documents[doc_id] = doc_info
                 else:
                     # 不去重，添加多次
@@ -213,9 +207,7 @@ async def multi_query_search(
         if deduplication:
             # 按分数排序
             documents = sorted(
-                all_documents.values(),
-                key=lambda x: x["score"],
-                reverse=True
+                all_documents.values(), key=lambda x: x["score"], reverse=True
             )
         else:
             # 展平列表并按分数排序
@@ -229,7 +221,9 @@ async def multi_query_search(
 
         document_ids = [doc["document_id"] for doc in documents]
 
-        logger.info(f"✅ 多Query检索完成: 总共召回 {len(documents)} 篇文档（去重={deduplication}）")
+        logger.info(
+            f"✅ 多Query检索完成: 总共召回 {len(documents)} 篇文档（去重={deduplication}）"
+        )
 
         return {
             "success": True,

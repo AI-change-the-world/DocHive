@@ -1,7 +1,6 @@
 """ This module is deprecated.
 """
 
-
 import json
 from typing import Any, Dict, List, Optional, Set, TypedDict
 
@@ -14,14 +13,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing_extensions import deprecated
 
-from models.database_models import (
-    Document,
-    DocumentType,
-    DocumentTypeField,
-    TemplateDocumentMapping,
-)
 from core.intent_router import format_tool_result_as_answer, function_calling_router
-from services.template_service import TemplateService
 
 # 注意：这些是deduplicate_documents模块的私有辅助函数，一般不应直接导入
 # 考虑重构或使用公开接口
@@ -34,12 +26,17 @@ from core.tools.document.deduplicate_documents import (
 from core.tools.document.deduplicate_documents import (
     _compute_strong_hash as compute_strong_hash,
 )
-from core.tools.document.deduplicate_documents import (
-    _normalize_text as normalize_text,
-)
+from core.tools.document.deduplicate_documents import _normalize_text as normalize_text
 from core.tools.document.deduplicate_documents import (
     _should_remove_duplicate as should_remove_duplicate,
 )
+from models.database_models import (
+    Document,
+    DocumentType,
+    DocumentTypeField,
+    TemplateDocumentMapping,
+)
+from services.template_service import TemplateService
 from utils.llm_client import get_llm_client
 
 # 全局变量存储graph状态，用于支持中断和恢复

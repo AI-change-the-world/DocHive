@@ -49,10 +49,12 @@ def get_execution_patterns_description() -> str:
 def get_agents_description():
     """获取智能体描述"""
     from core.agents import get_agents_description as _get_agents_description
+
     return _get_agents_description()
 
 
 def get_tools_description():
     """获取工具描述"""
     from core.tools import get_tools_description as _get_tools_description
+
     return _get_tools_description()

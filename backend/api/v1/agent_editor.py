@@ -9,7 +9,12 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db, get_search_engine, get_config
+from api.deps import get_config, get_db, get_search_engine
+from core.agent_editor import (
+    AgentExecutionBuilder,
+    AgentLLMValidator,
+    AgentMarkdownParser,
+)
 from models.database_models import CustomAgent
 from schemas.agent_schemas import (
     AgentCreateRequest,
@@ -17,11 +22,6 @@ from schemas.agent_schemas import (
     AgentResponse,
 )
 from schemas.api_schemas import ResponseBase
-from core.agent_editor import (
-    AgentExecutionBuilder,
-    AgentLLMValidator,
-    AgentMarkdownParser,
-)
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -57,8 +57,7 @@ async def parse_agent_markdown(
             )
 
         # 2. 基础验证
-        is_valid, validation_errors = AgentExecutionBuilder.validate_agent(
-            result.agent)
+        is_valid, validation_errors = AgentExecutionBuilder.validate_agent(result.agent)
         if not is_valid:
             result.errors.extend(validation_errors)
             return ResponseBase(
@@ -148,8 +147,7 @@ async def create_agent(
         agent = parse_result.agent
 
         # 2. 基础验证
-        is_valid, validation_errors = AgentExecutionBuilder.validate_agent(
-            agent)
+        is_valid, validation_errors = AgentExecutionBuilder.validate_agent(agent)
         if not is_valid:
             raise HTTPException(
                 status_code=400, detail=f"Agent验证失败: {'; '.join(validation_errors)}"
@@ -254,9 +252,7 @@ async def get_agent(
     获取单个Agent详情
     """
     try:
-        result = await db.execute(
-            select(CustomAgent).where(CustomAgent.id == agent_id)
-        )
+        result = await db.execute(select(CustomAgent).where(CustomAgent.id == agent_id))
         agent = result.scalar_one_or_none()
 
         if not agent:
@@ -289,9 +285,11 @@ async def execute_agent(
 
     这是主要入口：根据已保存的Agent定义执行工作流
     """
-    from fastapi.responses import StreamingResponse
-    from core.agents.custom_agent_executor import CustomAgentExecutor
     import json
+
+    from fastapi.responses import StreamingResponse
+
+    from core.agents.custom_agent_executor import CustomAgentExecutor
 
     try:
         logger.info(f"📝 执行自定义Agent: ID={agent_id}")
@@ -315,15 +313,22 @@ async def execute_agent(
 
         if not query:
             raise HTTPException(status_code=400, detail="缺少query参数")
-        
+
         if template_id is None:
-            raise HTTPException(status_code=400, detail="缺少template_id参数，请在请求中提供或确保Agent已关联模板")
+            raise HTTPException(
+                status_code=400,
+                detail="缺少template_id参数，请在请求中提供或确保Agent已关联模板",
+            )
 
         # 3. 获取ES客户端和索引
         # 使用 SearchEngine 的 client 属性（AsyncElasticsearch 实例）
         es_client = search_engine.client
         # 从配置或 SearchEngine 获取索引名称
-        es_index = request_body.get("es_index") or search_engine.index_name or config.ELASTICSEARCH_INDEX
+        es_index = (
+            request_body.get("es_index")
+            or search_engine.index_name
+            or config.ELASTICSEARCH_INDEX
+        )
 
         # 4. 创建SSE生成器
         async def event_generator():
@@ -341,11 +346,9 @@ async def execute_agent(
             except Exception as e:
                 logger.error(f"❌ 执行过程出错: {e}")
                 import traceback
+
                 logger.error(traceback.format_exc())
-                error_event = {
-                    "event": "error",
-                    "data": {"error": str(e)}
-                }
+                error_event = {"event": "error", "data": {"error": str(e)}}
                 yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
 
         # 5. 返回SSE响应
@@ -364,6 +367,7 @@ async def execute_agent(
     except Exception as e:
         logger.error(f"❌ 执行Agent失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"执行失败: {str(e)}")
 

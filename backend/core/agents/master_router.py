@@ -240,8 +240,7 @@ async def plan_execution(
     # 获取对话历史（用于元问题识别和回答）
     conversation_manager = get_conversation_manager()
     session_data = conversation_manager.get_session(session_id)
-    conversation_history = session_data.get(
-        "messages", []) if session_data else []
+    conversation_history = session_data.get("messages", []) if session_data else []
 
     # 构建系统能力描述
     tools_desc = get_tools_description()
@@ -491,8 +490,7 @@ async def plan_execution(
 
         logger.info(f"📋 规划结果: {json.dumps(response, ensure_ascii=False)}")
 
-        state["execution_pattern"] = response.get(
-            "execution_pattern", "llm_direct")
+        state["execution_pattern"] = response.get("execution_pattern", "llm_direct")
         state["reasoning"] = response.get("reasoning", "")
         state["execution_plan"] = response.get("execution_plan", [])
 
@@ -522,8 +520,7 @@ async def plan_execution(
                         role = msg.get("role")
                         content = msg.get("content", "")
                         if role in ["user", "assistant"]:
-                            llm_messages.append(
-                                {"role": role, "content": content})
+                            llm_messages.append({"role": role, "content": content})
 
                 # 添加当前问题
                 llm_messages.append({"role": "user", "content": query})
@@ -576,12 +573,9 @@ async def execute_steps(
     # 从 config 获取所需资源
     db: AsyncSession = config.get("configurable", {}).get("db")
     es_client = config.get("configurable", {}).get("es")
-    es_index: str = config.get("configurable", {}).get(
-        "es_index", "dochive_documents")
-    max_read_documents = config.get(
-        "configurable", {}).get("max_read_documents", 10)
-    rag_max_length = config.get(
-        "configurable", {}).get("rag_max_length", 10000)
+    es_index: str = config.get("configurable", {}).get("es_index", "dochive_documents")
+    max_read_documents = config.get("configurable", {}).get("max_read_documents", 10)
+    rag_max_length = config.get("configurable", {}).get("rag_max_length", 10000)
 
     # helper: 实际调用工具/智能体实现 - 使用新版工具系统
     async def _dispatch_to_impl(step_type: str, step_name: str):
@@ -617,8 +611,7 @@ async def execute_steps(
             elif step_name == "analyze_documents":
                 # analyze_documents 参数
                 arguments["query"] = query
-                arguments["documents"] = state["intermediate_data"].get(
-                    "documents", [])
+                arguments["documents"] = state["intermediate_data"].get("documents", [])
                 arguments["max_context_length"] = rag_max_length
             elif step_name == "search_documents_by_classification":
                 arguments["class_code"] = None  # 默认返回所有文档
@@ -826,13 +819,11 @@ async def finalize_answer(
                     docs = result.get("documents", [])
                     execution_summary.append(f"  - 读取{len(docs)}篇文档")
                     for doc in docs[:3]:  # 只显示前3篇
-                        execution_summary.append(
-                            f"    * {doc.get('title', '未命名')}")
+                        execution_summary.append(f"    * {doc.get('title', '未命名')}")
                 elif name == "analyze_documents":
                     analysis = result.get("analysis", "")
                     if analysis:
-                        execution_summary.append(
-                            f"  - 分析结果：{analysis[:200]}...")
+                        execution_summary.append(f"  - 分析结果：{analysis[:200]}...")
                 else:
                     # 通用处理
                     execution_summary.append(f"  - 执行成功")
@@ -843,8 +834,7 @@ async def finalize_answer(
 
         # 添加智能体执行结果
         for i, agent_result in enumerate(state["agent_results"]):
-            step_num = agent_result.get(
-                "step", len(state["tool_results"]) + i + 1)
+            step_num = agent_result.get("step", len(state["tool_results"]) + i + 1)
             name = agent_result.get("name", "未知智能体")
             desc = agent_result.get("description", "")
             result = agent_result.get("result", {})
@@ -1024,8 +1014,7 @@ async def execute_master_router(
             logger.info("✅ 用户选择继续使用当前结果")
 
             # 从会话的state中获取上次检索的文档
-            previous_documents = session_data.get(
-                "state", {}).get("documents", [])
+            previous_documents = session_data.get("state", {}).get("documents", [])
 
             if previous_documents:
                 logger.info(f"📚 使用上次检索的{len(previous_documents)}篇文档继续执行")
@@ -1076,8 +1065,7 @@ async def execute_master_router(
     if not state.get("execution_plan"):
         logger.info("🧠 ========== 第一步：规划 ===========")
 
-        config = {"configurable": {
-            "db": db, "es": es_client, "es_index": es_index}}
+        config = {"configurable": {"db": db, "es": es_client, "es_index": es_index}}
         state = await plan_execution(state, config)
 
         # Yield 执行计划
@@ -1122,8 +1110,7 @@ async def execute_master_router(
         )
 
     # 标记会话完成
-    conversation_manager.complete_session(
-        session_id, state.get("final_answer"))
+    conversation_manager.complete_session(session_id, state.get("final_answer"))
 
     # Yield 最终结果
     yield {
@@ -1312,8 +1299,7 @@ async def execute_steps_with_intervention(
                     "description": step_desc,
                     "result": result,
                     "documents": (
-                        state.get("documents", []
-                                  ) if step_type == "agent" else None
+                        state.get("documents", []) if step_type == "agent" else None
                     ),
                 },
             }

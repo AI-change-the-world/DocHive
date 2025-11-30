@@ -307,13 +307,27 @@ async def execute_tool(
     handler = tool_info["handler"]
 
     try:
-        logger.info(f"执行工具: {name}, 参数: {arguments}")
+        # 根据工具的 schema 过滤参数，只保留工具实际需要的参数
+        schema = tool_info.get("schema", {})
+        function_info = schema.get("function", {})
+        param_schema = function_info.get("parameters", {})
+        allowed_params = set(param_schema.get("properties", {}).keys())
+
+        # 过滤参数，只保留工具定义的参数
+        filtered_arguments = {k: v for k, v in arguments.items() if k in allowed_params}
+
+        # 记录被过滤掉的参数（用于调试）
+        removed_params = set(arguments.keys()) - allowed_params
+        if removed_params:
+            logger.debug(f"工具 {name} 过滤掉不需要的参数: {removed_params}")
+
+        logger.info(f"执行工具: {name}, 参数: {filtered_arguments}")
 
         # 调用工具函数，传入上下文和参数
         if tool_info["is_async"]:
-            result = await handler(ctx, **arguments)
+            result = await handler(ctx, **filtered_arguments)
         else:
-            result = handler(ctx, **arguments)
+            result = handler(ctx, **filtered_arguments)
 
         logger.info(f"工具执行成功: {name}")
         return result
@@ -341,18 +355,18 @@ def discover_tools():
     # 导入所有工具模块（装饰器会自动注册）
     from core.tools.analysis import document_analyzer_v2
     from core.tools.document import (
+        document_compose,
+        document_extraction,
+        document_review,
+        generate_outline,
         get_document_contents_v2,
         read_documents_v2,
         skim_documents_v2,
-        generate_outline,
-        document_extraction,
-        document_compose,
-        document_review,
     )
     from core.tools.retrieval import (
         es_fulltext_search_v2,
-        sql_structured_search_v2,
         multi_query_search,
+        sql_structured_search_v2,
     )
     from core.tools.statistics import (
         get_document_types_info_v2,

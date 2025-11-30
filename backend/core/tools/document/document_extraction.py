@@ -38,10 +38,7 @@ from core.tools.base import ToolContext, tool
     category="document",
     tags=["文档", "摘取", "提取", "extraction"],
     output_schema={
-        "success": {
-            "type": "boolean",
-            "description": "执行是否成功"
-        },
+        "success": {"type": "boolean", "description": "执行是否成功"},
         "extracted_content": {
             "type": "object",
             "description": "按章节组织的摘取内容",
@@ -52,27 +49,39 @@ from core.tools.base import ToolContext, tool
                     "properties": {
                         "section_title": {"type": "string", "description": "章节标题"},
                         "content": {"type": "string", "description": "摘取的内容片段"},
-                        "source_document_id": {"type": "integer", "description": "来源文档ID"},
-                        "source_document_title": {"type": "string", "description": "来源文档标题"},
-                        "relevance_score": {"type": "number", "description": "相关性分数"},
-                    }
-                }
-            }
+                        "source_document_id": {
+                            "type": "integer",
+                            "description": "来源文档ID",
+                        },
+                        "source_document_title": {
+                            "type": "string",
+                            "description": "来源文档标题",
+                        },
+                        "relevance_score": {
+                            "type": "number",
+                            "description": "相关性分数",
+                        },
+                    },
+                },
+            },
         },
         "summary": {
             "type": "object",
             "description": "摘取摘要统计",
             "properties": {
                 "total_sections": {"type": "integer", "description": "章节总数"},
-                "sections_with_content": {"type": "integer", "description": "有内容的章节数"},
-                "total_extracted_chunks": {"type": "integer", "description": "摘取的片段总数"},
-            }
+                "sections_with_content": {
+                    "type": "integer",
+                    "description": "有内容的章节数",
+                },
+                "total_extracted_chunks": {
+                    "type": "integer",
+                    "description": "摘取的片段总数",
+                },
+            },
         },
-        "error": {
-            "type": "string",
-            "description": "错误信息（仅在失败时返回）"
-        }
-    }
+        "error": {"type": "string", "description": "错误信息（仅在失败时返回）"},
+    },
 )
 async def document_extraction(
     ctx: ToolContext,
@@ -110,7 +119,7 @@ async def document_extraction(
                     "total_sections": 0,
                     "sections_with_content": 0,
                     "total_extracted_chunks": 0,
-                }
+                },
             }
 
         llm_client = get_llm_client()
@@ -122,15 +131,17 @@ async def document_extraction(
             # 如果内容太长，只取前2000字符
             if len(content) > 2000:
                 content = content[:2000] + "..."
-            doc_summaries.append({
-                "id": doc.get("id") or doc.get("document_id"),
-                "title": doc.get("title", "未命名文档"),
-                "content": content,
-            })
+            doc_summaries.append(
+                {
+                    "id": doc.get("id") or doc.get("document_id"),
+                    "title": doc.get("title", "未命名文档"),
+                    "content": content,
+                }
+            )
 
         # 构建大纲结构
         sections = outline.get("sections", []) or outline.get("outline", [])
-        
+
         prompt = f"""
 你是一个专业的文档内容摘取助手。根据文档大纲和检索到的文档，为每个章节摘取最相关的内容片段。
 
@@ -178,24 +189,36 @@ async def document_extraction(
 - 相关性分数要合理评估
 """
 
-        response = await llm_client.chat_completion(
+        # 使用流式接口避免超时
+        response = await llm_client.chat_completion_but_in_stream(
             messages=[
-                {"role": "system", "content": "你是一个专业的文档内容摘取助手，擅长从大量文档中提取与特定主题相关的内容。"},
+                {
+                    "role": "system",
+                    "content": "你是一个专业的文档内容摘取助手，擅长从大量文档中提取与特定主题相关的内容。",
+                },
                 {"role": "user", "content": prompt},
             ],
             db=db,
             response_format={"type": "json_object"},
+            max_tokens=4000,  # 增加token限制
         )
 
         # 解析响应
         try:
             data = json.loads(response)
             extracted_content = data.get("extracted_content", {})
-            summary = data.get("summary", {
-                "total_sections": len(sections),
-                "sections_with_content": len([k for k, v in extracted_content.items() if v]),
-                "total_extracted_chunks": sum(len(v) for v in extracted_content.values()),
-            })
+            summary = data.get(
+                "summary",
+                {
+                    "total_sections": len(sections),
+                    "sections_with_content": len(
+                        [k for k, v in extracted_content.items() if v]
+                    ),
+                    "total_extracted_chunks": sum(
+                        len(v) for v in extracted_content.values()
+                    ),
+                },
+            )
 
             return {
                 "success": True,
@@ -212,11 +235,12 @@ async def document_extraction(
                     "total_sections": len(sections),
                     "sections_with_content": 0,
                     "total_extracted_chunks": 0,
-                }
+                },
             }
 
     except Exception as e:
         import traceback
+
         logger.error(f"❌ 文档摘取失败: {e}")
         logger.error(traceback.format_exc())
 
@@ -228,6 +252,5 @@ async def document_extraction(
                 "total_sections": 0,
                 "sections_with_content": 0,
                 "total_extracted_chunks": 0,
-            }
+            },
         }
-

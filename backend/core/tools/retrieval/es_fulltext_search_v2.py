@@ -32,14 +32,11 @@ from core.tools.base import ToolContext, tool
     category="retrieval",
     tags=["检索", "ES", "全文搜索"],
     output_schema={
-        "success": {
-            "type": "boolean",
-            "description": "执行是否成功"
-        },
+        "success": {"type": "boolean", "description": "执行是否成功"},
         "document_ids": {
             "type": "array",
             "description": "检索到的文档ID列表",
-            "items": {"type": "integer"}
+            "items": {"type": "integer"},
         },
         "documents": {
             "type": "array",
@@ -50,19 +47,13 @@ from core.tools.base import ToolContext, tool
                     "document_id": {"type": "integer", "description": "文档ID"},
                     "title": {"type": "string", "description": "文档标题"},
                     "snippet": {"type": "string", "description": "高亮摘要"},
-                    "score": {"type": "number", "description": "相关性分数"}
-                }
-            }
+                    "score": {"type": "number", "description": "相关性分数"},
+                },
+            },
         },
-        "count": {
-            "type": "integer",
-            "description": "检索到的文档数量"
-        },
-        "error": {
-            "type": "string",
-            "description": "错误信息（仅在失败时返回）"
-        }
-    }
+        "count": {"type": "integer", "description": "检索到的文档数量"},
+        "error": {"type": "string", "description": "错误信息（仅在失败时返回）"},
+    },
 )
 async def es_fulltext_search(
     ctx: ToolContext,

@@ -11,7 +11,7 @@ from utils.llm_client import get_llm_client
 class CustomExecutionState(ExecutionContext):
     """
     自定义Agent执行状态 - 继承自 ExecutionContext
-    
+
     专门用于自定义Agent的执行，复用 ExecutionContext 的所有功能，
     同时提供执行历史管理功能。
     """
@@ -28,7 +28,7 @@ class CustomExecutionState(ExecutionContext):
     ):
         """
         初始化自定义执行状态
-        
+
         Args:
             db: 数据库会话
             es_client: ES客户端
@@ -47,12 +47,12 @@ class CustomExecutionState(ExecutionContext):
             query=query,
             **extra,
         )
-        
+
         # 初始化中间数据（方便快速访问）
         self.set_data("documents", [])
         self.set_data("document_ids", [])
         self.set_data("outline", {})
-        
+
         # 执行历史（用于记录Agent执行过程中的所有步骤结果）
         self._step_results: List[Dict[str, Any]] = []  # 所有步骤的结果列表
         self._tool_results: List[Dict[str, Any]] = []  # 所有工具调用结果
@@ -86,6 +86,73 @@ class CustomExecutionState(ExecutionContext):
         self._step_results.clear()
         self._tool_results.clear()
         self._agent_results.clear()
+
+
+def _extract_step_summary(step_name: str, result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    提取步骤执行的关键信息摘要，用于前端显示
+
+    Args:
+        step_name: 工具名称
+        result: 执行结果
+
+    Returns:
+        摘要信息字典
+    """
+    summary = {
+        "success": result.get("success", False),
+    }
+
+    if not result.get("success"):
+        summary["error"] = result.get("error", "执行失败")
+        return summary
+
+    # 根据工具类型提取关键信息
+    if step_name == "generate_outline":
+        outline = result.get("outline", {})
+        if isinstance(outline, list):
+            summary["sections_count"] = len(outline)
+        elif isinstance(outline, dict):
+            summary["sections_count"] = len(outline.get("sections", []))
+        summary["title"] = result.get("title", "")
+
+    elif step_name == "multi_query_search":
+        summary["document_count"] = result.get("count", 0)
+        summary["document_ids"] = result.get("document_ids", [])[:10]  # 只显示前10个
+
+    elif step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+        docs = result.get("documents", [])
+        summary["document_count"] = len(docs)
+        if docs:
+            summary["sample_titles"] = [doc.get("title", "")[:30] for doc in docs[:3]]
+
+    elif step_name == "document_extraction":
+        extracted = result.get("extracted_content", {})
+        summary_data = result.get("summary", {})
+        summary["sections_with_content"] = summary_data.get("sections_with_content", 0)
+        summary["total_chunks"] = summary_data.get("total_extracted_chunks", 0)
+
+    elif step_name == "document_compose":
+        doc = result.get("document", {})
+        summary["word_count"] = doc.get("word_count", 0)
+        summary["sections_count"] = doc.get("sections_count", 0)
+        summary["title"] = doc.get("title", "")
+        summary["has_content"] = bool(doc.get("content"))
+
+    elif step_name == "document_review":
+        reviewed = result.get("reviewed_document", {})
+        review_summary = result.get("review_summary", {})
+        summary["word_count"] = reviewed.get("word_count", 0)
+        summary["errors_found"] = review_summary.get("errors_found", 0)
+        summary["corrections_made"] = review_summary.get("corrections_made", 0)
+        summary["improvements"] = review_summary.get("improvements", [])
+
+    elif step_name == "analyze_documents":
+        summary["analysis_complete"] = True
+        if result.get("analysis"):
+            summary["key_points"] = result.get("analysis", {}).get("key_points", [])[:3]
+
+    return summary
 
 
 def get_nested_value(data: Dict[str, Any], path: str, default: Any = None) -> Any:
@@ -145,24 +212,32 @@ def compress_state_for_llm(
 
     # 1. 智能过滤历史步骤
     relevant_steps = state.get_step_results()
-    
+
     # 如果指定了目标工具，优先保留相关的步骤
     if target_tool_name:
         # 定义工具依赖关系（哪些工具的结果可能被当前工具使用）
         tool_dependencies = {
             "multi_query_search": ["generate_outline"],
-            "get_document_contents": ["multi_query_search", "es_fulltext_search", "search_documents_by_classification"],
+            "get_document_contents": [
+                "multi_query_search",
+                "es_fulltext_search",
+                "search_documents_by_classification",
+            ],
             "skim_documents": ["multi_query_search", "es_fulltext_search"],
             "read_documents": ["multi_query_search", "es_fulltext_search"],
-            "analyze_documents": ["get_document_contents", "skim_documents", "read_documents"],
+            "analyze_documents": [
+                "get_document_contents",
+                "skim_documents",
+                "read_documents",
+            ],
             "document_extraction": ["multi_query_search", "generate_outline"],
             "document_compose": ["document_extraction", "generate_outline"],
             "document_review": ["document_compose"],
         }
-        
+
         # 找到相关的工具名称
         related_tools = tool_dependencies.get(target_tool_name, [])
-        
+
         # 优先保留相关步骤，然后保留最近的步骤
         relevant_steps = sorted(
             state.get_step_results(),
@@ -172,9 +247,13 @@ def compress_state_for_llm(
             ),
             reverse=True,
         )[:max_steps]
-    
+
     # 只保留最近的N个步骤
-    relevant_steps = relevant_steps[-max_steps:] if len(relevant_steps) > max_steps else relevant_steps
+    relevant_steps = (
+        relevant_steps[-max_steps:]
+        if len(relevant_steps) > max_steps
+        else relevant_steps
+    )
 
     # 2. 压缩每一步的结果
     for step in relevant_steps:
@@ -203,13 +282,13 @@ def compress_state_for_llm(
                 ]
                 if len(value) > 5:
                     compressed_result["documents_count"] = len(value)
-            
+
             # 文档ID列表 - 只保留前20个
             elif key == "document_ids" and isinstance(value, list):
                 compressed_result["document_ids"] = value[:20]  # 减少到20个
                 if len(value) > 20:
                     compressed_result["document_ids_count"] = len(value)
-            
+
             # 大纲结构 - 压缩处理
             elif key == "outline":
                 if isinstance(value, dict):
@@ -223,24 +302,30 @@ def compress_state_for_llm(
                     compressed_outline["sections"] = [
                         {
                             "title": s.get("title", "")[:50],
-                            "data_requirements": s.get("data_requirements", "")[:100] if s.get("data_requirements") else None,
+                            "data_requirements": (
+                                s.get("data_requirements", "")[:100]
+                                if s.get("data_requirements")
+                                else None
+                            ),
                         }
                         for s in sections
                     ]
                     compressed_result["outline"] = compressed_outline
                 else:
                     compressed_result["outline"] = value
-            
+
             # 错误信息
             elif key == "error":
                 compressed_result["error"] = str(value)[:200]  # 限制错误信息长度
-            
+
             # 其他小型数据
             elif not isinstance(value, (list, dict)) or len(str(value)) < 300:
                 compressed_result[key] = value
             # 大型数据只保留摘要
             else:
-                compressed_result[f"{key}_summary"] = f"<{type(value).__name__}, {len(str(value))} chars>"
+                compressed_result[f"{key}_summary"] = (
+                    f"<{type(value).__name__}, {len(str(value))} chars>"
+                )
 
         compressed_step["result"] = compressed_result
         compressed["step_history"].append(compressed_step)
@@ -251,12 +336,16 @@ def compress_state_for_llm(
         if key == "documents" and isinstance(value, list):
             intermediate_summary["documents"] = f"{len(value)} docs available"
         elif key == "document_ids" and isinstance(value, list):
-            intermediate_summary["document_ids"] = f"{len(value)} IDs: {value[:5]}..." if len(value) > 5 else value
+            intermediate_summary["document_ids"] = (
+                f"{len(value)} IDs: {value[:5]}..." if len(value) > 5 else value
+            )
         elif key == "outline" and isinstance(value, dict):
             sections_count = len(value.get("sections", []))
             intermediate_summary["outline"] = f"outline with {sections_count} sections"
         elif isinstance(value, (list, dict)):
-            intermediate_summary[key] = f"{type(value).__name__}({len(str(value))} chars)"
+            intermediate_summary[key] = (
+                f"{type(value).__name__}({len(str(value))} chars)"
+            )
         else:
             intermediate_summary[key] = value
 
@@ -264,17 +353,21 @@ def compress_state_for_llm(
 
     # 4. 转换为JSON并检查长度
     result_json = json.dumps(compressed, ensure_ascii=False, indent=1)  # 使用更小的缩进
-    
+
     # 如果超过限制，进一步压缩
     if len(result_json) > max_context_chars:
         # 移除更多细节
-        compressed["step_history"] = compressed["step_history"][-3:]  # 只保留最后3个步骤
+        compressed["step_history"] = compressed["step_history"][
+            -3:
+        ]  # 只保留最后3个步骤
         result_json = json.dumps(compressed, ensure_ascii=False, indent=1)
-        
+
         # 如果还是太长，使用单行格式
         if len(result_json) > max_context_chars:
-            result_json = json.dumps(compressed, ensure_ascii=False, separators=(',', ':'))
-    
+            result_json = json.dumps(
+                compressed, ensure_ascii=False, separators=(",", ":")
+            )
+
     return result_json
 
 
@@ -318,7 +411,7 @@ class CustomAgentExecutor:
             max_steps=5,  # 最多保留5个历史步骤
             max_context_chars=8000,  # 最大8000字符
         )
-        
+
         logger.debug(f"   压缩后状态长度: {len(compressed_state)} 字符")
 
         # 2. 获取工具参数schema（从工具定义中）
@@ -330,7 +423,8 @@ class CustomAgentExecutor:
             return {"template_id": state.template_id}
 
         tool_params_schema = tool_metadata.get("parameters", {})
-        
+        allowed_params = set(tool_params_schema.get("properties", {}).keys())
+
         # 压缩schema（只保留关键信息）
         schema_summary = {
             "properties": {
@@ -342,6 +436,14 @@ class CustomAgentExecutor:
             },
             "required": tool_params_schema.get("required", []),
         }
+
+        # 检查工具是否需要 template_id
+        needs_template_id = "template_id" in allowed_params
+        template_id_rule = (
+            f"3. 必须包含template_id: {state.template_id}"
+            if needs_template_id
+            else "3. 如果工具需要template_id，则包含它；否则不要包含"
+        )
 
         # 3. 构造更简洁的LLM prompt
         system_prompt = f"""你是参数构造助手。根据执行历史和工具定义，生成工具参数（JSON格式）。
@@ -358,8 +460,9 @@ class CustomAgentExecutor:
 规则:
 1. 从历史结果中提取数据（如document_ids、outline等）
 2. 如需文档内容，设置documents为"<use_available_documents>"
-3. 必须包含template_id: {state.template_id}
-4. 返回纯JSON，无其他文字"""
+{template_id_rule}
+4. 只包含参数Schema中定义的参数，不要添加额外参数
+5. 返回纯JSON，无其他文字"""
 
         user_prompt = f"为工具 {step_name} 生成参数。"
 
@@ -385,21 +488,31 @@ class CustomAgentExecutor:
                 arguments["documents"] = state.get_data("documents", [])
                 logger.info(f"   📄 使用可用文档: {len(arguments['documents'])} 个")
 
-            # 确保 template_id 存在
-            if "template_id" not in arguments:
+            # 确保 template_id 存在（仅在工具需要时）
+            if needs_template_id and "template_id" not in arguments:
                 arguments["template_id"] = state.template_id
 
-            return arguments
+            # 过滤掉不在 schema 中的参数（双重保险）
+            filtered_arguments = {
+                k: v for k, v in arguments.items() if k in allowed_params
+            }
+
+            removed_params = set(arguments.keys()) - allowed_params
+            if removed_params:
+                logger.debug(
+                    f"   过滤掉工具 {step_name} 不需要的参数: {removed_params}"
+                )
+
+            return filtered_arguments
 
         except Exception as e:
             logger.error(f"❌ LLM构造参数失败: {e}，使用fallback逻辑")
             import traceback
+
             logger.error(traceback.format_exc())
 
             # Fallback: 使用简单规则
-            return CustomAgentExecutor._build_tool_arguments_fallback(
-                step, state
-            )
+            return CustomAgentExecutor._build_tool_arguments_fallback(step, state)
 
     @staticmethod
     def _build_tool_arguments_fallback(
@@ -439,8 +552,7 @@ class CustomAgentExecutor:
                 arguments["queries"] = [query]
 
         elif step_name in ["get_document_contents", "skim_documents", "read_documents"]:
-            arguments["document_ids"] = intermediate_data.get(
-                "document_ids", [])
+            arguments["document_ids"] = intermediate_data.get("document_ids", [])
 
         elif step_name == "analyze_documents":
             arguments["query"] = query
@@ -460,7 +572,9 @@ class CustomAgentExecutor:
 
         elif step_name == "document_compose":
             arguments["outline"] = intermediate_data.get("outline", {})
-            arguments["extracted_content"] = intermediate_data.get("extracted_content", {})
+            arguments["extracted_content"] = intermediate_data.get(
+                "extracted_content", {}
+            )
             arguments["query"] = query
 
         elif step_name == "document_review":
@@ -471,7 +585,9 @@ class CustomAgentExecutor:
             else:
                 # 如果没有组合文档，尝试从其他来源获取
                 arguments["document"] = {
-                    "title": intermediate_data.get("outline", {}).get("title", "未命名文档"),
+                    "title": intermediate_data.get("outline", {}).get(
+                        "title", "未命名文档"
+                    ),
                     "content": "",
                 }
 
@@ -537,9 +653,9 @@ class CustomAgentExecutor:
         )
 
         # 3. 逐步执行
-        from core.tools.base import execute_tool
-        from core.agents.retrieval_agent_v2 import retrieve_documents_v2
         from core.agents.qa_agent_v2 import generate_answer_v2
+        from core.agents.retrieval_agent_v2 import retrieve_documents_v2
+        from core.tools.base import execute_tool
 
         for i, step in enumerate(steps):
             step_num = step.get("step", i + 1)
@@ -554,7 +670,12 @@ class CustomAgentExecutor:
                 "event": "stage_start",
                 "data": {
                     "stage": f"step_{step_num}",
+                    "step": step_num,
+                    "type": step_type,
+                    "name": step_name,
+                    "description": step_desc,
                     "message": f"正在执行: {step_desc}",
+                    "status": "running",
                 },
             }
 
@@ -570,7 +691,9 @@ class CustomAgentExecutor:
                     )
 
                     # 执行工具（使用 execution_state 的 to_tool_context 方法）
-                    result = await execute_tool(step_name, arguments, execution_state.to_tool_context())
+                    result = await execute_tool(
+                        step_name, arguments, execution_state.to_tool_context()
+                    )
 
                     # 📝 记录到执行状态
                     step_record = {
@@ -590,7 +713,10 @@ class CustomAgentExecutor:
                             outline_data = result.get("outline", {})
                             # 如果outline是列表，转换为字典格式
                             if isinstance(outline_data, list):
-                                outline_data = {"sections": outline_data, "title": result.get("title", "")}
+                                outline_data = {
+                                    "sections": outline_data,
+                                    "title": result.get("title", ""),
+                                }
                             execution_state.set_data("outline", outline_data)
 
                         # 检索工具 - 更新 document_ids
@@ -599,10 +725,14 @@ class CustomAgentExecutor:
                             "es_fulltext_search",
                             "multi_query_search",
                         ]:
-                            execution_state.set_data("document_ids", result.get("document_ids", []))
+                            execution_state.set_data(
+                                "document_ids", result.get("document_ids", [])
+                            )
                             # 如果有documents摘要，也保存
                             if result.get("documents"):
-                                execution_state.set_data("documents", result.get("documents", []))
+                                execution_state.set_data(
+                                    "documents", result.get("documents", [])
+                                )
 
                         # 文档内容获取工具 - 更新 documents
                         elif step_name in [
@@ -610,19 +740,27 @@ class CustomAgentExecutor:
                             "skim_documents",
                             "read_documents",
                         ]:
-                            execution_state.set_data("documents", result.get("documents", []))
-                        
+                            execution_state.set_data(
+                                "documents", result.get("documents", [])
+                            )
+
                         # 文档摘取工具 - 保存摘取的内容
                         elif step_name == "document_extraction":
-                            execution_state.set_data("extracted_content", result.get("extracted_content", {}))
-                        
+                            execution_state.set_data(
+                                "extracted_content", result.get("extracted_content", {})
+                            )
+
                         # 文档组合工具 - 保存生成的文档
                         elif step_name == "document_compose":
-                            execution_state.set_data("composed_document", result.get("document", {}))
-                        
+                            execution_state.set_data(
+                                "composed_document", result.get("document", {})
+                            )
+
                         # 文档校对工具 - 保存校对后的文档
                         elif step_name == "document_review":
-                            execution_state.set_data("reviewed_document", result.get("reviewed_document", {}))
+                            execution_state.set_data(
+                                "reviewed_document", result.get("reviewed_document", {})
+                            )
 
                 elif step_type == "agent":
                     # 执行智能体
@@ -638,7 +776,9 @@ class CustomAgentExecutor:
                             enable_deduplication=True,
                         )
                         if result.get("success"):
-                            execution_state.set_data("documents", result.get("documents", []))
+                            execution_state.set_data(
+                                "documents", result.get("documents", [])
+                            )
 
                     elif step_name == "qa_agent":
                         documents = execution_state.get_data("documents", [])
@@ -671,13 +811,21 @@ class CustomAgentExecutor:
                         "error": f"未知的步骤类型: {step_type}",
                     }
 
-                # 发送步骤完成事件
+                # 发送步骤完成事件（包含详细信息）
                 yield {
                     "event": "stage_complete",
                     "data": {
                         "stage": f"step_{step_num}",
-                        "message": f"步骤{step_num}完成",
+                        "step": step_num,
+                        "type": step_type,
+                        "name": step_name,
+                        "description": step_desc,
+                        "message": f"步骤{step_num}完成: {step_desc}",
+                        "status": "completed",
+                        "success": result.get("success", False),
                         "result": result,
+                        # 提取关键信息用于前端显示
+                        "summary": _extract_step_summary(step_name, result),
                     },
                 }
 
@@ -686,12 +834,20 @@ class CustomAgentExecutor:
             except Exception as e:
                 logger.error(f"❌ 步骤{step_num}失败: {e}")
                 import traceback
+
                 logger.error(traceback.format_exc())
 
                 yield {
                     "event": "stage_error",
                     "data": {
                         "stage": f"step_{step_num}",
+                        "step": step_num,
+                        "type": step_type,
+                        "name": step_name,
+                        "description": step_desc,
+                        "message": f"步骤{step_num}失败: {step_desc}",
+                        "status": "error",
+                        "success": False,
                         "error": str(e),
                     },
                 }
@@ -714,12 +870,16 @@ class CustomAgentExecutor:
                 llm_client = get_llm_client()
 
                 # 构建文档上下文
-                doc_context = "\n\n".join([
-                    f"【文档{i+1}】{doc.get('title', '未命名')}\n{doc.get('content', '')[:500]}"
-                    for i, doc in enumerate(documents[:5])
-                ])
+                doc_context = "\n\n".join(
+                    [
+                        f"【文档{i+1}】{doc.get('title', '未命名')}\n{doc.get('content', '')[:500]}"
+                        for i, doc in enumerate(documents[:5])
+                    ]
+                )
 
-                system_prompt = "你是一个专业的问答助手。请基于提供的文档内容回答用户的问题。"
+                system_prompt = (
+                    "你是一个专业的问答助手。请基于提供的文档内容回答用户的问题。"
+                )
                 user_prompt = f"""基于以下文档回答问题。
 
 【文档内容】
@@ -731,23 +891,30 @@ class CustomAgentExecutor:
 请给出详细的回答。
 """
 
-                final_answer = await llm_client.chat_completion(
+                # 使用流式接口避免超时
+                final_answer = await llm_client.chat_completion_but_in_stream(
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
                     db=db,
+                    max_tokens=2000,
                 )
             except Exception as e:
                 logger.error(f"❌ 生成答案失败: {e}")
                 final_answer = "抱歉，生成答案时出现错误。"
 
-        # 5. 发送最终答案
+        # 5. 发送最终答案（如果是文档生成类Agent，返回Markdown格式）
+        final_document = execution_state.get_data(
+            "reviewed_document"
+        ) or execution_state.get_data("composed_document")
+
         yield {
             "event": "answer",
             "data": {
                 "answer": final_answer or "执行完成",
                 "documents": documents,
+                "document": final_document,  # 如果有生成的文档，也返回
             },
         }
 

@@ -40,18 +40,18 @@ from core.tools.base import ToolContext, tool
     category="document",
     tags=["文档", "校对", "润色", "review"],
     output_schema={
-        "success": {
-            "type": "boolean",
-            "description": "执行是否成功"
-        },
+        "success": {"type": "boolean", "description": "执行是否成功"},
         "reviewed_document": {
             "type": "object",
             "description": "校对后的文档",
             "properties": {
                 "title": {"type": "string", "description": "文档标题"},
-                "content": {"type": "string", "description": "校对后的文档内容（Markdown格式）"},
+                "content": {
+                    "type": "string",
+                    "description": "校对后的文档内容（Markdown格式）",
+                },
                 "word_count": {"type": "integer", "description": "文档字数"},
-            }
+            },
         },
         "review_summary": {
             "type": "object",
@@ -59,14 +59,15 @@ from core.tools.base import ToolContext, tool
             "properties": {
                 "errors_found": {"type": "integer", "description": "发现的错误数量"},
                 "corrections_made": {"type": "integer", "description": "修正的数量"},
-                "improvements": {"type": "array", "description": "改进说明列表", "items": {"type": "string"}},
-            }
+                "improvements": {
+                    "type": "array",
+                    "description": "改进说明列表",
+                    "items": {"type": "string"},
+                },
+            },
         },
-        "error": {
-            "type": "string",
-            "description": "错误信息（仅在失败时返回）"
-        }
-    }
+        "error": {"type": "string", "description": "错误信息（仅在失败时返回）"},
+    },
 )
 async def document_review(
     ctx: ToolContext,
@@ -112,7 +113,7 @@ async def document_review(
                     "errors_found": 0,
                     "corrections_made": 0,
                     "improvements": [],
-                }
+                },
             }
 
         llm_client = get_llm_client()
@@ -121,14 +122,21 @@ async def document_review(
         content = document.get("content", "")
         original_length = len(content)
         is_truncated = original_length > 8000
-        
+
         if is_truncated:
-            content_to_review = content[:8000] + "\n\n[文档后续内容已省略，仅校对前8000字符]"
+            content_to_review = (
+                content[:8000] + "\n\n[文档后续内容已省略，仅校对前8000字符]"
+            )
             logger.warning(f"⚠️ 文档过长({original_length}字符)，仅校对前8000字符")
         else:
             content_to_review = content
 
-        review_focus_list = review_focus or ["grammar", "spelling", "political", "style"]
+        review_focus_list = review_focus or [
+            "grammar",
+            "spelling",
+            "political",
+            "style",
+        ]
 
         prompt = f"""
 你是一个专业的文档校对和润色助手。请对以下文档进行全面校对和润色。
@@ -179,9 +187,13 @@ async def document_review(
 - 确保校对后的文档质量显著提升
 """
 
-        response = await llm_client.chat_completion(
+        # 使用流式接口避免超时
+        response = await llm_client.chat_completion_but_in_stream(
             messages=[
-                {"role": "system", "content": "你是一个专业的文档校对和润色专家，擅长发现和修正文档中的各种错误，并根据文档类型进行风格优化。"},
+                {
+                    "role": "system",
+                    "content": "你是一个专业的文档校对和润色专家，擅长发现和修正文档中的各种错误，并根据文档类型进行风格优化。",
+                },
                 {"role": "user", "content": prompt},
             ],
             db=db,
@@ -193,11 +205,14 @@ async def document_review(
         try:
             data = json.loads(response)
             reviewed_document = data.get("reviewed_document", {})
-            review_summary = data.get("review_summary", {
-                "errors_found": 0,
-                "corrections_made": 0,
-                "improvements": [],
-            })
+            review_summary = data.get(
+                "review_summary",
+                {
+                    "errors_found": 0,
+                    "corrections_made": 0,
+                    "improvements": [],
+                },
+            )
 
             # 如果文档被截断，需要合并
             if is_truncated and reviewed_document.get("content"):
@@ -212,7 +227,9 @@ async def document_review(
 
             # 计算字数
             if "word_count" not in reviewed_document:
-                reviewed_document["word_count"] = len(reviewed_document.get("content", ""))
+                reviewed_document["word_count"] = len(
+                    reviewed_document.get("content", "")
+                )
 
             return {
                 "success": True,
@@ -229,11 +246,12 @@ async def document_review(
                     "errors_found": 0,
                     "corrections_made": 0,
                     "improvements": [],
-                }
+                },
             }
 
     except Exception as e:
         import traceback
+
         logger.error(f"❌ 文档校对失败: {e}")
         logger.error(traceback.format_exc())
 
@@ -245,6 +263,5 @@ async def document_review(
                 "errors_found": 0,
                 "corrections_made": 0,
                 "improvements": [],
-            }
+            },
         }
-

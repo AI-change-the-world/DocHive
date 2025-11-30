@@ -42,25 +42,22 @@ from core.tools.base import ToolContext, tool
     category="document",
     tags=["文档", "组合", "生成", "compose"],
     output_schema={
-        "success": {
-            "type": "boolean",
-            "description": "执行是否成功"
-        },
+        "success": {"type": "boolean", "description": "执行是否成功"},
         "document": {
             "type": "object",
             "description": "生成的完整文档",
             "properties": {
                 "title": {"type": "string", "description": "文档标题"},
-                "content": {"type": "string", "description": "文档完整内容（Markdown格式）"},
+                "content": {
+                    "type": "string",
+                    "description": "文档完整内容（Markdown格式）",
+                },
                 "word_count": {"type": "integer", "description": "文档字数"},
                 "sections_count": {"type": "integer", "description": "章节数量"},
-            }
+            },
         },
-        "error": {
-            "type": "string",
-            "description": "错误信息（仅在失败时返回）"
-        }
-    }
+        "error": {"type": "string", "description": "错误信息（仅在失败时返回）"},
+    },
 )
 async def document_compose(
     ctx: ToolContext,
@@ -146,9 +143,13 @@ async def document_compose(
 - 字数要合理（根据大纲复杂度，通常3000-10000字）
 """
 
-        response = await llm_client.chat_completion(
+        # 使用流式接口避免超时
+        response = await llm_client.chat_completion_but_in_stream(
             messages=[
-                {"role": "system", "content": "你是一个专业的文档编写助手，擅长将分散的内容片段组合成结构化的完整文档。"},
+                {
+                    "role": "system",
+                    "content": "你是一个专业的文档编写助手，擅长将分散的内容片段组合成结构化的完整文档。",
+                },
                 {"role": "user", "content": prompt},
             ],
             db=db,
@@ -160,7 +161,7 @@ async def document_compose(
         try:
             data = json.loads(response)
             document = data.get("document", {})
-            
+
             # 计算字数（如果LLM没有提供）
             if "word_count" not in document and "content" in document:
                 content = document.get("content", "")
@@ -186,11 +187,12 @@ async def document_compose(
                     "content": "",
                     "word_count": 0,
                     "sections_count": 0,
-                }
+                },
             }
 
     except Exception as e:
         import traceback
+
         logger.error(f"❌ 文档组合失败: {e}")
         logger.error(traceback.format_exc())
 
@@ -202,6 +204,5 @@ async def document_compose(
                 "content": "",
                 "word_count": 0,
                 "sections_count": 0,
-            }
+            },
         }
-

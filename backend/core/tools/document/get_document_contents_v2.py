@@ -31,10 +31,7 @@ from core.tools.base import ToolContext, tool
     category="document",
     tags=["文档", "读取", "内容"],
     output_schema={
-        "success": {
-            "type": "boolean",
-            "description": "执行是否成功"
-        },
+        "success": {"type": "boolean", "description": "执行是否成功"},
         "documents": {
             "type": "array",
             "description": "文档内容列表",
@@ -45,18 +42,12 @@ from core.tools.base import ToolContext, tool
                     "title": {"type": "string", "description": "文档标题"},
                     "content_text": {"type": "string", "description": "文档全文内容"},
                     "ai_summary": {"type": "string", "description": "AI生成的摘要"},
-                }
-            }
+                },
+            },
         },
-        "count": {
-            "type": "integer",
-            "description": "返回的文档数量"
-        },
-        "error": {
-            "type": "string",
-            "description": "错误信息（仅在失败时返回）"
-        }
-    }
+        "count": {"type": "integer", "description": "返回的文档数量"},
+        "error": {"type": "string", "description": "错误信息（仅在失败时返回）"},
+    },
 )
 async def get_document_contents(
     ctx: ToolContext,
