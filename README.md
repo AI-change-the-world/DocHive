@@ -95,6 +95,8 @@ pnpm dev
 	
 	![image](./docs/images/agentic-rag.gif)
 
+  - 自然语言转Agent
+
   ![image](./docs/images/markdown-to-agent.gif)
 	
 - 系统截图
@@ -104,6 +106,14 @@ pnpm dev
   | ![image](./docs/images/rag2.png)      | ![image](./docs/images/template1.png) |
   | ![image](./docs/images/template2.png) | ![image](./docs/images/doc.png)       |
   | ![image](./docs/images/llm1.png)      | ![image](./docs/images/llm2.png)      |
+
+
+## ✍🏻 TODO list
+
+- [ ] 需要支持长时记忆，现在智能体记忆是单个session有效，我想实现某些记忆长时间生效的功能（long term memory）
+  - [ ] 现在大模型操作记录，只记录了问答内容，没记录哪个模块的，这个需要分清楚，后续可以作为agent调优数据
+  - [ ] 现在工具，没有用户反馈机制，比如用户的一个query进来，最后会经过多个工具，但是每个工具都缺少用户反馈入口。有了这个反馈，可以基于long term memory再次对agent进行调优
+- [ ] 自然语言转agent需要支持goto,if-else逻辑（暂时没有想好怎么实现，loop不打算实现，因为简单的loop逻辑可以暂时创建新的工具实现，复杂的loop业务逻辑还需要先支持goto这样的逻辑再说。我觉得可以依然考虑用大模型规划的做法）
 
   
 
