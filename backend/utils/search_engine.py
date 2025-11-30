@@ -33,6 +33,10 @@ class SearchEngine:
         if not await self.client.indices.exists(index=self.index_name):
             await self.create_index()
 
+    async def re_create_index(self):
+        """重建索引"""
+        await self.create_index()
+
     async def create_index(self):
         """创建索引"""
 

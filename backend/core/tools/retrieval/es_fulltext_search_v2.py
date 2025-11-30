@@ -236,7 +236,7 @@ async def es_fulltext_search(
                 }
             )
 
-        logger.info(f"✅ ES全文检索完成: 召回 {len(document_ids)} 篇文档")
+        logger.info(f"✅ ES全文检索完成: 召回 {len(document_ids)} 篇文档，为 {document_ids}")
 
         return {
             "success": True,
