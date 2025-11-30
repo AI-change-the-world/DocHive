@@ -25,6 +25,9 @@ from core.tools.document.get_document_contents_v2 import get_document_contents
 from core.tools.document.read_documents_v2 import read_documents
 from core.tools.document.skim_documents_v2 import skim_documents
 from core.tools.document.generate_outline import generate_outline
+from core.tools.document.document_extraction import document_extraction
+from core.tools.document.document_compose import document_compose
+from core.tools.document.document_review import document_review
 
 # 检索工具
 from core.tools.retrieval.es_fulltext_search_v2 import es_fulltext_search
@@ -56,7 +59,10 @@ __all__ = [
     "get_document_contents",
     "skim_documents",
     "read_documents",
-    "generate_outline"
+    "generate_outline",
+    "document_extraction",
+    "document_compose",
+    "document_review",
     # 统计工具
     "get_template_statistics",
     "search_documents_by_classification",

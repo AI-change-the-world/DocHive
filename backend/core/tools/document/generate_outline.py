@@ -17,7 +17,7 @@ from loguru import logger
     适用于自动生成方案、报告、规划、设计文档等大纲。
     """,
     parameters={
-        "query": {"type": "string", "description": "用户的生成大纲请求，如"帮我写一个xxx方案的大纲""},
+        "query": {"type": "string", "description": "用户的生成大纲请求，如\"帮我写一个xxx方案的大纲\""},
     },
     required=["query"],
     category="document",

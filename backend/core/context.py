@@ -5,7 +5,7 @@
 """
 
 from contextvars import ContextVar
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
@@ -65,6 +65,11 @@ class ExecutionContext:
     def clear_data(self):
         """清空中间数据"""
         self._intermediate_data.clear()
+    
+    @property
+    def intermediate_data(self) -> Dict[str, Any]:
+        """获取中间数据字典（只读）"""
+        return self._intermediate_data
 
     # ==================== 上下文转换 ====================
 

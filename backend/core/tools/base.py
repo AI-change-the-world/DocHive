@@ -344,7 +344,10 @@ def discover_tools():
         get_document_contents_v2,
         read_documents_v2,
         skim_documents_v2,
-        generate_outline
+        generate_outline,
+        document_extraction,
+        document_compose,
+        document_review,
     )
     from core.tools.retrieval import (
         es_fulltext_search_v2,

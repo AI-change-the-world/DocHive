@@ -1,10 +1,91 @@
 import json
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, TypedDict
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.context import ExecutionContext
 from utils.llm_client import get_llm_client
+
+
+class CustomExecutionState(ExecutionContext):
+    """
+    自定义Agent执行状态 - 继承自 ExecutionContext
+    
+    专门用于自定义Agent的执行，复用 ExecutionContext 的所有功能，
+    同时提供执行历史管理功能。
+    """
+
+    def __init__(
+        self,
+        db: Any = None,
+        es_client: Any = None,
+        es_index: str = "dochive_documents",
+        template_id: Optional[int] = None,
+        session_id: Optional[str] = None,
+        query: str = "",
+        **extra,
+    ):
+        """
+        初始化自定义执行状态
+        
+        Args:
+            db: 数据库会话
+            es_client: ES客户端
+            es_index: ES索引
+            template_id: 模板ID
+            session_id: 会话ID
+            query: 用户查询
+            **extra: 其他额外参数
+        """
+        super().__init__(
+            db=db,
+            es_client=es_client,
+            es_index=es_index,
+            template_id=template_id,
+            session_id=session_id,
+            query=query,
+            **extra,
+        )
+        
+        # 初始化中间数据（方便快速访问）
+        self.set_data("documents", [])
+        self.set_data("document_ids", [])
+        self.set_data("outline", {})
+        
+        # 执行历史（用于记录Agent执行过程中的所有步骤结果）
+        self._step_results: List[Dict[str, Any]] = []  # 所有步骤的结果列表
+        self._tool_results: List[Dict[str, Any]] = []  # 所有工具调用结果
+        self._agent_results: List[Dict[str, Any]] = []  # 所有智能体调用结果
+
+    # ==================== 执行历史管理 ====================
+
+    def add_step_result(self, step_record: Dict[str, Any]):
+        """添加步骤执行结果"""
+        self._step_results.append(step_record)
+        result = step_record.get("result", {})
+        if step_record.get("type") == "tool":
+            self._tool_results.append(result)
+        elif step_record.get("type") == "agent":
+            self._agent_results.append(result)
+
+    def get_step_results(self) -> List[Dict[str, Any]]:
+        """获取所有步骤结果"""
+        return self._step_results
+
+    def get_tool_results(self) -> List[Dict[str, Any]]:
+        """获取所有工具调用结果"""
+        return self._tool_results
+
+    def get_agent_results(self) -> List[Dict[str, Any]]:
+        """获取所有智能体调用结果"""
+        return self._agent_results
+
+    def clear_history(self):
+        """清空执行历史"""
+        self._step_results.clear()
+        self._tool_results.clear()
+        self._agent_results.clear()
 
 
 def get_nested_value(data: Dict[str, Any], path: str, default: Any = None) -> Any:
@@ -35,50 +116,72 @@ def get_nested_value(data: Dict[str, Any], path: str, default: Any = None) -> An
     return value
 
 
-class CustomExecutionState(TypedDict):
+def compress_state_for_llm(
+    state: CustomExecutionState,
+    target_tool_name: Optional[str] = None,
+    max_steps: int = 5,
+    max_context_chars: int = 8000,
+) -> str:
     """
-    自定义Agent执行状态 - 累积所有步骤的执行结果
-    """
-    # 基础信息
-    query: str
-    template_id: int
-    session_id: Optional[str]
+    压缩执行状态以供LLM使用（优化版）
 
-    # 执行历史（累积所有步骤的结果）
-    step_results: List[Dict[str, Any]]  # 所有步骤的结果列表
-    tool_results: List[Dict[str, Any]]  # 所有工具调用结果
-    agent_results: List[Dict[str, Any]]  # 所有智能体调用结果
-
-    # 中间数据（方便快速访问）
-    # 如: {"documents": [], "document_ids": [], "outline": {}}
-    intermediate_data: Dict[str, Any]
-
-
-def compress_state_for_llm(state: CustomExecutionState) -> str:
-    """
-    压缩执行状态以供LLM使用
-
-    对文档内容进行智能压缩，只保留元数据，避免传递大量文本
+    对文档内容进行智能压缩，只保留元数据，避免传递大量文本。
+    支持智能过滤：只保留与目标工具相关的历史步骤。
 
     Args:
         state: 执行状态
+        target_tool_name: 目标工具名称（用于过滤相关步骤）
+        max_steps: 最多保留的历史步骤数（默认5个）
+        max_context_chars: 最大上下文字符数（默认8000）
 
     Returns:
         压缩后的状态描述（JSON字符串）
     """
     compressed = {
-        "query": state["query"],
-        "template_id": state["template_id"],
+        "query": state.query,
+        "template_id": state.template_id,
         "step_history": [],
     }
 
-    # 压缩每一步的结果
-    for step in state["step_results"]:
+    # 1. 智能过滤历史步骤
+    relevant_steps = state.get_step_results()
+    
+    # 如果指定了目标工具，优先保留相关的步骤
+    if target_tool_name:
+        # 定义工具依赖关系（哪些工具的结果可能被当前工具使用）
+        tool_dependencies = {
+            "multi_query_search": ["generate_outline"],
+            "get_document_contents": ["multi_query_search", "es_fulltext_search", "search_documents_by_classification"],
+            "skim_documents": ["multi_query_search", "es_fulltext_search"],
+            "read_documents": ["multi_query_search", "es_fulltext_search"],
+            "analyze_documents": ["get_document_contents", "skim_documents", "read_documents"],
+            "document_extraction": ["multi_query_search", "generate_outline"],
+            "document_compose": ["document_extraction", "generate_outline"],
+            "document_review": ["document_compose"],
+        }
+        
+        # 找到相关的工具名称
+        related_tools = tool_dependencies.get(target_tool_name, [])
+        
+        # 优先保留相关步骤，然后保留最近的步骤
+        relevant_steps = sorted(
+            state.get_step_results(),
+            key=lambda s: (
+                s.get("name") in related_tools,  # 相关工具优先
+                s.get("step", 0),  # 然后按步骤号倒序（最近的在前）
+            ),
+            reverse=True,
+        )[:max_steps]
+    
+    # 只保留最近的N个步骤
+    relevant_steps = relevant_steps[-max_steps:] if len(relevant_steps) > max_steps else relevant_steps
+
+    # 2. 压缩每一步的结果
+    for step in relevant_steps:
         compressed_step = {
             "step": step.get("step"),
             "type": step.get("type"),
             "name": step.get("name"),
-            "description": step.get("description"),
             "success": step.get("result", {}).get("success"),
         }
 
@@ -87,52 +190,92 @@ def compress_state_for_llm(state: CustomExecutionState) -> str:
         compressed_result = {}
 
         for key, value in result.items():
-            # 文档内容特殊处理
+            # 文档内容特殊处理 - 只保留元数据
             if key == "documents" and isinstance(value, list):
                 compressed_result["documents"] = [
                     {
                         "id": doc.get("id"),
-                        "title": doc.get("title"),
+                        "title": doc.get("title", "")[:50],  # 限制标题长度
                         "doc_number": doc.get("doc_number"),
                         "content_length": len(doc.get("content", "")),
-                        "class_code": doc.get("class_code"),
                     }
-                    for doc in value[:10]  # 最多显示10个文档
+                    for doc in value[:5]  # 最多显示5个文档（减少）
                 ]
-            # 文档ID列表
+                if len(value) > 5:
+                    compressed_result["documents_count"] = len(value)
+            
+            # 文档ID列表 - 只保留前20个
             elif key == "document_ids" and isinstance(value, list):
-                compressed_result["document_ids"] = value[:50]  # 最多显示50个ID
-            # 大纲结构
+                compressed_result["document_ids"] = value[:20]  # 减少到20个
+                if len(value) > 20:
+                    compressed_result["document_ids_count"] = len(value)
+            
+            # 大纲结构 - 压缩处理
             elif key == "outline":
-                compressed_result["outline"] = value
+                if isinstance(value, dict):
+                    # 只保留大纲的关键信息
+                    compressed_outline = {
+                        "title": value.get("title", "")[:100],
+                        "sections_count": len(value.get("sections", [])),
+                    }
+                    # 只保留前3个章节的标题
+                    sections = value.get("sections", [])[:3]
+                    compressed_outline["sections"] = [
+                        {
+                            "title": s.get("title", "")[:50],
+                            "data_requirements": s.get("data_requirements", "")[:100] if s.get("data_requirements") else None,
+                        }
+                        for s in sections
+                    ]
+                    compressed_result["outline"] = compressed_outline
+                else:
+                    compressed_result["outline"] = value
+            
             # 错误信息
             elif key == "error":
-                compressed_result["error"] = value
+                compressed_result["error"] = str(value)[:200]  # 限制错误信息长度
+            
             # 其他小型数据
-            elif not isinstance(value, (list, dict)) or len(str(value)) < 500:
+            elif not isinstance(value, (list, dict)) or len(str(value)) < 300:
                 compressed_result[key] = value
             # 大型数据只保留摘要
             else:
-                compressed_result[f"{key}_summary"] = f"<数据类型: {type(value).__name__}, 大小: {len(str(value))} 字符>"
+                compressed_result[f"{key}_summary"] = f"<{type(value).__name__}, {len(str(value))} chars>"
 
         compressed_step["result"] = compressed_result
         compressed["step_history"].append(compressed_step)
 
-    # 添加当前可用的中间数据摘要
+    # 3. 添加当前可用的中间数据摘要（更简洁）
     intermediate_summary = {}
-    for key, value in state["intermediate_data"].items():
+    for key, value in state.intermediate_data.items():
         if key == "documents" and isinstance(value, list):
-            intermediate_summary["documents"] = f"<{len(value)}个文档可用>"
+            intermediate_summary["documents"] = f"{len(value)} docs available"
         elif key == "document_ids" and isinstance(value, list):
-            intermediate_summary["document_ids"] = f"<{len(value)}个文档ID: {value[:10]}...>"
+            intermediate_summary["document_ids"] = f"{len(value)} IDs: {value[:5]}..." if len(value) > 5 else value
+        elif key == "outline" and isinstance(value, dict):
+            sections_count = len(value.get("sections", []))
+            intermediate_summary["outline"] = f"outline with {sections_count} sections"
         elif isinstance(value, (list, dict)):
-            intermediate_summary[key] = f"<{type(value).__name__}, 大小: {len(str(value))[:100]}>"
+            intermediate_summary[key] = f"{type(value).__name__}({len(str(value))} chars)"
         else:
             intermediate_summary[key] = value
 
     compressed["available_data"] = intermediate_summary
 
-    return json.dumps(compressed, ensure_ascii=False, indent=2)
+    # 4. 转换为JSON并检查长度
+    result_json = json.dumps(compressed, ensure_ascii=False, indent=1)  # 使用更小的缩进
+    
+    # 如果超过限制，进一步压缩
+    if len(result_json) > max_context_chars:
+        # 移除更多细节
+        compressed["step_history"] = compressed["step_history"][-3:]  # 只保留最后3个步骤
+        result_json = json.dumps(compressed, ensure_ascii=False, indent=1)
+        
+        # 如果还是太长，使用单行格式
+        if len(result_json) > max_context_chars:
+            result_json = json.dumps(compressed, ensure_ascii=False, separators=(',', ':'))
+    
+    return result_json
 
 
 class CustomAgentExecutor:
@@ -149,10 +292,10 @@ class CustomAgentExecutor:
         db: AsyncSession,
     ) -> Dict[str, Any]:
         """
-        使用LLM自主构造工具参数
+        使用LLM自主构造工具参数（优化版）
 
         基于完整的执行状态（所有历史步骤结果），让LLM自主决定下一步的参数。
-        这样可以避免硬编码参数映射，让Agent更加智能和灵活。
+        优化了上下文长度，只传递相关的历史信息。
 
         Args:
             step: 当前步骤配置
@@ -168,8 +311,15 @@ class CustomAgentExecutor:
 
         logger.info(f"🤖 使用LLM构造参数: {step_name}")
 
-        # 1. 压缩状态（避免传递大量文档内容）
-        compressed_state = compress_state_for_llm(state)
+        # 1. 智能压缩状态（只保留相关步骤，避免上下文过长）
+        compressed_state = compress_state_for_llm(
+            state,
+            target_tool_name=step_name,
+            max_steps=5,  # 最多保留5个历史步骤
+            max_context_chars=8000,  # 最大8000字符
+        )
+        
+        logger.debug(f"   压缩后状态长度: {len(compressed_state)} 字符")
 
         # 2. 获取工具参数schema（从工具定义中）
         from core.tools.tool_registry import get_tool_metadata
@@ -177,47 +327,41 @@ class CustomAgentExecutor:
         tool_metadata = get_tool_metadata(step_name)
         if not tool_metadata:
             logger.warning(f"⚠️ 未找到工具元数据: {step_name}，使用默认参数")
-            return {"template_id": state["template_id"]}
+            return {"template_id": state.template_id}
 
         tool_params_schema = tool_metadata.get("parameters", {})
+        
+        # 压缩schema（只保留关键信息）
+        schema_summary = {
+            "properties": {
+                k: {
+                    "type": v.get("type"),
+                    "description": v.get("description", "")[:100],  # 限制描述长度
+                }
+                for k, v in tool_params_schema.get("properties", {}).items()
+            },
+            "required": tool_params_schema.get("required", []),
+        }
 
-        # 3. 构造LLM prompt
-        system_prompt = f"""你是一个参数构造助手。根据当前执行状态和工具定义，为下一步工具调用生成合适的参数。
+        # 3. 构造更简洁的LLM prompt
+        system_prompt = f"""你是参数构造助手。根据执行历史和工具定义，生成工具参数（JSON格式）。
 
-【重要规则】
-1. 仔细分析历史执行结果，从中提取有用的数据
-2. 如果历史结果中有 documents（文档列表），你看到的是压缩后的元数据，实际使用时需要引用完整文档
-3. 如果历史结果中有 document_ids，可以直接使用这些ID
-4. 参数必须符合工具的schema定义
-5. 返回JSON格式的参数字典
+工具: {step_name}
+描述: {step_desc[:200]}
 
-【当前工具】
-名称: {step_name}
-类型: {step_type}
-描述: {step_desc}
+参数Schema:
+{json.dumps(schema_summary, ensure_ascii=False, indent=1)}
 
-【工具参数Schema】
-{json.dumps(tool_params_schema, ensure_ascii=False, indent=2)}
-
-【执行状态】
+执行历史:
 {compressed_state}
 
-【输出格式】
-返回JSON格式的参数字典，例如：
-{{
-    "query": "用户的问题",
-    "template_id": 1,
-    "document_ids": [1, 2, 3],
-    ...
-}}
+规则:
+1. 从历史结果中提取数据（如document_ids、outline等）
+2. 如需文档内容，设置documents为"<use_available_documents>"
+3. 必须包含template_id: {state.template_id}
+4. 返回纯JSON，无其他文字"""
 
-注意：
-- 如果需要使用文档内容，参数名应为 "documents"，值应设置为 "<use_available_documents>"（表示使用状态中的完整文档）
-- 如果需要使用文档ID列表，参数名应为 "document_ids"，直接从历史结果中提取
-- template_id 始终从状态中获取
-"""
-
-        user_prompt = f"请为工具 '{step_name}' 构造参数。"
+        user_prompt = f"为工具 {step_name} 生成参数。"
 
         try:
             # 4. 调用LLM
@@ -229,6 +373,7 @@ class CustomAgentExecutor:
                 ],
                 db=db,
                 response_format={"type": "json_object"},
+                max_tokens=1024,  # 参数通常不会很长，限制输出长度
             )
 
             # 5. 解析LLM响应
@@ -237,13 +382,12 @@ class CustomAgentExecutor:
 
             # 6. 后处理：替换特殊占位符
             if arguments.get("documents") == "<use_available_documents>":
-                arguments["documents"] = state["intermediate_data"].get(
-                    "documents", [])
+                arguments["documents"] = state.get_data("documents", [])
                 logger.info(f"   📄 使用可用文档: {len(arguments['documents'])} 个")
 
             # 确保 template_id 存在
             if "template_id" not in arguments:
-                arguments["template_id"] = state["template_id"]
+                arguments["template_id"] = state.template_id
 
             return arguments
 
@@ -268,9 +412,9 @@ class CustomAgentExecutor:
         使用简单规则从状态中提取参数
         """
         step_name = step.get("name")
-        query = state["query"]
-        template_id = state["template_id"]
-        intermediate_data = state["intermediate_data"]
+        query = state.query
+        template_id = state.template_id
+        intermediate_data = state.intermediate_data
 
         arguments = {"template_id": template_id}
 
@@ -308,6 +452,28 @@ class CustomAgentExecutor:
         elif step_name == "es_fulltext_search":
             arguments["query"] = query
             arguments["top_k"] = 10
+
+        elif step_name == "document_extraction":
+            arguments["outline"] = intermediate_data.get("outline", {})
+            arguments["documents"] = intermediate_data.get("documents", [])
+            arguments["query"] = query
+
+        elif step_name == "document_compose":
+            arguments["outline"] = intermediate_data.get("outline", {})
+            arguments["extracted_content"] = intermediate_data.get("extracted_content", {})
+            arguments["query"] = query
+
+        elif step_name == "document_review":
+            # 优先使用组合后的文档，如果没有则使用其他文档
+            composed_doc = intermediate_data.get("composed_document", {})
+            if composed_doc:
+                arguments["document"] = composed_doc
+            else:
+                # 如果没有组合文档，尝试从其他来源获取
+                arguments["document"] = {
+                    "title": intermediate_data.get("outline", {}).get("title", "未命名文档"),
+                    "content": "",
+                }
 
         logger.info(f"   🔧 Fallback参数: {arguments}")
         return arguments
@@ -360,23 +526,18 @@ class CustomAgentExecutor:
             },
         }
 
-        # 2. 初始化执行状态（累积所有步骤结果）
-        execution_state: CustomExecutionState = {
-            "query": query,
-            "template_id": template_id,
-            "session_id": session_id,
-            "step_results": [],  # 累积所有步骤的结果
-            "tool_results": [],
-            "agent_results": [],
-            "intermediate_data": {
-                "documents": [],
-                "document_ids": [],
-                "outline": {},
-            },
-        }
+        # 2. 初始化执行状态（使用 CustomExecutionState，自动初始化中间数据）
+        execution_state = CustomExecutionState(
+            db=db,
+            es_client=es_client,
+            es_index=es_index,
+            template_id=template_id,
+            session_id=session_id,
+            query=query,
+        )
 
         # 3. 逐步执行
-        from core.tools.base import ToolContext, execute_tool
+        from core.tools.base import execute_tool
         from core.agents.retrieval_agent_v2 import retrieve_documents_v2
         from core.agents.qa_agent_v2 import generate_answer_v2
 
@@ -401,15 +562,6 @@ class CustomAgentExecutor:
                 result = None
 
                 if step_type == "tool":
-                    # 执行工具
-                    tool_ctx = ToolContext(
-                        db=db,
-                        es_client=es_client,
-                        es_index=es_index,
-                        template_id=template_id,
-                        session_id=session_id,
-                    )
-
                     # 🚀 使用LLM自主构造参数（基于完整执行状态）
                     arguments = await CustomAgentExecutor.build_tool_arguments_with_llm(
                         step=step,
@@ -417,8 +569,8 @@ class CustomAgentExecutor:
                         db=db,
                     )
 
-                    # 执行工具
-                    result = await execute_tool(step_name, arguments, tool_ctx)
+                    # 执行工具（使用 execution_state 的 to_tool_context 方法）
+                    result = await execute_tool(step_name, arguments, execution_state.to_tool_context())
 
                     # 📝 记录到执行状态
                     step_record = {
@@ -429,15 +581,17 @@ class CustomAgentExecutor:
                         "arguments": arguments,
                         "result": result,
                     }
-                    execution_state["step_results"].append(step_record)
-                    execution_state["tool_results"].append(result)
+                    execution_state.add_step_result(step_record)
 
                     # 更新中间数据（方便快速访问）
                     if result.get("success"):
                         # 大纲生成工具
                         if step_name == "generate_outline":
-                            execution_state["intermediate_data"]["outline"] = result.get(
-                                "outline", {})
+                            outline_data = result.get("outline", {})
+                            # 如果outline是列表，转换为字典格式
+                            if isinstance(outline_data, list):
+                                outline_data = {"sections": outline_data, "title": result.get("title", "")}
+                            execution_state.set_data("outline", outline_data)
 
                         # 检索工具 - 更新 document_ids
                         elif step_name in [
@@ -445,9 +599,10 @@ class CustomAgentExecutor:
                             "es_fulltext_search",
                             "multi_query_search",
                         ]:
-                            execution_state["intermediate_data"]["document_ids"] = result.get(
-                                "document_ids", []
-                            )
+                            execution_state.set_data("document_ids", result.get("document_ids", []))
+                            # 如果有documents摘要，也保存
+                            if result.get("documents"):
+                                execution_state.set_data("documents", result.get("documents", []))
 
                         # 文档内容获取工具 - 更新 documents
                         elif step_name in [
@@ -455,8 +610,19 @@ class CustomAgentExecutor:
                             "skim_documents",
                             "read_documents",
                         ]:
-                            execution_state["intermediate_data"]["documents"] = result.get(
-                                "documents", [])
+                            execution_state.set_data("documents", result.get("documents", []))
+                        
+                        # 文档摘取工具 - 保存摘取的内容
+                        elif step_name == "document_extraction":
+                            execution_state.set_data("extracted_content", result.get("extracted_content", {}))
+                        
+                        # 文档组合工具 - 保存生成的文档
+                        elif step_name == "document_compose":
+                            execution_state.set_data("composed_document", result.get("document", {}))
+                        
+                        # 文档校对工具 - 保存校对后的文档
+                        elif step_name == "document_review":
+                            execution_state.set_data("reviewed_document", result.get("reviewed_document", {}))
 
                 elif step_type == "agent":
                     # 执行智能体
@@ -472,12 +638,10 @@ class CustomAgentExecutor:
                             enable_deduplication=True,
                         )
                         if result.get("success"):
-                            execution_state["intermediate_data"]["documents"] = result.get(
-                                "documents", [])
+                            execution_state.set_data("documents", result.get("documents", []))
 
                     elif step_name == "qa_agent":
-                        documents = execution_state["intermediate_data"].get(
-                            "documents", [])
+                        documents = execution_state.get_data("documents", [])
                         result = await generate_answer_v2(
                             query=query,
                             documents=documents,
@@ -499,8 +663,7 @@ class CustomAgentExecutor:
                         "description": step_desc,
                         "result": result,
                     }
-                    execution_state["step_results"].append(step_record)
-                    execution_state["agent_results"].append(result)
+                    execution_state.add_step_result(step_record)
 
                 else:
                     result = {
@@ -537,10 +700,10 @@ class CustomAgentExecutor:
         logger.info("📝 生成最终答案")
 
         final_answer = None
-        documents = execution_state["intermediate_data"].get("documents", [])
+        documents = execution_state.get_data("documents", [])
 
         # 如果有qa_agent结果，使用其答案
-        for agent_result in execution_state.get("agent_results", []):
+        for agent_result in execution_state.get_agent_results():
             if agent_result.get("success") and agent_result.get("answer"):
                 final_answer = agent_result.get("answer")
                 break

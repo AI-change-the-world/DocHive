@@ -4,12 +4,12 @@ Agent编辑API端点
 
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db
+from api.deps import get_db, get_search_engine, get_config
 from models.database_models import CustomAgent
 from schemas.agent_schemas import (
     AgentCreateRequest,
@@ -278,8 +278,11 @@ async def get_agent(
 @router.post("/execute/{agent_id}")
 async def execute_agent(
     agent_id: int,
-    request: dict,
+    request_body: dict,
+    request: Request,
     db: AsyncSession = Depends(get_db),
+    search_engine=Depends(get_search_engine),
+    config=Depends(get_config),
 ):
     """
     执行自定义Agent
@@ -288,7 +291,6 @@ async def execute_agent(
     """
     from fastapi.responses import StreamingResponse
     from core.agents.custom_agent_executor import CustomAgentExecutor
-    from database import get_es_client
     import json
 
     try:
@@ -307,16 +309,21 @@ async def execute_agent(
             raise HTTPException(status_code=404, detail="Agent不存在或未激活")
 
         # 2. 提取请求参数
-        query = request.get("query", "")
-        template_id = request.get("template_id") or agent.template_id
-        session_id = request.get("session_id")
+        query = request_body.get("query", "")
+        template_id = request_body.get("template_id") or agent.template_id
+        session_id = request_body.get("session_id")
 
         if not query:
             raise HTTPException(status_code=400, detail="缺少query参数")
+        
+        if template_id is None:
+            raise HTTPException(status_code=400, detail="缺少template_id参数，请在请求中提供或确保Agent已关联模板")
 
-        # 3. 获取ES客户端
-        es_client = get_es_client()
-        es_index = request.get("es_index", "dochive_documents")
+        # 3. 获取ES客户端和索引
+        # 使用 SearchEngine 的 client 属性（AsyncElasticsearch 实例）
+        es_client = search_engine.client
+        # 从配置或 SearchEngine 获取索引名称
+        es_index = request_body.get("es_index") or search_engine.index_name or config.ELASTICSEARCH_INDEX
 
         # 4. 创建SSE生成器
         async def event_generator():
