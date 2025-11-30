@@ -94,6 +94,8 @@ pnpm dev
 - 知识库问答
 	
 	![image](./docs/images/agentic-rag.gif)
+
+  ![image](./docs/images/markdown-to-agent.gif)
 	
 - 系统截图
 

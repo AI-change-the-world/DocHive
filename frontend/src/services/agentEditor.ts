@@ -32,10 +32,17 @@ export const agentEditorService = {
   },
 
   /**
-   * 预览Agent执行计划
+   * 获取Agent列表
    */
-  previewExecution(data: AgentMarkdownRequest) {
-    return request.post("/agents/preview", data);
+  listAgents(params?: { template_id?: number; is_active?: boolean }) {
+    return request.get("/agents/list", { params });
+  },
+
+  /**
+   * 获取单个Agent
+   */
+  getAgent(agentId: number) {
+    return request.get(`/agents/${agentId}`);
   },
 
   /**
@@ -46,9 +53,59 @@ export const agentEditorService = {
   },
 
   /**
-   * 执行Agent
+   * 执行自定义Agent (SSE流式)
+   * 这是主要入口：执行已保存的Agent
    */
-  executeAgent(data: any) {
-    return request.post("/agents/execute", data);
+  async executeAgent(
+    agentId: number,
+    data: {
+      query: string;
+      template_id?: number;
+      session_id?: string;
+    },
+    onEvent: (event: any) => void
+  ) {
+    const baseURL = request.defaults.baseURL || "";
+    const response = await fetch(`${baseURL}/agents/execute/${agentId}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("token")}`,
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    if (!response.body) {
+      throw new Error("响应体为空");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.trim() || !line.startsWith("data:")) continue;
+
+        try {
+          const jsonStr = line.substring(5).trim();
+          const eventData = JSON.parse(jsonStr);
+          onEvent(eventData);
+        } catch (e) {
+          console.error("解析SSE事件失败:", e, line);
+        }
+      }
+    }
   },
 };

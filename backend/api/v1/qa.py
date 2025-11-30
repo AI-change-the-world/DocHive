@@ -12,15 +12,15 @@ from sse_starlette import EventSourceResponse
 
 from api.deps import get_config, get_current_user, get_llm, get_search_engine
 from config import DynamicConfig
+
+# 导入search_agent相关模块
+from core.search_agent import RetrievalState
+from core.search_agent import app as search_agent_app
+from core.search_agent import graph_state_storage
 from database import get_db
 from models.database_models import User
 from schemas.api_schemas import QARequest, QAResponse, ResponseBase, SSEEvent
 from services.qa_service import QAService
-
-# 导入search_agent相关模块
-from services.search_agent import RetrievalState
-from services.search_agent import app as search_agent_app
-from services.search_agent import graph_state_storage
 from utils.llm_client import LLMClient
 from utils.search_engine import SearchEngine
 
@@ -698,7 +698,7 @@ async def ask_question_beta_stream(
             logger.info(f"🚀 [Beta] 开始处理问题: {qa_request.question}")
 
             # 使用新的三步执行函数，支持多轮对话和用户干预
-            from services.agents.master_router import execute_master_router
+            from core.agents.master_router import execute_master_router
 
             async for step_data in execute_master_router(
                 query=qa_request.question,

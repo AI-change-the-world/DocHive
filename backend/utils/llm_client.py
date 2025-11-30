@@ -161,6 +161,78 @@ class LLMClient:
 
             raise Exception(f"LLM 调用失败: {str(e)}")
 
+    async def chat_completion_but_in_stream(
+        self,
+        messages: List[Dict[str, str]] | str,
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        response_format: Optional[Dict] = None,
+        db: Optional[AsyncSession] = None,
+    ) -> str:
+        """
+        调用 LLM 完成对话，并返回流式响应
+
+        这个方法只是为了大模型问答不超时，暂时不实现用户侧的流式问答
+        """
+        import time as time_module
+
+        model = model or self.default_model
+        if isinstance(messages, str):
+            messages = [{"role": "user", "content": messages}]
+
+        start_time = time_module.time()
+        response = self.client.chat.completions.create(
+            model=model,
+            messages=messages,  # type: ignore
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,  # type: ignore
+            stream=True,
+        )
+
+        total_content = ""
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+
+        # 流式接收响应
+        for chunk in response:
+            if chunk.choices and chunk.choices[0].delta.content:
+                total_content += chunk.choices[0].delta.content
+
+            # usage 信息只在最后一个 chunk 中
+            if chunk.usage:
+                prompt_tokens = chunk.usage.prompt_tokens or 0
+                completion_tokens = chunk.usage.completion_tokens or 0
+                total_tokens = chunk.usage.total_tokens or 0
+
+        duration_ms = int((time_module.time() - start_time) * 1000)
+
+        # 如果没有获取到 usage 信息，尝试估算（不准确，但比0好）
+        if total_tokens == 0:
+            # 简单估算：假设每个中文字符约1.5 tokens，英文单词约1.3 tokens
+            estimated_tokens = int(len(total_content) * 1.5)
+            prompt_tokens = estimated_tokens // 2
+            completion_tokens = estimated_tokens - prompt_tokens
+            total_tokens = estimated_tokens
+
+        # 记录日志
+        if db is not None:
+            await self._log_llm_call(
+                db=db,
+                messages=messages,
+                model=model,
+                output_content=total_content,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                duration_ms=duration_ms,
+                status="success",
+            )
+
+        return total_content
+
     async def extract_json_response(
         self,
         messages: List[Dict[str, str]] | str,
