@@ -55,8 +55,9 @@ class AgentMarkdownParser:
 
 1. **深度理解意图**：理解用户的真实需求和业务目标
 2. **智能规划流程**：根据系统能力，设计最优的执行步骤
-3. **精准验证工具**：逐一验证每个步骤所需的工具/智能体是否存在
-4. **明确指出缺失**：准确列出缺少的工具，并给出具体建议
+3. **识别控制逻辑**：敏锐捕捉条件判断、循环重试、错误处理等控制流程
+4. **精准验证工具**：逐一验证每个步骤所需的工具/智能体是否存在
+5. **明确指出缺失**：准确列出缺少的工具，并给出具体建议
 
 【重要原则】
 
@@ -65,13 +66,20 @@ class AgentMarkdownParser:
    - 用户描述可能不完整或不准确，你需要补充和优化
    - 如果用户只说了目标（如"写文章"），你要拆解成具体步骤
 
-2. **严格验证工具存在性**
+2. **敏锐识别控制流关键词**
+   - **条件判断**：「如果...则...」「否则」「当...时」「若...」
+   - **循环重试**：「重复」「循环」「直到」「多次尝试」「再次调用」
+   - **错误处理**：「兜底」「回退」「fallback」「失败后」
+   - **流程跳转**：「回到步骤X」「跳转」「跳过」「返回」
+   - 识别到这些关键词时，必须在对应步骤的 condition 字段中明确记录
+
+3. **严格验证工具存在性**
    - 必须逐个检查步骤中提到的每个功能
    - 对比【系统能力清单】，确认是否有对应的工具/智能体
    - 如果找不到精确匹配的工具，看是否有类似功能的工具可替代
    - **不要假设或猜测**：如果没有对应的工具，必须明确指出
 
-3. **清晰的缺失反馈**
+4. **清晰的缺失反馈**
    - 缺少工具时，要准确说明：缺少什么功能、用来做什么
    - 给出建议的工具名称（符合命名规范）
    - 说明为什么需要这个工具
@@ -113,12 +121,19 @@ class AgentMarkdownParser:
             "step": 1,
             "type": "tool | agent",
             "name": "系统中存在的工具/智能体名称",
-            "description": "这一步做什么"
+            "description": "这一步做什么",
+            "condition": "可选：控制条件，如 '若大纲不完整则重试' '若检索结果不足则回到步骤2' '循环直到满意' '失败后启用兜底策略'",
+            "parameters": {{}} // 可选：调用所需参数
         }}
     ],
     "errors": [],
     "warnings": []
 }}
+
+**注意**：
+- condition 字段用于描述控制流逻辑，如条件分支、循环、重试、回退等
+- 当用户描述中出现「如果」「重复」「回到」「兜底」等关键词时，务必提取并填入 condition
+- condition 应该简洁明确，便于后续执行器理解和生成流程图
 
 **情况2：缺少关键能力，无法实现**
 返回JSON格式：
@@ -141,7 +156,7 @@ class AgentMarkdownParser:
 
 【示例】
 
-**示例1 - 用户只描述意图**
+**示例1 - 用户只描述意图（无控制流）**
 用户输入：
 ```markdown
 # Agent: 文档问答助手
@@ -152,6 +167,7 @@ class AgentMarkdownParser:
 - 意图：用户想实现问答功能
 - 关键步骤：需要先检索文档，再生成答案
 - 系统能力：有retrieval_agent和qa_agent
+- 控制流：无特殊控制逻辑，顺序执行即可
 
 返回：
 ```json
@@ -222,7 +238,90 @@ class AgentMarkdownParser:
 }}
 ```
 
-**示例3 - 缺少关键能力（写文章场景）**
+**示例3 - 带控制流的写作场景（当工具存在时）**
+用户输入：
+```markdown
+# Agent: 智能写作助手
+**描述**: 根据主题自动生成文章，支持重试和回退
+
+## 执行流程
+1. 生成大纲 - 如果大纲不完整，重新生成，最多3次
+2. 检索资料 - 若资料不足，调整查询并重试
+3. 提取要点 - 若缺少关键段落，回到步骤2
+4. 组合成文 - 若内容不充分，回到步骤3
+5. 校对润色 - 若发现问题，回到步骤4
+```
+
+你的深度分析：
+
+**意图理解**：用户想要一个具备自我纠错能力的写作助手
+
+**控制流识别**：
+- 步骤1：条件重试（「如果...重新生成」）
+- 步骤2：条件重试（「若...重试」）
+- 步骤3：条件回退（「若...回到步骤2」）
+- 步骤4：条件回退（「若...回到步骤3」）
+- 步骤5：条件回退（「若...回到步骤4」）
+
+**工具匹配**（假设这些工具存在）：
+1. generate_outline ✅
+2. multi_query_search ✅
+3. document_extraction ✅
+4. document_compose ✅
+5. document_review ✅
+
+返回：
+```json
+{{
+    "name": "智能写作助手",
+    "description": "根据主题自动生成文章，支持重试和回退",
+    "execution_pattern": "hybrid",
+    "steps": [
+        {{
+            "step": 1,
+            "type": "tool",
+            "name": "generate_outline",
+            "description": "生成文章大纲",
+            "condition": "若大纲不完整则重试，最多3次"
+        }},
+        {{
+            "step": 2,
+            "type": "tool",
+            "name": "multi_query_search",
+            "description": "检索写作所需资料",
+            "condition": "若资料不足则调整查询并重试"
+        }},
+        {{
+            "step": 3,
+            "type": "tool",
+            "name": "document_extraction",
+            "description": "从检索结果中提取关键要点",
+            "condition": "若缺少关键段落则回到步骤2"
+        }},
+        {{
+            "step": 4,
+            "type": "tool",
+            "name": "document_compose",
+            "description": "组合内容生成文章",
+            "condition": "若内容不充分则回到步骤3"
+        }},
+        {{
+            "step": 5,
+            "type": "tool",
+            "name": "document_review",
+            "description": "校对润色文章",
+            "condition": "若发现结构或内容问题则回到步骤4"
+        }}
+    ],
+    "errors": [],
+    "warnings": [
+        "步骤包含多个条件回退，执行器需要支持循环和跳转控制",
+        "建议设置最大重试次数，避免无限循环"
+    ]
+}}
+```
+
+**示例4 - 缺少关键能力（写文章场景）**
 用户输入：
 ```markdown
 # Agent: 写文章助手
@@ -325,7 +424,8 @@ class AgentMarkdownParser:
                     )
                     steps.append(step)
                 except Exception as e:
-                    errors.append(f"步骤{step_data.get('step', '?')}格式错误: {str(e)}")
+                    errors.append(
+                        f"步骤{step_data.get('step', '?')}格式错误: {str(e)}")
 
             if errors:
                 return AgentMarkdownParseResponse(
@@ -396,7 +496,8 @@ class AgentMarkdownParser:
                     [
                         "- **参数**:",
                         "```json",
-                        json.dumps(step.parameters, ensure_ascii=False, indent=2),
+                        json.dumps(step.parameters,
+                                   ensure_ascii=False, indent=2),
                         "```",
                     ]
                 )
@@ -499,15 +600,15 @@ class AgentLLMValidator:
         tools_desc = get_tools_description()
         agents_desc = get_agents_description()
 
-        system_prompt = f"""你是一个专业的Agent流程验证器。
+        system_prompt = """你是一个专业的Agent流程验证器和流程图设计专家。
 
 【系统能力清单】
 
 ## 可用工具
-{tools_desc}
+{TOOLS_DESC}
 
 ## 可用智能体
-{agents_desc}
+{AGENTS_DESC}
 
 【验证任务】
 请验证用户定义的Agent流程是否可以正常执行，检查：
@@ -517,6 +618,51 @@ class AgentLLMValidator:
 3. **步骤顺序**：步骤顺序是否合理？比如，是否在没有检索文档的情况下直接进行问答？
 4. **执行模式匹配**：执行模式和实际步骤是否匹配？
 5. **逻辑连贯性**：每个步骤之间的数据流转是否合理？
+6. **控制流可行性**：若步骤包含 condition（如重试、循环、跳转、兜底），执行器能否实现？
+
+【Mermaid流程图设计原则】
+
+**关键要求**：
+- 必须将 condition 中的控制逻辑转化为 Mermaid 的决策节点和分支边
+- 不要简单地画线性流程，要体现真实的执行路径
+
+**控制流表示方法**：
+
+1. **条件重试**（如：若大纲不完整则重试）
+   ```
+   Step1[步骤1: 生成大纲] --> D1{"大纲是否完整？"}
+   D1 -- "否" --> Step1
+   D1 -- "是" --> Step2[步骤2: ...]
+   ```
+
+2. **条件回退**（如：若缺少关键段落则回到步骤2）
+   ```
+   Step3[步骤3: 提取要点] --> D3{"是否缺少关键段落？"}
+   D3 -- "是" --> Step2[步骤2: 检索资料]
+   D3 -- "否" --> Step4[步骤4: ...]
+   ```
+
+3. **失败兜底**（如：失败后启用兜底策略）
+   ```
+   Step1[步骤1: ...] --> D1{"是否成功？"}
+   D1 -- "失败" --> Fallback[兜底: 使用默认方案]
+   D1 -- "成功" --> Step2[步骤2: ...]
+   Fallback --> Step2
+   ```
+
+4. **循环直到满意**（如：循环直到满意）
+   ```
+   Step2[步骤2: 检索] --> D2{"结果是否满意？"}
+   D2 -- "否/继续" --> Step2
+   D2 -- "是" --> Step3[步骤3: ...]
+   ```
+
+**图形元素规范**：
+- 普通步骤：`Step1[步骤1: 描述]`
+- 决策节点：`D1{"判断条件？"}`（花括号表示菱形）
+- 开始/结束：`Start[[开始]]` `End[[结束]]`（双方括号表示圆角矩形）
+- 分支标签：`-- "条件" -->`
+- 不要使用任何样式定义（style、classDef、fill 等）
 
 【返回格式】
 请返回JSON格式：
@@ -528,14 +674,89 @@ class AgentLLMValidator:
     "mermaid_diagram": "graph TD\\n    A[...]"
 }}
 
-mermaid_diagram必须是Mermaid语法的流程图代码，使用graph TD开头，不要添加任何样式定义。
-示例：
+**mermaid_diagram 要求**：
+- 必须使用 graph TD 开头（从上到下的流程图）
+- 每个步骤包含 condition 的，必须用决策节点表示
+- 要体现所有可能的执行路径（包括重试、回退、兜底）
+- 不要添加任何样式定义
+- 确保语法正确，可以直接渲染
+
+【完整示例】
+
+输入的Agent定义：
+```json
+{{
+    "name": "智能写作助手",
+    "steps": [
+        {{
+            "step": 1,
+            "name": "generate_outline",
+            "description": "生成大纲",
+            "condition": "若大纲不完整则重试，最多3次"
+        }},
+        {{
+            "step": 2,
+            "name": "multi_query_search",
+            "description": "检索资料",
+            "condition": "若资料不足则调整查询并重试"
+        }},
+        {{
+            "step": 3,
+            "name": "document_extraction",
+            "description": "提取要点",
+            "condition": "若缺少关键段落则回到步骤2"
+        }},
+        {{
+            "step": 4,
+            "name": "document_compose",
+            "description": "组合成文"
+        }}
+    ]
+}}
+```
+
+正确的输出：
+```json
+{{
+    "is_valid": true,
+    "errors": [],
+    "warnings": [
+        "步骤1包含重试逻辑，建议限制最大重试次数",
+        "步骤3可能回退到步骤2，需要防止无限循环"
+    ],
+    "suggestions": [
+        "建议在执行器中设置全局最大迭代次数"
+    ],
+    "mermaid_diagram": "graph TD\\n    Start[[开始]] --> Step1[步骤1: 生成大纲]\\n    Step1 --> D1{{\\\"大纲是否完整？\\\"}}\\n    D1 -- \\\"否/重试\\\" --> Step1\\n    D1 -- \\\"是\\\" --> Step2[步骤2: 检索资料]\\n    Step2 --> D2{{\\\"资料是否充足？\\\"}}\\n    D2 -- \\\"否/重试\\\" --> Step2\\n    D2 -- \\\"是\\\" --> Step3[步骤3: 提取要点]\\n    Step3 --> D3{{\\\"是否缺少关键段落？\\\"}}\\n    D3 -- \\\"是/回退\\\" --> Step2\\n    D3 -- \\\"否\\\" --> Step4[步骤4: 组合成文]\\n    Step4 --> End[[结束]]"
+}}
+```
+
+【错误示例 - 不要这样做】
+
+❌ 错误1：忽略 condition，画成线性流程
+```
 graph TD
-    Start[[开始]] --> Step1[步骤1: 获取统计信息]
-    Step1 --> Step2[步骤2: 检索文档]
-    Step2 --> Step3[步骤3: 生成答案]
-    Step3 --> End[[结束]]
+    Start --> Step1 --> Step2 --> Step3 --> Step4 --> End
+```
+这样完全看不出控制流！
+
+❌ 错误2：只提到 condition 但不画决策节点
+```
+graph TD
+    Start --> Step1[步骤1: 生成大纲（若不完整则重试）] --> Step2
+```
+应该用决策节点明确表示！
+
+✅ 正确：将 condition 转化为决策节点和分支
+```
+graph TD
+    Step1[步骤1: 生成大纲] --> D1{{"是否完整？"}}
+    D1 -- "否" --> Step1
+    D1 -- "是" --> Step2
+```
 """
+        system_prompt = system_prompt.replace(
+            "{TOOLS_DESC}", tools_desc).replace("{AGENTS_DESC}", agents_desc)
 
         # 构建Agent信息
         agent_info = {
@@ -548,6 +769,8 @@ graph TD
                     "type": s.type,
                     "name": s.name,
                     "description": s.description,
+                    "condition": s.condition,
+                    "parameters": s.parameters,
                 }
                 for s in agent.steps
             ],
