@@ -35,27 +35,36 @@ class AgentMarkdownParser:
             llm_client = get_llm_client()
 
             # 构建系统能力描述
-            from core.registry import get_agents_description, get_tools_description
+            from core.registry import get_agents_description
+            from core.tools.base import get_state_keys_catalog, get_tools_catalog
 
-            tools_desc = get_tools_description()
+            tools_catalog = get_tools_catalog()
             agents_desc = get_agents_description()
+            state_keys_catalog = get_state_keys_catalog()
 
-            system_prompt = f"""你是一个专业的Agent流程规划器和工具验证专家。
+            system_prompt = """你是一个专业的Agent流程规划器和工具验证专家。
 
 【系统能力清单】
 
-## 可用工具
-{tools_desc}
+## 工具能力目录 (Tools Catalog)
+{TOOLS_CATALOG}
 
 ## 可用智能体
-{agents_desc}
+{AGENTS_DESC}
+
+## 状态键目录 (State Keys Catalog)
+{STATE_KEYS_CATALOG}
 
 【任务说明】
 用户会用Markdown描述他想要实现的Agent功能。你的核心任务是：
 
 1. **深度理解意图**：理解用户的真实需求和业务目标
-2. **智能规划流程**：根据系统能力，设计最优的执行步骤
-3. **识别控制逻辑**：敏锐捕捉条件判断、循环重试、错误处理等控制流程
+2. **智能选择工具与规划流程**
+   - 从【工具能力目录】中选择工具，根据能力匹配用户意图
+   - 每步必须明确读写的状态键（从【状态键目录】选择）
+   - 在 parameters.checkpoint 中定义期望(expectations)与失败处置(on_fail)
+   - 若目录中无对应工具，返回 errors 并给出新增工具建议
+3. **识别控制逻辑并转为 checkpoint**：
 4. **精准验证工具**：逐一验证每个步骤所需的工具/智能体是否存在
 5. **明确指出缺失**：准确列出缺少的工具，并给出具体建议
 
@@ -71,7 +80,9 @@ class AgentMarkdownParser:
    - **循环重试**：「重复」「循环」「直到」「多次尝试」「再次调用」
    - **错误处理**：「兜底」「回退」「fallback」「失败后」
    - **流程跳转**：「回到步骤X」「跳转」「跳过」「返回」
-   - 识别到这些关键词时，必须在对应步骤的 condition 字段中明确记录
+   - 识别到这些关键词时，必须在对应步骤的 checkpoint 中明确记录：
+     * expectations: [{ left: "状态键路径", op: "比较符", right: 值 }]
+     * on_fail: { retry_limit?, goto?, set_state? }
 
 3. **严格验证工具存在性**
    - 必须逐个检查步骤中提到的每个功能
@@ -108,7 +119,7 @@ class AgentMarkdownParser:
 - 是否存在无法实现的步骤？
 - 能否用现有工具的组合达到目的？
 
-【返回格式】
+【返回格式〡
 
 **情况1：可以实现**
 返回JSON格式：
@@ -122,8 +133,13 @@ class AgentMarkdownParser:
             "type": "tool | agent",
             "name": "系统中存在的工具/智能体名称",
             "description": "这一步做什么",
-            "condition": "可选：控制条件，如 '若大纲不完整则重试' '若检索结果不足则回到步骤2' '循环直到满意' '失败后启用兜底策略'",
-            "parameters": {{}} // 可选：调用所需参数
+            "parameters": {{}}, // 从工具 input_schema 中选择关键参数
+            "checkpoint": {{
+                "expectations": [
+                    {{ "left": "summary.sections_count", "op": ">", "right": 0 }}
+                ],
+                "on_fail": {{ "retry_limit": 2, "goto": 1, "set_state": {{...}} }}
+            }}
         }}
     ],
     "errors": [],
@@ -131,9 +147,9 @@ class AgentMarkdownParser:
 }}
 
 **注意**：
-- condition 字段用于描述控制流逻辑，如条件分支、循环、重试、回退等
-- 当用户描述中出现「如果」「重复」「回到」「兜底」等关键词时，务必提取并填入 condition
-- condition 应该简洁明确，便于后续执行器理解和生成流程图
+- checkpoint.expectations 中的 left 路径优先从 result.summary 查找，找不到再从 state 查找
+- checkpoint.expectations 支持 op: ==, !=, >, >=, <, <=, truthy, falsy
+- checkpoint.on_fail 支持: retry_limit(重试次数), goto(跳转步骤号), set_state(兜底写入)
 
 **情况2：缺少关键能力，无法实现**
 返回JSON格式：
@@ -256,19 +272,19 @@ class AgentMarkdownParser:
 
 **意图理解**：用户想要一个具备自我纠错能力的写作助手
 
-**控制流识别**：
-- 步骤1：条件重试（「如果...重新生成」）
-- 步骤2：条件重试（「若...重试」）
-- 步骤3：条件回退（「若...回到步骤2」）
-- 步骤4：条件回退（「若...回到步骤3」）
-- 步骤5：条件回退（「若...回到步骤4」）
+**控制流识别与 checkpoint 转换**：
+- 步骤1：「重新生成，最多3次」 → retry_limit: 3, expectations: sections_count > 0
+- 步骤2：「重试」 → retry_limit: 2, expectations: document_count > 0
+- 步骤3：「回到步骤2」 → goto: 2, expectations: total_chunks > 0
+- 步骤4：「回到步骤3」 → goto: 3, expectations: has_content == truthy
+- 步骤5：「回到步骤4」 → goto: 4, expectations: errors_found == 0
 
-**工具匹配**（假设这些工具存在）：
-1. generate_outline ✅
-2. multi_query_search ✅
-3. document_extraction ✅
-4. document_compose ✅
-5. document_review ✅
+**工具匹配**（从【工具能力目录】中选择）：
+1. generate_outline ✅ (输出outline, summary.sections_count)
+2. multi_query_search ✅ (输出document_ids, documents, summary.document_count)
+3. document_extraction ✅ (输出extracted_content, summary.total_chunks)
+4. document_compose ✅ (输出document, summary.has_content)
+5. document_review ✅ (输出reviewed_document, summary.errors_found)
 
 返回：
 ```json
@@ -282,35 +298,65 @@ class AgentMarkdownParser:
             "type": "tool",
             "name": "generate_outline",
             "description": "生成文章大纲",
-            "condition": "若大纲不完整则重试，最多3次"
+            "parameters": {{ "query": "<from_user_query>" }},
+            "checkpoint": {{
+                "expectations": [
+                    {{ "left": "summary.sections_count", "op": ">", "right": 0 }}
+                ],
+                "on_fail": {{ "retry_limit": 3 }}
+            }}
         }},
         {{
             "step": 2,
             "type": "tool",
             "name": "multi_query_search",
             "description": "检索写作所需资料",
-            "condition": "若资料不足则调整查询并重试"
+            "parameters": {{ "queries": "<from_outline>" }},
+            "checkpoint": {{
+                "expectations": [
+                    {{ "left": "summary.document_count", "op": ">", "right": 0 }}
+                ],
+                "on_fail": {{ "retry_limit": 2 }}
+            }}
         }},
         {{
             "step": 3,
             "type": "tool",
             "name": "document_extraction",
             "description": "从检索结果中提取关键要点",
-            "condition": "若缺少关键段落则回到步骤2"
+            "parameters": {{ "outline": "<from_step1>", "documents": "<from_step2>" }},
+            "checkpoint": {{
+                "expectations": [
+                    {{ "left": "summary.total_chunks", "op": ">", "right": 0 }}
+                ],
+                "on_fail": {{ "goto": 2 }}
+            }}
         }},
         {{
             "step": 4,
             "type": "tool",
             "name": "document_compose",
             "description": "组合内容生成文章",
-            "condition": "若内容不充分则回到步骤3"
+            "parameters": {{ "outline": "<from_step1>", "extracted_content": "<from_step3>" }},
+            "checkpoint": {{
+                "expectations": [
+                    {{ "left": "summary.has_content", "op": "truthy" }}
+                ],
+                "on_fail": {{ "goto": 3 }}
+            }}
         }},
         {{
             "step": 5,
             "type": "tool",
             "name": "document_review",
             "description": "校对润色文章",
-            "condition": "若发现结构或内容问题则回到步骤4"
+            "parameters": {{ "document": "<from_step4>" }},
+            "checkpoint": {{
+                "expectations": [
+                    {{ "left": "summary.errors_found", "op": "==", "right": 0 }}
+                ],
+                "on_fail": {{ "goto": 4 }}
+            }}
         }}
     ],
     "errors": [],
@@ -595,20 +641,25 @@ class AgentLLMValidator:
         llm_client = get_llm_client()
 
         # 构建验证prompt
-        from core.registry import get_agents_description, get_tools_description
+        from core.registry import get_agents_description
+        from core.tools.base import get_state_keys_catalog, get_tools_catalog
 
-        tools_desc = get_tools_description()
+        tools_catalog = get_tools_catalog()
         agents_desc = get_agents_description()
+        state_keys_catalog = get_state_keys_catalog()
 
         system_prompt = """你是一个专业的Agent流程验证器和流程图设计专家。
 
 【系统能力清单】
 
-## 可用工具
-{TOOLS_DESC}
+## 工具能力目录
+{TOOLS_CATALOG}
 
 ## 可用智能体
 {AGENTS_DESC}
+
+## 状态键目录
+{STATE_KEYS_CATALOG}
 
 【验证任务】
 请验证用户定义的Agent流程是否可以正常执行，检查：
@@ -618,12 +669,13 @@ class AgentLLMValidator:
 3. **步骤顺序**：步骤顺序是否合理？比如，是否在没有检索文档的情况下直接进行问答？
 4. **执行模式匹配**：执行模式和实际步骤是否匹配？
 5. **逻辑连贯性**：每个步骤之间的数据流转是否合理？
-6. **控制流可行性**：若步骤包含 condition（如重试、循环、跳转、兜底），执行器能否实现？
+6. **控制流可行性**：若步骤包含 checkpoint(如重试、循环、跳转、兜底)，执行器能否实现？
+7. **状态键合法性**：每步期望读写的状态键是否在【状态键目录】中存在？
 
 【Mermaid流程图设计原则】
 
 **关键要求**：
-- 必须将 condition 中的控制逻辑转化为 Mermaid 的决策节点和分支边
+- 必须将 checkpoint 中的控制逻辑转化为 Mermaid 的决策节点和分支边
 - 不要简单地画线性流程，要体现真实的执行路径
 
 **控制流表示方法**：
@@ -676,7 +728,7 @@ class AgentLLMValidator:
 
 **mermaid_diagram 要求**：
 - 必须使用 graph TD 开头（从上到下的流程图）
-- 每个步骤包含 condition 的，必须用决策节点表示
+- 每个步骤包含 checkpoint 的，必须用决策节点表示
 - 要体现所有可能的执行路径（包括重试、回退、兜底）
 - 不要添加任何样式定义
 - 确保语法正确，可以直接渲染
@@ -692,19 +744,28 @@ class AgentLLMValidator:
             "step": 1,
             "name": "generate_outline",
             "description": "生成大纲",
-            "condition": "若大纲不完整则重试，最多3次"
+            "checkpoint": {{
+                "expectations": [{{ "left": "summary.sections_count", "op": ">", "right": 0 }}],
+                "on_fail": {{ "retry_limit": 3 }}
+            }}
         }},
         {{
             "step": 2,
             "name": "multi_query_search",
             "description": "检索资料",
-            "condition": "若资料不足则调整查询并重试"
+            "checkpoint": {{
+                "expectations": [{{ "left": "summary.document_count", "op": ">", "right": 0 }}],
+                "on_fail": {{ "retry_limit": 2 }}
+            }}
         }},
         {{
             "step": 3,
             "name": "document_extraction",
             "description": "提取要点",
-            "condition": "若缺少关键段落则回到步骤2"
+            "checkpoint": {{
+                "expectations": [{{ "left": "summary.total_chunks", "op": ">", "right": 0 }}],
+                "on_fail": {{ "goto": 2 }}
+            }}
         }},
         {{
             "step": 4,
@@ -733,21 +794,21 @@ class AgentLLMValidator:
 
 【错误示例 - 不要这样做】
 
-❌ 错误1：忽略 condition，画成线性流程
+❌ 错误1：忽略 checkpoint，画成线性流程
 ```
 graph TD
     Start --> Step1 --> Step2 --> Step3 --> Step4 --> End
 ```
 这样完全看不出控制流！
 
-❌ 错误2：只提到 condition 但不画决策节点
+❌ 错误2：只提到 checkpoint 但不画决策节点
 ```
 graph TD
     Start --> Step1[步骤1: 生成大纲（若不完整则重试）] --> Step2
 ```
 应该用决策节点明确表示！
 
-✅ 正确：将 condition 转化为决策节点和分支
+✅ 正确：将 checkpoint 转化为决策节点和分支
 ```
 graph TD
     Step1[步骤1: 生成大纲] --> D1{{"是否完整？"}}
@@ -755,8 +816,8 @@ graph TD
     D1 -- "是" --> Step2
 ```
 """
-        system_prompt = system_prompt.replace(
-            "{TOOLS_DESC}", tools_desc).replace("{AGENTS_DESC}", agents_desc)
+        system_prompt = system_prompt.replace("{TOOLS_CATALOG}", tools_catalog).replace(
+            "{AGENTS_DESC}", agents_desc).replace("{STATE_KEYS_CATALOG}", state_keys_catalog)
 
         # 构建Agent信息
         agent_info = {
@@ -769,7 +830,7 @@ graph TD
                     "type": s.type,
                     "name": s.name,
                     "description": s.description,
-                    "condition": s.condition,
+                    "checkpoint": s.checkpoint,
                     "parameters": s.parameters,
                 }
                 for s in agent.steps

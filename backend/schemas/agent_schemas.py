@@ -16,7 +16,18 @@ class AgentStepSchema(BaseModel):
     name: str = Field(..., description="工具或智能体名称")
     description: str = Field(..., description="步骤描述")
     parameters: Optional[Dict[str, Any]] = Field(None, description="步骤参数")
-    condition: Optional[str] = Field(None, description="执行条件（可选）")
+    condition: Optional[str] = Field(
+        None, description="执行条件（已弃用，建议使用checkpoint）")
+    checkpoint: Optional[Dict[str, Any]] = Field(
+        None,
+        description="""
+        检查点配置，用于控制流程：
+        {
+            "expectations": [{ "left": "summary.xxx", "op": ">", "right": 0 }],
+            "on_fail": { "retry_limit": 2, "goto": 1, "set_state": {...} }
+        }
+        """
+    )
 
 
 class AgentDefinitionSchema(BaseModel):

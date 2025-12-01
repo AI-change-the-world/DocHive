@@ -277,6 +277,110 @@ def get_all_tools_with_output_schema() -> Dict[str, Dict[str, Any]]:
     }
 
 
+def get_tools_catalog() -> str:
+    """
+    生成工具能力目录(Tools Catalog)，供LLM规划阶段使用
+
+    包含每个工具的:
+    - name / description / capabilities(category+tags)
+    - input_schema (参数摘要)
+    - output_schema (输出字段与状态键)
+
+    Returns:
+        格式化的工具能力目录(Markdown格式)
+    """
+    catalog_lines = []
+
+    for i, (name, info) in enumerate(_TOOL_REGISTRY.items()):
+        desc = info.get("description", "").strip()
+        category = info.get("category", "general")
+        tags = info.get("tags", [])
+
+        # 构建能力描述
+        capabilities = f"[{category}]"
+        if tags:
+            capabilities += f" {', '.join(tags)}"
+
+        # 获取参数schema
+        schema = info.get("schema", {})
+        function_info = schema.get("function", {})
+        parameters = function_info.get("parameters", {})
+        param_props = parameters.get("properties", {})
+        required_params = parameters.get("required", [])
+
+        # 简化参数列表(只显示关键参数)
+        param_list = []
+        for pname, pinfo in param_props.items():
+            ptype = pinfo.get("type", "any")
+            pdesc = pinfo.get("description", "")[:50]  # 截短描述
+            req_mark = "*" if pname in required_params else ""
+            param_list.append(f"{pname}{req_mark}: {ptype} - {pdesc}")
+
+        params_text = "\n     - ".join(param_list) if param_list else "无参数"
+
+        # 获取输出schema
+        output_schema = info.get("output_schema")
+        if output_schema:
+            output_keys = list(output_schema.keys())
+            output_text = ", ".join(output_keys)
+        else:
+            output_text = "success(boolean), error?(string), 其他字段未声明"
+
+        # 拼装
+        catalog_lines.append(
+            f"{i+1}. **{name}** {capabilities}\n"
+            f"   描述: {desc[:200]}\n"
+            f"   输入参数:\n     - {params_text}\n"
+            f"   输出字段: {output_text}"
+        )
+
+    return "\n\n".join(catalog_lines)
+
+
+def get_state_keys_catalog() -> str:
+    """
+    生成状态键目录(State Keys Catalog)，汇总所有工具可能写入的状态键
+
+    从所有工具的 output_schema 聚合状态键(去重)，说明来源工具与类型
+
+    Returns:
+        格式化的状态键目录(Markdown格式)
+    """
+    # 汇总所有输出键
+    state_keys = {}  # key -> {type, description, sources[]}
+
+    for tool_name, info in _TOOL_REGISTRY.items():
+        output_schema = info.get("output_schema")
+        if not output_schema:
+            continue
+
+        for key, schema in output_schema.items():
+            if key not in state_keys:
+                state_keys[key] = {
+                    "type": schema.get("type", "any"),
+                    "description": schema.get("description", ""),
+                    "sources": []
+                }
+            # 添加来源工具
+            if tool_name not in state_keys[key]["sources"]:
+                state_keys[key]["sources"].append(tool_name)
+
+    # 格式化输出
+    catalog_lines = []
+    for i, (key, details) in enumerate(sorted(state_keys.items())):
+        ktype = details["type"]
+        kdesc = details["description"][:80]
+        ksources = ", ".join(details["sources"])
+
+        catalog_lines.append(
+            f"{i+1}. **{key}** ({ktype})\n"
+            f"   说明: {kdesc}\n"
+            f"   来源工具: {ksources}"
+        )
+
+    return "\n\n".join(catalog_lines)
+
+
 # ==================== 工具执行器 ====================
 
 
@@ -314,7 +418,8 @@ async def execute_tool(
         allowed_params = set(param_schema.get("properties", {}).keys())
 
         # 过滤参数，只保留工具定义的参数
-        filtered_arguments = {k: v for k, v in arguments.items() if k in allowed_params}
+        filtered_arguments = {k: v for k,
+                              v in arguments.items() if k in allowed_params}
 
         # 记录被过滤掉的参数（用于调试）
         removed_params = set(arguments.keys()) - allowed_params

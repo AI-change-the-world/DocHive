@@ -118,18 +118,21 @@ def _extract_step_summary(step_name: str, result: Dict[str, Any]) -> Dict[str, A
 
     elif step_name == "multi_query_search":
         summary["document_count"] = result.get("count", 0)
-        summary["document_ids"] = result.get("document_ids", [])[:10]  # 只显示前10个
+        summary["document_ids"] = result.get(
+            "document_ids", [])[:10]  # 只显示前10个
 
     elif step_name in ["get_document_contents", "skim_documents", "read_documents"]:
         docs = result.get("documents", [])
         summary["document_count"] = len(docs)
         if docs:
-            summary["sample_titles"] = [doc.get("title", "")[:30] for doc in docs[:3]]
+            summary["sample_titles"] = [
+                doc.get("title", "")[:30] for doc in docs[:3]]
 
     elif step_name == "document_extraction":
         extracted = result.get("extracted_content", {})
         summary_data = result.get("summary", {})
-        summary["sections_with_content"] = summary_data.get("sections_with_content", 0)
+        summary["sections_with_content"] = summary_data.get(
+            "sections_with_content", 0)
         summary["total_chunks"] = summary_data.get("total_extracted_chunks", 0)
 
     elif step_name == "document_compose":
@@ -150,7 +153,8 @@ def _extract_step_summary(step_name: str, result: Dict[str, Any]) -> Dict[str, A
     elif step_name == "analyze_documents":
         summary["analysis_complete"] = True
         if result.get("analysis"):
-            summary["key_points"] = result.get("analysis", {}).get("key_points", [])[:3]
+            summary["key_points"] = result.get(
+                "analysis", {}).get("key_points", [])[:3]
 
     return summary
 
@@ -181,6 +185,91 @@ def get_nested_value(data: Dict[str, Any], path: str, default: Any = None) -> An
             return default
 
     return value
+
+
+def evaluate_checkpoint(
+    checkpoint: Optional[Dict[str, Any]],
+    state: CustomExecutionState,
+    step_result: Dict[str, Any],
+) -> tuple[bool, Optional[Dict[str, Any]]]:
+    """
+    评估checkpoint是否满足
+
+    Args:
+        checkpoint: checkpoint配置
+        state: 执行状态
+        step_result: 当前步骤执行结果
+
+    Returns:
+        (is_passed, on_fail_config)
+        - is_passed: 是否通过检查点
+        - on_fail_config: 失败处置配置（如果通过则为None）
+    """
+    if not checkpoint:
+        return True, None
+
+    expectations = checkpoint.get("expectations", [])
+    if not expectations:
+        return True, None
+
+    # 构建完整的state dict（包含中间数据 + summary）
+    state_dict = dict(state.intermediate_data)
+
+    # 添加当前步骤结果的summary
+    if step_result.get("success"):
+        summary = _extract_step_summary(
+            step_result.get("name", ""), step_result.get("result", {})
+        )
+        state_dict["summary"] = summary
+
+    # 逐个检查expectations
+    for exp in expectations:
+        left_path = exp.get("left")
+        operator = exp.get("op")
+        right_value = exp.get("right")
+
+        if not left_path or not operator:
+            logger.warning(f"⚠️ checkpoint配置不完整: {exp}")
+            continue
+
+        # 获取左值
+        left_value = get_nested_value(state_dict, left_path)
+
+        # 进行比较
+        passed = False
+        try:
+            if operator == ">":
+                passed = left_value is not None and left_value > right_value
+            elif operator == "<":
+                passed = left_value is not None and left_value < right_value
+            elif operator == ">=":
+                passed = left_value is not None and left_value >= right_value
+            elif operator == "<=":
+                passed = left_value is not None and left_value <= right_value
+            elif operator == "==":
+                passed = left_value == right_value
+            elif operator == "!=":
+                passed = left_value != right_value
+            elif operator == "in":
+                passed = left_value is not None and left_value in right_value
+            elif operator == "not_in":
+                passed = left_value is None or left_value not in right_value
+            else:
+                logger.warning(f"⚠️ 不支持的操作符: {operator}")
+                continue
+        except Exception as e:
+            logger.warning(f"⚠️ checkpoint评估失败: {e}")
+            passed = False
+
+        # 如果任何一个expectation失败，返回false
+        if not passed:
+            logger.info(
+                f"❌ checkpoint未通过: {left_path}({left_value}) {operator} {right_value}"
+            )
+            return False, checkpoint.get("on_fail")
+
+    logger.info("✅ checkpoint通过")
+    return True, None
 
 
 def compress_state_for_llm(
@@ -337,7 +426,8 @@ def compress_state_for_llm(
             intermediate_summary["documents"] = f"{len(value)} docs available"
         elif key == "document_ids" and isinstance(value, list):
             intermediate_summary["document_ids"] = (
-                f"{len(value)} IDs: {value[:5]}..." if len(value) > 5 else value
+                f"{len(value)} IDs: {value[:5]}..." if len(
+                    value) > 5 else value
             )
         elif key == "outline" and isinstance(value, dict):
             sections_count = len(value.get("sections", []))
@@ -352,7 +442,8 @@ def compress_state_for_llm(
     compressed["available_data"] = intermediate_summary
 
     # 4. 转换为JSON并检查长度
-    result_json = json.dumps(compressed, ensure_ascii=False, indent=1)  # 使用更小的缩进
+    result_json = json.dumps(
+        compressed, ensure_ascii=False, indent=1)  # 使用更小的缩进
 
     # 如果超过限制，进一步压缩
     if len(result_json) > max_context_chars:
@@ -552,7 +643,8 @@ class CustomAgentExecutor:
                 arguments["queries"] = [query]
 
         elif step_name in ["get_document_contents", "skim_documents", "read_documents"]:
-            arguments["document_ids"] = intermediate_data.get("document_ids", [])
+            arguments["document_ids"] = intermediate_data.get(
+                "document_ids", [])
 
         elif step_name == "analyze_documents":
             arguments["query"] = query
@@ -652,16 +744,25 @@ class CustomAgentExecutor:
             query=query,
         )
 
-        # 3. 逐步执行
+        # 3. 逐步执行（支持控制流）
         from core.agents.qa_agent_v2 import generate_answer_v2
         from core.agents.retrieval_agent_v2 import retrieve_documents_v2
         from core.tools.base import execute_tool
 
-        for i, step in enumerate(steps):
-            step_num = step.get("step", i + 1)
+        # 使用while循环 + 指针模式支持goto
+        current_step_index = 0
+        max_iterations = len(steps) * 10  # 防止无限循环
+        iteration_count = 0
+        retry_counts = {}  # 记录每个步骤的重试次数
+
+        while current_step_index < len(steps) and iteration_count < max_iterations:
+            iteration_count += 1
+            step = steps[current_step_index]
+            step_num = step.get("step", current_step_index + 1)
             step_type = step.get("type")
             step_name = step.get("name")
             step_desc = step.get("description", "")
+            checkpoint = step.get("checkpoint")
 
             logger.info(f"🔧 执行步骤{step_num}: {step_type}/{step_name}")
 
@@ -747,7 +848,8 @@ class CustomAgentExecutor:
                         # 文档摘取工具 - 保存摘取的内容
                         elif step_name == "document_extraction":
                             execution_state.set_data(
-                                "extracted_content", result.get("extracted_content", {})
+                                "extracted_content", result.get(
+                                    "extracted_content", {})
                             )
 
                         # 文档组合工具 - 保存生成的文档
@@ -759,7 +861,8 @@ class CustomAgentExecutor:
                         # 文档校对工具 - 保存校对后的文档
                         elif step_name == "document_review":
                             execution_state.set_data(
-                                "reviewed_document", result.get("reviewed_document", {})
+                                "reviewed_document", result.get(
+                                    "reviewed_document", {})
                             )
 
                 elif step_type == "agent":
@@ -831,6 +934,97 @@ class CustomAgentExecutor:
 
                 logger.info(f"✅ 步骤{step_num}完成: {step_name}")
 
+                # 评估checkpoint
+                if checkpoint:
+                    step_result_record = {
+                        "step": step_num,
+                        "name": step_name,
+                        "success": result.get("success", False),
+                        "result": result,
+                    }
+                    is_passed, on_fail = evaluate_checkpoint(
+                        checkpoint, execution_state, step_result_record
+                    )
+
+                    if not is_passed and on_fail:
+                        # checkpoint未通过，处理失败策略
+                        retry_limit = on_fail.get("retry_limit")
+                        goto_step = on_fail.get("goto")
+                        set_state = on_fail.get("set_state")
+
+                        # 处理set_state
+                        if set_state:
+                            for key, value in set_state.items():
+                                execution_state.set_data(key, value)
+                            yield {
+                                "event": "stage_fallback",
+                                "data": {
+                                    "stage": f"step_{step_num}",
+                                    "step": step_num,
+                                    "message": f"步骤{step_num} checkpoint未通过，应用兜底状态",
+                                    "fallback_state": set_state,
+                                },
+                            }
+
+                        # 处理retry
+                        if retry_limit is not None:
+                            retry_key = f"step_{step_num}"
+                            current_retries = retry_counts.get(retry_key, 0)
+                            if current_retries < retry_limit:
+                                retry_counts[retry_key] = current_retries + 1
+                                logger.info(
+                                    f"🔁 步骤{step_num} checkpoint未通过，重试 ({current_retries + 1}/{retry_limit})"
+                                )
+                                yield {
+                                    "event": "stage_retry",
+                                    "data": {
+                                        "stage": f"step_{step_num}",
+                                        "step": step_num,
+                                        "message": f"步骤{step_num} checkpoint未通过，重试 ({current_retries + 1}/{retry_limit})",
+                                        "retry_count": current_retries + 1,
+                                        "retry_limit": retry_limit,
+                                    },
+                                }
+                                # 不移动指针，下次循环重试同一步骤
+                                continue
+                            else:
+                                logger.warning(
+                                    f"⚠️ 步骤{step_num} 重试次数超限，继续执行"
+                                )
+                                retry_counts[retry_key] = 0  # 重置计数器
+
+                        # 处理goto
+                        if goto_step is not None:
+                            # 查找目标步骤索引
+                            target_index = None
+                            for idx, s in enumerate(steps):
+                                if s.get("step") == goto_step:
+                                    target_index = idx
+                                    break
+
+                            if target_index is not None:
+                                logger.info(
+                                    f"➡️ 步骤{step_num} checkpoint未通过，跳转到步骤{goto_step}"
+                                )
+                                yield {
+                                    "event": "stage_jump",
+                                    "data": {
+                                        "stage": f"step_{step_num}",
+                                        "step": step_num,
+                                        "target_step": goto_step,
+                                        "message": f"步骤{step_num} checkpoint未通过，跳转到步骤{goto_step}",
+                                    },
+                                }
+                                current_step_index = target_index
+                                continue
+                            else:
+                                logger.warning(
+                                    f"⚠️ 未找到目标步骤{goto_step}，继续执行"
+                                )
+
+                # checkpoint通过或无checkpoint，移动到下一步
+                current_step_index += 1
+
             except Exception as e:
                 logger.error(f"❌ 步骤{step_num}失败: {e}")
                 import traceback
@@ -851,6 +1045,8 @@ class CustomAgentExecutor:
                         "error": str(e),
                     },
                 }
+                # 异常情况也移动到下一步
+                current_step_index += 1
 
         # 4. 生成最终答案
         logger.info("📝 生成最终答案")
