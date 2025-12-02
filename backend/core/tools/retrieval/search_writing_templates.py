@@ -119,9 +119,12 @@ async def search_writing_templates(
                 # 匹配标题或标签
                 conditions = []
                 for keyword in keywords[:5]:  # 最多取前5个关键词
-                    conditions.append(WritingTemplate.title.ilike(f"%{keyword}%"))
-                    conditions.append(WritingTemplate.tags.ilike(f"%{keyword}%"))
-                    conditions.append(WritingTemplate.description.ilike(f"%{keyword}%"))
+                    conditions.append(
+                        WritingTemplate.title.ilike(f"%{keyword}%"))
+                    conditions.append(
+                        WritingTemplate.tags.ilike(f"%{keyword}%"))
+                    conditions.append(
+                        WritingTemplate.description.ilike(f"%{keyword}%"))
 
                 if conditions:
                     stmt = stmt.where(or_(*conditions))

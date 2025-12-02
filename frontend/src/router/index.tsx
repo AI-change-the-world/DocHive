@@ -5,6 +5,7 @@ import Login from "../pages/Login";
 import Dashboard from "../pages/Dashboard";
 import TemplatePage from "../pages/Template";
 import DocumentPage from "../pages/Document";
+import WritingTemplatePage from "../pages/WritingTemplate";
 import QAPage from "../pages/QA";
 import QABetaPage from "../pages/QABeta";
 import LLMLogPage from "../pages/LLMLog";
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
       { path: "/dashboard", element: <Dashboard /> },
       { path: "/templates", element: <TemplatePage /> },
       { path: "/documents", element: <DocumentPage /> },
+      { path: "/writing-templates", element: <WritingTemplatePage /> },
       // { path: '/search', element: <SearchPage /> },
       { path: "/qa", element: <QAPage /> },
       { path: "/qa-beta", element: <QABetaPage /> },

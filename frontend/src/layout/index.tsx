@@ -1,5 +1,6 @@
 import { Layout, Menu, Typography } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import React, { useState, useEffect } from "react";
 import {
   FileTextOutlined,
   FolderOpenOutlined,
@@ -17,6 +18,7 @@ const { Header, Sider, Content } = Layout;
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [openKeys, setOpenKeys] = useState<string[]>([]);
 
   // 根据当前路径确定选中的菜单项
   const getSelectedKey = () => {
@@ -24,6 +26,7 @@ export default function AppLayout() {
     if (path.includes("/dashboard")) return "dashboard";
     if (path.includes("/templates")) return "templates";
     if (path.includes("/documents")) return "documents";
+    if (path.includes("/writing-templates")) return "writing-templates";
     if (path.includes("/search")) return "search";
     if (path.includes("/qa-beta")) return "qa-beta";
     if (path.includes("/qa")) return "qa";
@@ -31,6 +34,19 @@ export default function AppLayout() {
     if (path.includes("/template-configs")) return "template-configs";
     if (path.includes("/agent-editor")) return "agent-editor";
     return "dashboard"; // 默认选中项
+  };
+
+  // 初始化和路径变化时更新展开的菜单
+  useEffect(() => {
+    const path = location.pathname;
+    if (path.includes("/documents") || path.includes("/writing-templates")) {
+      setOpenKeys(["doc-management"]);
+    }
+  }, [location.pathname]);
+
+  // 处理菜单展开/收起
+  const handleOpenChange = (keys: string[]) => {
+    setOpenKeys(keys);
   };
 
   return (
@@ -68,18 +84,53 @@ export default function AppLayout() {
           }}
           width={240}
         >
+          {/* 精简并修复过的样式：关键在于覆盖 AntD 给父级 submenu 加的 selected/active/open 状态样式 */}
+          <style>{`
+            /* ---- 强制父级 submenu 标题在子项被选中或展开时保持透明/不变色 ---- */
+            .ant-menu-submenu.ant-menu-submenu-selected > .ant-menu-submenu-title,
+            .ant-menu-submenu.ant-menu-submenu-open > .ant-menu-submenu-title,
+            .ant-menu-submenu.ant-menu-submenu-active > .ant-menu-submenu-title {
+              background-color: transparent !important;
+              color: inherit !important;
+              box-shadow: none !important;
+            }
+
+            /* 一级菜单项和 submenu 标题的 hover 效果 */
+            .ant-menu-item:hover,
+            .ant-menu-submenu > .ant-menu-submenu-title:hover {
+              background-color: rgba(24, 144, 255, 0.06) !important;
+            }
+
+            /* 选中状态 */
+            .ant-menu-item-selected {
+              background-color: rgba(24, 144, 255, 0.1) !important;
+            }
+
+            /* 保证图标/文字颜色在父级状态变化时不受影响 */
+            .ant-menu-submenu-title .ant-menu-title-content,
+            .ant-menu-submenu-title .anticon {
+              color: inherit !important;
+            }
+
+            /* 细微：防止 submenu-title 在被焦点或 active 时出现内边框样式 */
+            .ant-menu-submenu-title:focus {
+              outline: none;
+            }
+          `}</style>
+
           <Menu
             mode="inline"
             selectedKeys={[getSelectedKey()]}
+            openKeys={openKeys}
+            onOpenChange={handleOpenChange}
             className="bg-transparent border-none pt-4"
+            theme="light"
             items={[
               {
                 key: "dashboard",
                 label: <span className="font-medium">仪表盘</span>,
                 onClick: () => navigate("/dashboard"),
                 icon: <DashboardOutlined className="text-primary-600" />,
-                className:
-                  "mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200",
               },
               /* 已弃用 */
               // {
@@ -109,8 +160,6 @@ export default function AppLayout() {
                 ),
                 onClick: () => navigate("/qa-beta"),
                 icon: <ThunderboltOutlined className="text-purple-600" />,
-                className:
-                  "mx-2 mb-1 rounded-lg hover:bg-purple-50 transition-all duration-200",
               },
               {
                 key: "agent-editor",
@@ -124,24 +173,29 @@ export default function AppLayout() {
                 ),
                 onClick: () => navigate("/agent-editor"),
                 icon: <RobotOutlined className="text-blue-600" />,
-                className:
-                  "mx-2 mb-1 rounded-lg hover:bg-blue-50 transition-all duration-200",
               },
               {
                 key: "templates",
                 label: <span className="font-medium">编码模板</span>,
                 onClick: () => navigate("/templates"),
                 icon: <FolderOpenOutlined className="text-primary-600" />,
-                className:
-                  "mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200",
               },
               {
-                key: "documents",
+                key: "doc-management",
                 label: <span className="font-medium">文档管理</span>,
-                onClick: () => navigate("/documents"),
                 icon: <FileTextOutlined className="text-primary-600" />,
-                className:
-                  "mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200",
+                children: [
+                  {
+                    key: "documents",
+                    label: <span className="font-medium">文档管理</span>,
+                    onClick: () => navigate("/documents"),
+                  },
+                  {
+                    key: "writing-templates",
+                    label: <span className="font-medium">写作样例</span>,
+                    onClick: () => navigate("/writing-templates"),
+                  },
+                ],
               },
               // {
               //     key: 'search',
@@ -156,16 +210,12 @@ export default function AppLayout() {
                 label: <span className="font-medium">LLM日志</span>,
                 onClick: () => navigate("/llm-logs"),
                 icon: <BarChartOutlined className="text-primary-600" />,
-                className:
-                  "mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200",
               },
               {
                 key: "template-configs",
                 label: <span className="font-medium">模板配置</span>,
                 onClick: () => navigate("/template-configs"),
                 icon: <SettingOutlined className="text-primary-600" />,
-                className:
-                  "mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200",
               },
             ]}
           />

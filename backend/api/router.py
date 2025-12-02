@@ -10,6 +10,7 @@ from api.v1 import (
     sys_config,
     template_configs,
     templates,
+    writing_templates,
 )
 
 # 创建 v1 版本路由
@@ -27,3 +28,4 @@ api_v1_router.include_router(qa.router)
 api_v1_router.include_router(llm_logs.router)
 api_v1_router.include_router(template_configs.router)
 api_v1_router.include_router(agent_editor.router)
+api_v1_router.include_router(writing_templates.router)
