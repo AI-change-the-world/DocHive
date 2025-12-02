@@ -5,7 +5,7 @@
 ## 📋 项目概述
 
 DocHive 是一个智能文档分类分级系统，支持：
-- 自定义分类模板管理
+- 自定义编码模板管理
 - 基于大语言模型的智能文档分类
 - 结构化信息抽取
 - 自动编号生成
@@ -37,7 +37,7 @@ backend/
 │   ├── router.py          # 路由汇总
 │   └── v1/                # v1 版本 API
 │       ├── auth.py        # 认证接口
-│       ├── templates.py   # 分类模板接口
+│       ├── templates.py   # 编码模板接口
 │       ├── documents.py   # 文档管理接口
 │       ├── classification.py  # 智能分类接口
 │       ├── extraction.py  # 信息抽取接口
@@ -173,14 +173,14 @@ curl -X POST "http://localhost:8000/api/v1/auth/login" \
   }'
 ```
 
-### 创建分类模板
+### 创建编码模板
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/templates/" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "年度部门分类模板",
+    "name": "年度部门编码模板",
     "description": "按年份、地点、部门、类型分类",
     "levels": [
       {"level": 1, "name": "年份"},
@@ -215,8 +215,8 @@ curl -X POST "http://localhost:8000/api/v1/classification/classify" \
 
 ## 🔧 核心功能模块
 
-### 1. 分类模板管理
-- 创建/更新/删除分类模板
+### 1. 编码模板管理
+- 创建/更新/删除编码模板
 - 支持无限层级
 - 版本管理
 
@@ -227,7 +227,7 @@ curl -X POST "http://localhost:8000/api/v1/classification/classify" \
 
 ### 3. 智能分类引擎
 - 基于 LLM 的文档分类
-- 自动匹配分类模板
+- 自动匹配编码模板
 - 支持强制重新分类
 
 ### 4. 信息抽取引擎

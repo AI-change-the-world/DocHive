@@ -58,7 +58,7 @@ class User(Base, ToDictMixin):
 
 
 class ClassTemplate(Base, ToDictMixin):
-    """分类模板表"""
+    """编码模板表"""
 
     __tablename__ = "class_templates"
 
@@ -150,7 +150,7 @@ class ClassTemplate(Base, ToDictMixin):
 
 
 class ClassTemplateConfigs(Base, ToDictMixin):
-    """分类模板配置表"""
+    """编码模板配置表"""
 
     __tablename__ = "class_template_configs"
 
@@ -259,7 +259,8 @@ class DocumentType(Base, ToDictMixin):
     __tablename__ = "document_types"
 
     id = Column(Integer, primary_key=True, index=True)
-    template_id = Column(Integer, nullable=False, index=True)  # 关联 class_templates.id
+    template_id = Column(Integer, nullable=False,
+                         index=True)  # 关联 class_templates.id
     type_code = Column(
         String(50), nullable=False, index=True
     )  # 类型编码，如：DEV_DOC、DESIGN_DOC
@@ -276,7 +277,8 @@ class DocumentTypeField(Base, ToDictMixin):
     __tablename__ = "document_type_fields"
 
     id = Column(Integer, primary_key=True, index=True)
-    doc_type_id = Column(Integer, nullable=False, index=True)  # 关联 document_types.id
+    doc_type_id = Column(Integer, nullable=False,
+                         index=True)  # 关联 document_types.id
     field_name = Column(String(100), nullable=False)  # 字段名称，如：编制人、任务数量
     description = Column(
         String(255), nullable=False
@@ -294,8 +296,10 @@ class TemplateDocumentMapping(Base, ToDictMixin):
     __tablename__ = "template_document_mappings"
 
     id = Column(Integer, primary_key=True, index=True)
-    template_id = Column(Integer, nullable=False, index=True)  # 关联 class_templates.id
-    document_id = Column(Integer, nullable=False, index=True)  # 关联 documents.id
+    template_id = Column(Integer, nullable=False,
+                         index=True)  # 关联 class_templates.id
+    document_id = Column(Integer, nullable=False,
+                         index=True)  # 关联 documents.id
     class_code = Column(String(100), index=True)  # 分类编号
 
     # 状态信息
@@ -355,9 +359,11 @@ class LLMLog(Base, ToDictMixin):
     __tablename__ = "llm_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    provider = Column(String(50), nullable=False, index=True)  # openai, deepseek等
+    provider = Column(String(50), nullable=False,
+                      index=True)  # openai, deepseek等
     model = Column(String(100), nullable=False, index=True)  # 模型名称
-    _input_messages = Column("input_messages", Text, nullable=False)  # 输入消息（JSON）
+    _input_messages = Column("input_messages", Text,
+                             nullable=False)  # 输入消息（JSON）
     output_content = Column(Text)  # 输出内容
     prompt_tokens = Column(Integer, default=0)  # 提示词token数
     completion_tokens = Column(Integer, default=0)  # 完成token数
@@ -406,7 +412,7 @@ class LLMLog(Base, ToDictMixin):
 
 
 class CustomAgent(Base, ToDictMixin):
-    """自定义Agent表"""
+    """自定义Agent表(新设计:能力导向)"""
 
     __tablename__ = "custom_agents"
 
@@ -416,13 +422,24 @@ class CustomAgent(Base, ToDictMixin):
     template_id = Column(Integer, index=True, comment="关联的模板ID")
 
     # Agent定义
-    markdown_content = Column(Text, nullable=False, comment="Markdown格式的Agent定义")
+    markdown_content = Column(Text, nullable=False,
+                              comment="Markdown格式的Agent定义")
     execution_pattern = Column(
         String(50),
         nullable=False,
-        comment="执行模式：tool_only/agent_only/agent_chain/hybrid/llm_direct",
+        comment="执行模式:tool_only/agent_only/agent_chain/hybrid/llm_direct",
     )
-    _steps = Column("steps", Text, nullable=False, comment="执行步骤的JSON数组")
+
+    # 新增:能力导向字段
+    _goals = Column("goals", Text, comment="Agent目标列表的JSON数组")
+    _constraints = Column("constraints", Text, comment="执行约束的JSON数组")
+    _state_schema = Column("state_schema", Text, comment="状态结构定义的JSON对象")
+    _rollback_plan = Column("rollback_plan", Text, comment="回退策略映射的JSON对象")
+    _initial_plan = Column("initial_plan", Text, comment="初始执行计划的JSON数组(仅参考)")
+
+    # 保留但标记为可选:旧的steps字段(向后兼容)
+    _steps = Column("steps", Text, comment="[已弃用]执行步骤的JSON数组,请使用initial_plan")
+
     mermaid_diagram = Column(Text, comment="Mermaid流程图代码")
 
     # 元信息
@@ -434,37 +451,237 @@ class CustomAgent(Base, ToDictMixin):
     created_at = Column(Integer, default=lambda: int(time.time()))
     updated_at = Column(Integer, default=lambda: int(time.time()))
 
+    # 新增:属性访问器
     @property
-    def steps(self):
+    def goals(self):
         """自动将JSON字符串转为list"""
         import json
+        if self._goals and isinstance(self._goals, str):
+            return json.loads(self._goals)
+        return self._goals if self._goals else []
 
-        if isinstance(self._steps, str):
+    @goals.setter
+    def goals(self, value):
+        """自动将list转为JSON字符串"""
+        import json
+        if value is None:
+            self._goals = None
+        elif isinstance(value, (list, dict)):
+            self._goals = json.dumps(value, ensure_ascii=False)
+        else:
+            self._goals = value
+
+    @property
+    def constraints(self):
+        """自动将JSON字符串转为list"""
+        import json
+        if self._constraints and isinstance(self._constraints, str):
+            return json.loads(self._constraints)
+        return self._constraints if self._constraints else []
+
+    @constraints.setter
+    def constraints(self, value):
+        """自动将list转为JSON字符串"""
+        import json
+        if value is None:
+            self._constraints = None
+        elif isinstance(value, (list, dict)):
+            self._constraints = json.dumps(value, ensure_ascii=False)
+        else:
+            self._constraints = value
+
+    @property
+    def state_schema(self):
+        """自动将JSON字符串转为dict"""
+        import json
+        if self._state_schema and isinstance(self._state_schema, str):
+            return json.loads(self._state_schema)
+        return self._state_schema if self._state_schema else {}
+
+    @state_schema.setter
+    def state_schema(self, value):
+        """自动将dict转为JSON字符串"""
+        import json
+        if value is None:
+            self._state_schema = None
+        elif isinstance(value, (list, dict)):
+            self._state_schema = json.dumps(value, ensure_ascii=False)
+        else:
+            self._state_schema = value
+
+    @property
+    def rollback_plan(self):
+        """自动将JSON字符串转为dict"""
+        import json
+        if self._rollback_plan and isinstance(self._rollback_plan, str):
+            return json.loads(self._rollback_plan)
+        return self._rollback_plan if self._rollback_plan else {}
+
+    @rollback_plan.setter
+    def rollback_plan(self, value):
+        """自动将dict转为JSON字符串"""
+        import json
+        if value is None:
+            self._rollback_plan = None
+        elif isinstance(value, (list, dict)):
+            self._rollback_plan = json.dumps(value, ensure_ascii=False)
+        else:
+            self._rollback_plan = value
+
+    @property
+    def initial_plan(self):
+        """自动将JSON字符串转为list"""
+        import json
+        if self._initial_plan and isinstance(self._initial_plan, str):
+            return json.loads(self._initial_plan)
+        return self._initial_plan if self._initial_plan else []
+
+    @initial_plan.setter
+    def initial_plan(self, value):
+        """自动将list转为JSON字符串"""
+        import json
+        if value is None:
+            self._initial_plan = None
+        elif isinstance(value, (list, dict)):
+            self._initial_plan = json.dumps(value, ensure_ascii=False)
+        else:
+            self._initial_plan = value
+
+    @property
+    def steps(self):
+        """[已弃用]自动将JSON字符串转为list,向后兼容"""
+        import json
+        if self._steps and isinstance(self._steps, str):
             return json.loads(self._steps)
-        return self._steps
+        # 如果没有steps但有initial_plan,则返回initial_plan
+        if not self._steps and self._initial_plan:
+            return self.initial_plan
+        return self._steps if self._steps else []
 
     @steps.setter
     def steps(self, value):
-        """自动将list转为JSON字符串"""
+        """[已弃用]自动将list转为JSON字符串,向后兼容"""
         import json
-
-        if isinstance(value, (list, dict)):
+        if value is None:
+            self._steps = None
+        elif isinstance(value, (list, dict)):
             self._steps = json.dumps(value, ensure_ascii=False)
         else:
             self._steps = value
 
     def to_dict(self):
-        """重写to_dict，确保steps和metadata返回解析后的值"""
+        """重写to_dict,确保新字段正确解析"""
         result = super().to_dict()
         import json
 
-        # 解析steps
+        # 解析新增字段
+        if "_goals" in result:
+            result["goals"] = (
+                json.loads(result.pop("_goals"))
+                if result.get("_goals") and isinstance(result.get("_goals"), str)
+                else result.pop("_goals") or []
+            )
+
+        if "_constraints" in result:
+            result["constraints"] = (
+                json.loads(result.pop("_constraints"))
+                if result.get("_constraints") and isinstance(result.get("_constraints"), str)
+                else result.pop("_constraints") or []
+            )
+
+        if "_state_schema" in result:
+            result["state_schema"] = (
+                json.loads(result.pop("_state_schema"))
+                if result.get("_state_schema") and isinstance(result.get("_state_schema"), str)
+                else result.pop("_state_schema") or {}
+            )
+
+        if "_rollback_plan" in result:
+            result["rollback_plan"] = (
+                json.loads(result.pop("_rollback_plan"))
+                if result.get("_rollback_plan") and isinstance(result.get("_rollback_plan"), str)
+                else result.pop("_rollback_plan") or {}
+            )
+
+        if "_initial_plan" in result:
+            result["initial_plan"] = (
+                json.loads(result.pop("_initial_plan"))
+                if result.get("_initial_plan") and isinstance(result.get("_initial_plan"), str)
+                else result.pop("_initial_plan") or []
+            )
+
+        # 解析旧的steps字段(向后兼容)
         if "_steps" in result:
             result["steps"] = (
                 json.loads(result.pop("_steps"))
-                if isinstance(result.get("_steps"), str)
-                else result.pop("_steps")
+                if result.get("_steps") and isinstance(result.get("_steps"), str)
+                else result.pop("_steps") or []
             )
+            # 如果没有steps但有initial_plan,返回initial_plan
+            if not result["steps"] and result.get("initial_plan"):
+                result["steps"] = result["initial_plan"]
+
+        return result
+
+
+class WritingTemplate(Base, ToDictMixin):
+    """写作模板表 - 用于存储优秀文章样本，供文档润色参考"""
+
+    __tablename__ = "writing_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False, index=True, comment="模板标题")
+    theme = Column(String(100), nullable=False, index=True, comment="主题分类")
+    content = Column(Text, nullable=False, comment="模板内容(完整文章)")
+    description = Column(Text, comment="模板描述")
+    _tags = Column("tags", Text, comment="标签列表(JSON数组)")
+
+    # 关联信息
+    template_id = Column(Integer, nullable=False,
+                         index=True, comment="关联的编码模板ID")
+    uploader_id = Column(Integer, index=True, comment="上传者ID")
+
+    # 元信息
+    is_active = Column(Boolean, default=True)
+    created_at = Column(Integer, default=lambda: int(time.time()), index=True)
+    updated_at = Column(Integer, default=lambda: int(time.time()))
+
+    @property
+    def tags_list(self):
+        """自动将JSON字符串转为list"""
+        import json
+
+        if self._tags and isinstance(self._tags, str):
+            try:
+                return json.loads(self._tags)
+            except:
+                return []
+        return self._tags if self._tags else []
+
+    @tags_list.setter
+    def tags_list(self, value):
+        """自动将list转为JSON字符串"""
+        import json
+
+        if isinstance(value, (list, tuple)):
+            self._tags = json.dumps(value, ensure_ascii=False)
+        else:
+            self._tags = value
+
+    def to_dict(self):
+        """重写to_dict，确保tags返回解析后的值"""
+        result = super().to_dict()
+        import json
+
+        if "_tags" in result:
+            try:
+                result["tags"] = (
+                    json.loads(result.pop("_tags"))
+                    if isinstance(result.get("_tags"), str)
+                    else result.pop("_tags")
+                )
+            except:
+                result["tags"] = []
 
         return result
 
@@ -472,8 +689,11 @@ class CustomAgent(Base, ToDictMixin):
 # 注册 before_update 事件监听器，自动更新 updated_at 时间戳
 event.listen(User, "before_update", update_timestamp_before_update)
 event.listen(ClassTemplate, "before_update", update_timestamp_before_update)
-event.listen(ClassTemplateConfigs, "before_update", update_timestamp_before_update)
+event.listen(ClassTemplateConfigs, "before_update",
+             update_timestamp_before_update)
 event.listen(DocumentType, "before_update", update_timestamp_before_update)
-event.listen(DocumentTypeField, "before_update", update_timestamp_before_update)
+event.listen(DocumentTypeField, "before_update",
+             update_timestamp_before_update)
 event.listen(SystemConfig, "before_update", update_timestamp_before_update)
 event.listen(CustomAgent, "before_update", update_timestamp_before_update)
+event.listen(WritingTemplate, "before_update", update_timestamp_before_update)

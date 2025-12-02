@@ -20,13 +20,13 @@ from utils.llm_client import get_llm_client
 
 
 class TemplateService:
-    """分类模板服务层"""
+    """编码模板服务层"""
 
     @staticmethod
     async def create_template_stream(
         db: AsyncSession, template_data: ClassTemplateCreate, creator_id: int
     ) -> AsyncGenerator[str, None]:
-        """创建分类模板(流式)"""
+        """创建编码模板(流式)"""
         task_id = f"template_create_{int(time.time() * 1000)}"
         template: Optional[ClassTemplate] = None
 
@@ -39,7 +39,8 @@ class TemplateService:
             ).model_dump_json()
             await asyncio.sleep(0.1)
 
-            levels_data = [level.model_dump() for level in template_data.levels]
+            levels_data = [level.model_dump()
+                           for level in template_data.levels]
 
             template = ClassTemplate(
                 name=template_data.name,
@@ -134,7 +135,8 @@ class TemplateService:
 
             yield SSEEvent(
                 event="error",
-                data={"stage": "create_template", "message": f"创建模板失败: {str(e)}"},
+                data={"stage": "create_template",
+                      "message": f"创建模板失败: {str(e)}"},
                 id=task_id,
                 done=True,
             ).model_dump_json()
@@ -172,7 +174,8 @@ class TemplateService:
 
         # 获取分页数据
         query = (
-            query.order_by(ClassTemplate.created_at.desc()).offset(skip).limit(limit)
+            query.order_by(ClassTemplate.created_at.desc()
+                           ).offset(skip).limit(limit)
         )
         result = await db.execute(query)
         templates = list(result.scalars().all())
@@ -216,7 +219,8 @@ class TemplateService:
         # 处理 levels 字段：直接传入 list，setter 会自动转为 JSON 字符串
         levels_data = None
         if "levels" in update_data and template_data.levels:
-            levels_data = [level.model_dump() for level in template_data.levels]
+            levels_data = [level.model_dump()
+                           for level in template_data.levels]
             update_data["levels"] = levels_data
 
         for field, value in update_data.items():
@@ -270,11 +274,13 @@ class TemplateService:
         db: AsyncSession, template: ClassTemplate
     ) -> Dict[str, Any]:
         """处理模板中的文档类型层级，自动创建/更新 DocumentType(非流式)"""
-        result = {"success": False, "message": "", "doc_types_count": 0, "errors": []}
+        result = {"success": False, "message": "",
+                  "doc_types_count": 0, "errors": []}
 
         try:
             # 获取 levels 列表
-            levels_list = template.levels if isinstance(template.levels, list) else []
+            levels_list = template.levels if isinstance(
+                template.levels, list) else []
 
             # 查找 is_doc_type 层级
             doc_type_level: Optional[Dict[str, Any]] = None
@@ -321,7 +327,8 @@ class TemplateService:
     ) -> AsyncGenerator[str, None]:
         """处理模板中的文档类型层级，自动创建/更新 DocumentType(流式)"""
         # 获取 levels 列表
-        levels_list = template.levels if isinstance(template.levels, list) else []
+        levels_list = template.levels if isinstance(
+            template.levels, list) else []
 
         # 查找 is_doc_type 层级
         doc_type_level: Optional[Dict[str, Any]] = None
@@ -448,7 +455,8 @@ class TemplateService:
         if existing:
             # 更新现有记录
             existing.type_name = type_data.get("type_name", existing.type_name)
-            existing.description = type_data.get("description", existing.description)
+            existing.description = type_data.get(
+                "description", existing.description)
         else:
             # 创建新记录（不创建字段，字段由用户在前端手动配置）
             new_doc_type = DocumentType(
@@ -515,7 +523,8 @@ class TemplateService:
 6. 只输出JSON，不要其他内容
 7. 每个层级的选项数量不要超过50个，选择最常用的
 """.replace(
-            "{levels_json}", json.dumps(normal_levels, ensure_ascii=False, indent=2)
+            "{levels_json}", json.dumps(
+                normal_levels, ensure_ascii=False, indent=2)
         )
 
         yield SSEEvent(
@@ -595,7 +604,8 @@ class TemplateService:
 6. 只输出JSON，不要其他内容
 7. 每个层级的选项数量不要超过50个，选择最常用的
 """.replace(
-            "{levels_json}", json.dumps(normal_levels, ensure_ascii=False, indent=2)
+            "{levels_json}", json.dumps(
+                normal_levels, ensure_ascii=False, indent=2)
         )
 
         # 调用 LLM 生成值域选项

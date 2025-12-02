@@ -56,12 +56,12 @@ async def upload_text(
 
     - **text_content**: 文本内容
     - **title**: 文档标题
-    - **template_id**: 关联的分类模板ID
+    - **template_id**: 关联的编码模板ID
     """
     if not request.template_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="请选择分类模板",
+            detail="请选择编码模板",
         )
 
     if not request.text_content or not request.text_content.strip():
@@ -126,7 +126,7 @@ async def get_statistics(
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(..., description="上传的文档文件"),
-    template_id: Optional[int] = Form(None, description="分类模板ID"),
+    template_id: Optional[int] = Form(None, description="编码模板ID"),
     metadata: Optional[str] = Form(None, description="元数据（JSON格式）"),
     db: AsyncSession = Depends(get_db),
     llm: LLMClient = Depends(get_llm),
@@ -138,13 +138,13 @@ async def upload_document(
 
     - **file**: 文档文件（PDF, DOCX, TXT, MD, PNG, JPG等）
     - **title**: 文档标题
-    - **template_id**: 关联的分类模板ID（可选）
+    - **template_id**: 关联的编码模板ID（可选）
     - **metadata**: 额外的元数据信息（JSON字符串，可选）
     """
     if not template_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="请选择分类模板",
+            detail="请选择编码模板",
         )
 
     # 验证文件类型
@@ -435,7 +435,7 @@ async def get_document_status(
 @router.post("/create-manually")
 async def create_document_manually(
     file: UploadFile = File(..., description="上传的文档文件"),
-    template_id: int = Form(..., description="分类模板ID"),
+    template_id: int = Form(..., description="编码模板ID"),
     doc_type_id: int = Form(..., description="文档类型ID"),
     class_code: str = Form(..., description="分类编码"),
     title: Optional[str] = Form(None, description="文档标题（可选，不填则自动提取）"),
@@ -449,7 +449,7 @@ async def create_document_manually(
 
     - **file**: 文档文件
     - **title**: 文档标题
-    - **template_id**: 关联的分类模板ID
+    - **template_id**: 关联的编码模板ID
     - **doc_type_id**: 文档类型ID
     - **class_code**: 分类编码（用户手动指定）
     """

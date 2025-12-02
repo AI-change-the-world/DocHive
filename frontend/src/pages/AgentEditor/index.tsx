@@ -44,7 +44,20 @@ interface ParseResult {
     name: string;
     description: string;
     execution_pattern: string;
-    steps: Array<{
+    goals?: string[];  // V2: 目标列表
+    constraints?: string[];  // V2: 约束列表
+    initial_plan?: Array<{  // V2: 初始计划(可选)
+      step: number;
+      type: string;
+      name: string;
+      description: string;
+      parameters?: Record<string, any>;
+      read_fields?: string[];
+      write_fields?: string[];
+      expectations?: string;
+      on_fail_strategy?: string;
+    }>;
+    steps?: Array<{  // 兼容旧版本
       step: number;
       type: string;
       name: string;
@@ -95,7 +108,7 @@ export default function AgentEditorPage() {
     });
   }, []);
 
-  // 加载Agent列表和分类模板
+  // 加载Agent列表和编码模板
   useEffect(() => {
     loadAgents();
     loadTemplates();
@@ -219,11 +232,18 @@ export default function AgentEditorPage() {
 
     try {
       setLoading(true);
+      // V2: 直接传递已解析好的Agent定义,避免后端重复解析
       await agentEditorService.createAgent({
         name: parseResult.agent.name,
         description: parseResult.agent.description,
         template_id: templateId,
         markdown_content: markdown,
+        // V2: 传递已解析好的字段
+        execution_pattern: parseResult.agent.execution_pattern,
+        goals: parseResult.agent.goals,
+        constraints: parseResult.agent.constraints,
+        initial_plan: parseResult.agent.initial_plan,
+        mermaid_diagram: parseResult.mermaid_diagram,
       });
       message.success("Agent创建成功");
       setMarkdown("");
@@ -260,11 +280,17 @@ export default function AgentEditorPage() {
           console.log("收到事件:", event);
 
           switch (event.event) {
+            case "planning":
+              // V2新增: 规划阶段
+              message.info(event.data.message || "正在规划...");
+              break;
             case "execution_plan":
+              // V2: 执行计划(数据结构改变)
               setExecutionResult((prev: any) => ({
                 ...prev,
                 plan: event.data,
-                steps: event.data.plan || [],
+                steps: event.data.steps || [],  // V2: 直接使用steps
+                state_schema: event.data.state_schema,  // V2新增
               }));
               break;
             case "stage_start":
@@ -297,13 +323,42 @@ export default function AgentEditorPage() {
                   steps[stepIndex] = {
                     ...steps[stepIndex],
                     ...event.data,
-                    status: "completed",
+                    status: event.data.status || "completed",  // V2: 使用后端的status
                   };
                 } else {
-                  steps.push({ ...event.data, status: "completed" });
+                  steps.push({
+                    ...event.data,
+                    status: event.data.status || "completed"
+                  });
                 }
                 return { ...prev, steps: [...steps] };
               });
+              break;
+            case "stage_retry":
+              // V2新增: 步骤重试
+              message.info(event.data.message || `重试步骤${event.data.step}`);
+              setExecutionResult((prev: any) => {
+                const steps = prev.steps || [];
+                const stepIndex = steps.findIndex(
+                  (s: any) => s.step === event.data.step
+                );
+                if (stepIndex >= 0) {
+                  steps[stepIndex] = {
+                    ...steps[stepIndex],
+                    status: "running",  // 重置为运行中
+                    retry_count: (steps[stepIndex].retry_count || 0) + 1,
+                  };
+                }
+                return { ...prev, steps: [...steps] };
+              });
+              break;
+            case "stage_jump":
+              // V2新增: 步骤跳转/回退
+              message.warning(event.data.message || "步骤回退");
+              break;
+            case "stage_fallback":
+              // V2新增: 使用默认值继续
+              message.warning(event.data.message || "使用默认值继续");
               break;
             case "stage_error":
               // 更新步骤状态为错误
@@ -338,7 +393,7 @@ export default function AgentEditorPage() {
               break;
             case "error":
               setExecuting(false);
-              message.error(event.data.error || "执行失败");
+              message.error(event.data.error || event.data.message || "执行失败");
               break;
           }
         }
@@ -509,11 +564,37 @@ export default function AgentEditorPage() {
                   </Tag>
                 </div>
               </Col>
-              <Col span={24}>
-                <div>
-                  <Text strong>步骤数量:</Text> {parseResult.agent.steps.length}
-                </div>
-              </Col>
+              {parseResult.agent.goals && parseResult.agent.goals.length > 0 && (
+                <Col span={24}>
+                  <div>
+                    <Text strong>目标:</Text>
+                    <ul style={{ marginTop: 8, paddingLeft: 20 }}>
+                      {parseResult.agent.goals.map((goal, i) => (
+                        <li key={i}>{goal}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </Col>
+              )}
+              {parseResult.agent.constraints && parseResult.agent.constraints.length > 0 && (
+                <Col span={24}>
+                  <div>
+                    <Text strong>约束:</Text>
+                    <ul style={{ marginTop: 8, paddingLeft: 20 }}>
+                      {parseResult.agent.constraints.map((constraint, i) => (
+                        <li key={i}>{constraint}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </Col>
+              )}
+              {(parseResult.agent.steps || parseResult.agent.initial_plan) && (
+                <Col span={24}>
+                  <div>
+                    <Text strong>步骤数量:</Text> {(parseResult.agent.steps || parseResult.agent.initial_plan || []).length}
+                  </div>
+                </Col>
+              )}
             </Row>
           </Card>
         )}
@@ -564,10 +645,17 @@ export default function AgentEditorPage() {
       render: (pattern: string) => <Tag color="blue">{pattern}</Tag>,
     },
     {
-      title: "步骤数",
+      title: "步骤数/目标数",
       dataIndex: "steps",
       key: "steps",
-      render: (steps: any[]) => steps?.length || 0,
+      render: (_: any, record: any) => {
+        // V2: 支持goals或steps
+        if (record.goals && record.goals.length > 0) {
+          return `${record.goals.length} 个目标`;
+        }
+        const steps = record.steps || record.initial_plan || [];
+        return `${steps.length} 个步骤`;
+      },
     },
     {
       title: "创建时间",
@@ -663,9 +751,9 @@ export default function AgentEditorPage() {
               }}
             >
               <div style={{ marginBottom: 16 }}>
-                <Text strong>关联分类模板:</Text>
+                <Text strong>关联编码模板:</Text>
                 <Select
-                  placeholder="选择关联的分类模板"
+                  placeholder="选择关联的编码模板"
                   style={{ width: "100%", marginTop: 8 }}
                   value={templateId}
                   onChange={setTemplateId}

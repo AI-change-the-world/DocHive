@@ -7,6 +7,7 @@ from models.database_models import (
     SystemConfig,
     User,
     UserRole,
+    WritingTemplate,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "SystemConfig",
     "ClassTemplateConfigs",
     "CustomAgent",
+    "WritingTemplate",
 ]

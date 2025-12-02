@@ -57,7 +57,8 @@ async def parse_agent_markdown(
             )
 
         # 2. 基础验证
-        is_valid, validation_errors = AgentExecutionBuilder.validate_agent(result.agent)
+        is_valid, validation_errors = AgentExecutionBuilder.validate_agent(
+            result.agent)
         if not is_valid:
             result.errors.extend(validation_errors)
             return ResponseBase(
@@ -126,58 +127,32 @@ async def create_agent(
     db: AsyncSession = Depends(get_db),
 ) -> ResponseBase:
     """
-    创建Agent并保存到数据库
+    创建Agent并保存到数据库(V2:直接使用前端解析好的数据)
+
+    前端流程:
+    1. 调用parse-markdown接口解析Markdown -> 得到Agent定义
+    2. 调用create接口,直接传递解析好的数据 -> 保存到DB
+
+    这样避免了后端重复LLM解析,提升响应速度
     """
     try:
         logger.info(f"📝 创建Agent: {request.name}")
 
-        # 1. 使用大模型解析Markdown
-        parse_result = await AgentMarkdownParser.parse(
-            content=request.markdown_content,
-            template_id=request.template_id,
-            db=db,
-        )
-
-        if not parse_result.success:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Agent定义解析失败: {'; '.join(parse_result.errors)}",
-            )
-
-        agent = parse_result.agent
-
-        # 2. 基础验证
-        is_valid, validation_errors = AgentExecutionBuilder.validate_agent(agent)
-        if not is_valid:
-            raise HTTPException(
-                status_code=400, detail=f"Agent验证失败: {'; '.join(validation_errors)}"
-            )
-
-        # 3. LLM验证并生成Mermaid图
-        llm_valid, llm_errors, llm_warnings, mermaid_diagram = (
-            await AgentLLMValidator.validate_with_llm(
-                agent=agent,
-                db=db,
-            )
-        )
-
-        if not llm_valid:
-            raise HTTPException(
-                status_code=400, detail=f"LLM验证失败: {'; '.join(llm_errors)}"
-            )
-
-        # 4. 保存到数据库
+        # 直接使用前端传来的已解析数据,不再重复调用LLM
         db_agent = CustomAgent(
             name=request.name,
             description=request.description,
             template_id=request.template_id,
             markdown_content=request.markdown_content,
-            execution_pattern=agent.execution_pattern,
-            steps=[s.model_dump() for s in agent.steps],
-            mermaid_diagram=mermaid_diagram,
-            version=agent.version,
+            execution_pattern=request.execution_pattern or "hybrid",
+            # V2字段
+            goals=request.goals,
+            constraints=request.constraints,
+            initial_plan=[
+                s.model_dump() for s in request.initial_plan] if request.initial_plan else [],
+            mermaid_diagram=request.mermaid_diagram,
+            version="1.0",
             is_active=True,
-            metadata=agent.metadata or {},
             creator_id=1,  # TODO: 从认证信息获取
         )
 
@@ -185,14 +160,11 @@ async def create_agent(
         await db.commit()
         await db.refresh(db_agent)
 
-        logger.info(f"✅ Agent创建成功: {agent.name}, ID={db_agent.id}")
+        logger.info(f"✅ Agent创建成功: {request.name}, ID={db_agent.id}")
         return ResponseBase(
             code=200,
             message="Agent创建成功",
-            data={
-                "agent": db_agent.to_dict(),
-                "execution_plan": AgentExecutionBuilder.build_execution_plan(agent),
-            },
+            data={"agent": db_agent.to_dict()},
         )
 
     except HTTPException:
@@ -281,18 +253,20 @@ async def execute_agent(
     config=Depends(get_config),
 ):
     """
-    执行自定义Agent
+    执行自定义Agent(V2:动态规划)
 
-    这是主要入口：根据已保存的Agent定义执行工作流
+    这是主要入口:根据Agent定义动态规划并执行工作流
+    不再使用DB中的静态steps,而是每次执行时由LLM动态规划
     """
     import json
 
     from fastapi.responses import StreamingResponse
 
-    from core.agents.custom_agent_executor import CustomAgentExecutor
+    # 使用新的V2执行器
+    from core.agents.custom_agent_executor_v2 import CustomAgentExecutorV2
 
     try:
-        logger.info(f"📝 执行自定义Agent: ID={agent_id}")
+        logger.info(f"📝 执行自定义Agent V2: ID={agent_id}")
 
         # 1. 获取Agent定义
         result = await db.execute(
@@ -317,23 +291,21 @@ async def execute_agent(
         if template_id is None:
             raise HTTPException(
                 status_code=400,
-                detail="缺少template_id参数，请在请求中提供或确保Agent已关联模板",
+                detail="缺少template_id参数,请在请求中提供或确保Agent已关联模板",
             )
 
         # 3. 获取ES客户端和索引
-        # 使用 SearchEngine 的 client 属性（AsyncElasticsearch 实例）
         es_client = search_engine.client
-        # 从配置或 SearchEngine 获取索引名称
         es_index = (
             request_body.get("es_index")
             or search_engine.index_name
             or config.ELASTICSEARCH_INDEX
         )
 
-        # 4. 创建SSE生成器
+        # 4. 创建SSE生成器(使用V2执行器)
         async def event_generator():
             try:
-                async for event in CustomAgentExecutor.execute(
+                async for event in CustomAgentExecutorV2.execute(
                     agent=agent,
                     query=query,
                     template_id=template_id,
@@ -375,28 +347,80 @@ async def execute_agent(
 @router.post("/markdown-template")
 async def get_markdown_template() -> ResponseBase:
     """
-    获取Agent Markdown模板
+    获取Agent Markdown模板(V2:能力导向)
     """
-    template = """# Agent: 写文章助手
+    template = """# Agent: 智能问答助手
 
-**描述**: 根据主题自动规划文章结构、查询关键信息、摘取要素、组合内容并排版
+## 描述
+根据用户提问,智能检索相关文档并生成答案。支持多轮问答和上下文理解。
 
-## 执行步骤
+## 目标
+- 快速检索相关文档
+- 生成准确、完整的答案
+- 支持引用来源
 
-### 步骤1: 规划文章结构
-- **描述**: 分析主题,规划文章需要几个章节,每个章节写什么
+## 约束
+- 检索文档数不超过50个
+- 答案长度不超过1000字
+- 必须基于检索的文档回答,不能编造
 
-### 步骤2: 查询关键信息
-- **描述**: 检索与主题相关的文档和资料
+## 推荐工具
+- retrieval_agent: 检索相关文档
+- qa_agent: 生成答案
 
-### 步骤3: 摘取要素
-- **描述**: 从文档中提取关键信息点
+---
 
-### 步骤4: 组合内容
-- **描述**: 将信息按照规划的结构组织成文章
+# Agent: 报表生成助手
 
-### 步骤5: 排版优化
-- **描述**: 优化文章格式和排版
+## 描述
+根据用户要求,自动检索相关数据、生成报表框架、填充内容并格式化输出。
+
+## 目标
+- 检索相关数据文档
+- 生成结构化报表框架
+- 填充关键数据和图表
+- 格式化输出(Markdown或Excel)
+
+## 约束
+- 数据必须真实,不能传造
+- 报表结构须清晰易读
+- 执行时间不超过10分钟
+
+## 推荐工具
+- multi_query_search: 多维度检索数据
+- get_template_statistics: 获取统计数据
+- document_compose: 组装生成文档
+
+---
+
+# Agent: 文档分类助手
+
+## 描述
+自动对上传的文档进行分类和打标签,提高文档管理效率。
+
+## 目标
+- 读取文档内容
+- 分析文档类型和主题
+- 按照模板规则分类
+- 自动生成标签
+
+## 约束
+- 支持PDF、Word、文本等格式
+- 分类准确率高于85%
+- 单个文档处理时间不超过30秒
+
+## 推荐工具
+- read_documents: 读取文档内容
+- analyze_documents: 分析文档特征
+
+---
+
+**说明**:
+1. 上面是几个示例,你可以参考编写
+2. **不需要**写具体的执行步骤,只需描述目标和约束
+3. 执行时系统会根据你的描述自动规划步骤
+4. 可以推荐工具,但不是强制的
+5. 系统会根据目标和约束智能选择工具
 """
 
     return ResponseBase(code=200, message="模板获取成功", data={"template": template})

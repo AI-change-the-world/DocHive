@@ -94,9 +94,20 @@ async def document_compose(
     try:
         llm_client = get_llm_client()
 
-        # 构建提示词
-        sections = outline.get("sections", []) or outline.get("outline", [])
-        title = outline.get("title", "")
+        # 兼容两种outline格式
+        if isinstance(outline, list):
+            # 新格式: outline直接是章节列表
+            sections = outline
+            title = ""
+        elif isinstance(outline, dict):
+            # 旧格式: outline是包含title和sections的字典
+            sections = outline.get(
+                "sections", []) or outline.get("outline", [])
+            title = outline.get("title", "")
+        else:
+            # 未知格式,尝试作为列表处理
+            sections = []
+            title = ""
 
         prompt = f"""
 你是一个专业的文档编写助手。根据文档大纲和摘取的内容片段，组合生成一份完整、专业、结构化的文档。
@@ -105,7 +116,7 @@ async def document_compose(
 {query}
 
 【文档大纲】
-标题: {title}
+{f'标题: {title}' if title else ''}
 章节结构:
 {json.dumps(sections, ensure_ascii=False, indent=2)}
 
@@ -116,7 +127,9 @@ async def document_compose(
 {document_style if document_style != "auto" else "根据文档类型自动推断（方案、报告、总结等）"}
 
 【你的任务】
-1. 根据大纲结构组织文档
+1. 根据大纲结构组织文档，**严格按照大纲的层级关系**：
+   - 如果大纲中某章节有subsections字段，则该章节为主章节(用##)，subsections为子章节(用###)
+   - 子章节下如果还有细分内容(如"案件概况"、"案件处理")，使用####
 2. 将摘取的内容片段整合到对应章节
 3. 对内容进行润色、优化，确保：
    - 逻辑连贯、条理清晰
@@ -130,11 +143,18 @@ async def document_compose(
 {{
     "document": {{
         "title": "文档标题",
-        "content": "# 文档标题\\n\\n## 第一章\\n\\n内容...\\n\\n## 第二章\\n\\n内容...",
+        "content": "# 文档标题\\n\\n## 第一章 引言\\n\\n内容...\\n\\n## 第二章 典型案例分析\\n\\n### 案例一：XXX案\\n\\n#### 案件概况\\n\\n内容...\\n\\n#### 案件处理\\n\\n内容...\\n\\n### 案例二：YYY案\\n\\n内容...",
         "word_count": 5000,
         "sections_count": 5
     }}
 }}
+
+【Markdown层级规范 - 非常重要！】
+- 文档标题: # (一级标题，仅用于文档最顶层标题)
+- 主章节: ## (二级标题，如"第一章"、"第二章"，对应大纲中的section_title)
+- 子章节: ### (三级标题，对应大纲中的subsections[].title)
+- 小节: #### (四级标题，用于子章节下的细分内容，如"案件概况"、"案件处理"、"案例启示")
+- **关键**：必须根据大纲的subsections字段判断层级，不要把所有章节都用##
 
 【注意】
 - content必须是完整的Markdown格式文档
@@ -196,11 +216,16 @@ async def document_compose(
         logger.error(f"❌ 文档组合失败: {e}")
         logger.error(traceback.format_exc())
 
+        # 安全地提取title
+        fallback_title = "未命名文档"
+        if isinstance(outline, dict):
+            fallback_title = outline.get("title", "未命名文档")
+
         return {
             "success": False,
             "error": str(e),
             "document": {
-                "title": outline.get("title", "未命名文档"),
+                "title": fallback_title,
                 "content": "",
                 "word_count": 0,
                 "sections_count": 0,

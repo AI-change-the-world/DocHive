@@ -139,8 +139,21 @@ async def document_extraction(
                 }
             )
 
-        # 构建大纲结构
-        sections = outline.get("sections", []) or outline.get("outline", [])
+        # 构建大纲结构 - 兼容多种格式
+        if isinstance(outline, list):
+            # 新格式: outline直接是章节列表
+            sections = outline
+        elif isinstance(outline, dict):
+            # 旧格式: outline是包含sections或outline字段的字典
+            sections = outline.get(
+                "sections", []) or outline.get("outline", [])
+        else:
+            # 未知格式
+            sections = []
+
+        # 确保sections是列表
+        if not isinstance(sections, list):
+            sections = []
 
         prompt = f"""
 你是一个专业的文档内容摘取助手。根据文档大纲和检索到的文档，为每个章节摘取最相关的内容片段。

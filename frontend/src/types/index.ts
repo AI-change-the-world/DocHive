@@ -57,7 +57,7 @@ export interface Token {
   user?: User;
 }
 
-// 分类模板相关类型
+// 编码模板相关类型
 export interface TemplateLevel {
   level: number;
   name: string;

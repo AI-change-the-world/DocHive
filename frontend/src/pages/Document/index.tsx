@@ -445,7 +445,7 @@ const DocumentPage: React.FC = () => {
 
   const handleClassify = async (record: Document) => {
     if (!record.template_id) {
-      message.error("请先为文档关联分类模板");
+      message.error("请先为文档关联编码模板");
       return;
     }
 
@@ -463,7 +463,7 @@ const DocumentPage: React.FC = () => {
     }
   };
 
-  const handlePreview = async (record: Document) => {};
+  const handlePreview = async (record: Document) => { };
 
   const handleDelete = async (id: number) => {
     try {
@@ -802,15 +802,15 @@ const DocumentPage: React.FC = () => {
               </Radio.Group>
             </Form.Item>
 
-            {/* 分类模板 */}
+            {/* 编码模板 */}
             <Form.Item
               required={true}
               name="template_id"
-              label="分类模板"
-              rules={[{ required: true, message: "请选择分类模板" }]}
+              label="编码模板"
+              rules={[{ required: true, message: "请选择编码模板" }]}
             >
               <Select
-                placeholder="选择分类模板"
+                placeholder="选择编码模板"
                 onChange={handleTemplateChange}
               >
                 {templates.map((template) => (

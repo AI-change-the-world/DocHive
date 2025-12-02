@@ -49,7 +49,7 @@ def init_engine(config: DynamicConfig):
 
     # 创建异步引擎
     engine_kwargs: dict = {
-        "echo": config.DEBUG,
+        "echo": False,
     }
 
     # SQLite 不需要连接池配置
@@ -57,7 +57,8 @@ def init_engine(config: DynamicConfig):
         engine_kwargs["pool_size"] = config.DATABASE_POOL_SIZE
         engine_kwargs["max_overflow"] = config.DATABASE_MAX_OVERFLOW
 
-    engine = create_async_engine(get_database_url(database_url), **engine_kwargs)
+    engine = create_async_engine(
+        get_database_url(database_url), **engine_kwargs)
 
     # 创建异步会话工厂
     AsyncSessionLocal = async_sessionmaker(

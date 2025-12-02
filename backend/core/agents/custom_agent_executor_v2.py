@@ -1,0 +1,1226 @@
+"""
+自定义Agent执行器 V2 - 重新设计
+
+核心改进:
+1. 执行时由LLM动态规划步骤,而非使用DB中的静态steps
+2. 使用统一state dict管理数据流
+3. 自然语言描述期望,而非符号化checkpoint  
+4. 明确回退策略表,关键步骤失败时有清晰的回退路径
+"""
+
+import json
+from typing import Any, AsyncGenerator, Dict, List, Optional
+
+from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.context import ExecutionContext
+from utils.llm_client import get_llm_client
+
+
+class UnifiedExecutionState(ExecutionContext):
+    """
+    统一执行状态 - 基于state dict的执行状态管理
+
+    核心理念:
+    - state dict是所有工具读写数据的单一真相源
+    - 简化的结构,只保留核心字段
+    - 质量监控字段方便checkpoint判定
+    """
+
+    def __init__(
+        self,
+        db: Any = None,
+        es_client: Any = None,
+        es_index: str = "dochive_documents",
+        template_id: Optional[int] = None,
+        session_id: Optional[str] = None,
+        query: str = "",
+        agent_goals: Optional[List[str]] = None,
+        agent_constraints: Optional[List[str]] = None,
+        rollback_plan: Optional[Dict[str, str]] = None,
+        **extra,
+    ):
+        super().__init__(
+            db=db,
+            es_client=es_client,
+            es_index=es_index,
+            template_id=template_id,
+            session_id=session_id,
+            query=query,
+            **extra,
+        )
+
+        # 存储Agent定义的元信息
+        self.agent_goals = agent_goals or []
+        self.agent_constraints = agent_constraints or []
+        self.rollback_plan = rollback_plan or {}
+
+        # 初始化统一状态字典(只包含固定字段,其他字段由LLM动态生成)
+        self.state = {
+            # 固定字段:用户输入
+            "inputs": {
+                "query": query,
+                "template_id": template_id,
+            },
+            # 控制信息(固定)
+            "control": {
+                "iterations": 0,  # 当前迭代次数
+                "max_iterations": 20,  # 最大迭代(防止无限循环)
+                "failed_steps": [],  # 失败步骤列表
+            },
+            # 其他字段将在规划阶段由LLM根据Agent定义动态添加
+            # 例如: outline, document_ids, documents, extracted_content等
+        }
+
+        # 执行历史
+        self._step_history: List[Dict[str, Any]] = []
+
+    def _initialize_state_from_schema(self, state_schema: Dict[str, Any]):
+        """根据LLM生成的state schema初始化状态字段"""
+        for field_name, field_def in state_schema.items():
+            if field_name in ["inputs", "control"]:
+                # 跳过固定字段
+                continue
+
+            field_type = field_def.get("type", "dict")
+            field_default = field_def.get("default")
+
+            # 设置默认值
+            if field_default is not None:
+                self.state[field_name] = field_default
+            elif field_type == "list":
+                self.state[field_name] = []
+            elif field_type == "dict":
+                self.state[field_name] = {}
+            elif field_type == "string":
+                self.state[field_name] = ""
+            elif field_type == "number":
+                self.state[field_name] = 0
+            else:
+                self.state[field_name] = None
+
+        logger.info(f"📋 根据state schema初始化了{len(state_schema)}个字段")
+
+    def get_state(self, path: str, default: Any = None) -> Any:
+        """从state dict中读取值(支持点路径)"""
+        keys = path.split(".")
+        value = self.state
+        for key in keys:
+            if isinstance(value, dict):
+                value = value.get(key)
+                if value is None:
+                    return default
+            else:
+                return default
+        return value
+
+    def set_state(self, path: str, value: Any):
+        """向state dict中写入值(支持点路径)"""
+        keys = path.split(".")
+        cur = self.state
+        for k in keys[:-1]:
+            if k not in cur or not isinstance(cur[k], dict):
+                cur[k] = {}
+            cur = cur[k]
+        cur[keys[-1]] = value
+
+    def add_step_to_history(self, step_record: Dict[str, Any]):
+        """记录步骤执行历史"""
+        self._step_history.append(step_record)
+
+    def get_step_history(self) -> List[Dict[str, Any]]:
+        """获取步骤历史"""
+        return self._step_history
+
+    def summarize_state(
+        self,
+        target_tool_name: Optional[str] = None,
+        max_steps: int = 5,
+        max_context_chars: int = 8000,
+    ) -> str:
+        """
+        生成压缩的状态摘要供LLM使用(完全采用V1的优秀压缩策略)
+
+        对文档内容进行智能压缩,只保留元数据,避免传递大量文本。
+        支持智能过滤:只保留与目标工具相关的历史步骤。
+
+        Args:
+            target_tool_name: 目标工具名称(用于过滤相关步骤)
+            max_steps: 最多保留的历史步骤数(默认5个)
+            max_context_chars: 最大上下文字符数(默认8000)
+
+        Returns:
+            压缩后的状态描述(JSON字符串)
+        """
+        compressed = {
+            "query": self.state["inputs"]["query"],
+            "template_id": self.state["inputs"]["template_id"],
+            "step_history": [],
+        }
+
+        # 1. 智能过滤历史步骤
+        relevant_steps = self._step_history
+
+        # 如果指定了目标工具,优先保留相关的步骤
+        if target_tool_name:
+            # 定义工具依赖关系(哪些工具的结果可能被当前工具使用)
+            tool_dependencies = {
+                "multi_query_search": ["generate_outline"],
+                "get_document_contents": [
+                    "multi_query_search",
+                    "es_fulltext_search",
+                    "search_documents_by_classification",
+                ],
+                "skim_documents": ["multi_query_search", "es_fulltext_search"],
+                "read_documents": ["multi_query_search", "es_fulltext_search"],
+                "analyze_documents": [
+                    "get_document_contents",
+                    "skim_documents",
+                    "read_documents",
+                ],
+                "document_extraction": ["multi_query_search", "generate_outline"],
+                "document_compose": ["document_extraction", "generate_outline"],
+                "document_review": ["document_compose"],
+            }
+
+            # 找到相关的工具名称
+            related_tools = tool_dependencies.get(target_tool_name, [])
+
+            # 优先保留相关步骤,然后保留最近的步骤
+            relevant_steps = sorted(
+                self._step_history,
+                key=lambda s: (
+                    s.get("name") in related_tools,  # 相关工具优先
+                    s.get("step", 0),  # 然后按步骤号倒序(最近的在前)
+                ),
+                reverse=True,
+            )[:max_steps]
+
+        # 只保留最近的N个步骤
+        relevant_steps = (
+            relevant_steps[-max_steps:]
+            if len(relevant_steps) > max_steps
+            else relevant_steps
+        )
+
+        # 2. 压缩每一步的结果
+        for step in relevant_steps:
+            compressed_step = {
+                "step": step.get("step"),
+                "name": step.get("name"),
+                "description": step.get("description", ""),
+                "success": step.get("result", {}).get("success"),
+            }
+
+            # 压缩结果数据
+            result = step.get("result", {})
+            compressed_result = {}
+
+            for key, value in result.items():
+                # 文档内容特殊处理 - 只保留元数据
+                if key == "documents" and isinstance(value, list):
+                    compressed_result["documents"] = [
+                        {
+                            "id": doc.get("id") or doc.get("document_id"),
+                            "title": doc.get("title", "")[:50],  # 限制标题长度
+                            "content_length": len(doc.get("content", "")),
+                        }
+                        for doc in value[:5]  # 最多显示5个文档
+                    ]
+                    if len(value) > 5:
+                        compressed_result["documents_count"] = len(value)
+
+                # 文档ID列表 - 只保留前20个
+                elif key == "document_ids" and isinstance(value, list):
+                    compressed_result["document_ids"] = value[:20]
+                    if len(value) > 20:
+                        compressed_result["document_ids_count"] = len(value)
+
+                # 大纲结构 - 压缩处理
+                elif key == "outline":
+                    if isinstance(value, dict):
+                        compressed_outline = {
+                            "title": value.get("title", "")[:100],
+                            "sections_count": len(value.get("sections", [])),
+                        }
+                        # 只保留前3个章节的标题
+                        sections = value.get("sections", [])[:3]
+                        compressed_outline["sections"] = [
+                            {"title": s.get("title", "")[:50]}
+                            for s in sections
+                        ]
+                        compressed_result["outline"] = compressed_outline
+                    elif isinstance(value, list):
+                        # 列表格式的outline
+                        compressed_result["outline"] = f"{len(value)} sections"
+                    else:
+                        compressed_result["outline"] = value
+
+                # 文档内容 - 只保留引用
+                elif key == "document" and isinstance(value, dict):
+                    compressed_result["document"] = {
+                        "title": value.get("title", "")[:50],
+                        "word_count": value.get("word_count", 0),
+                    }
+
+                # 错误信息
+                elif key == "error":
+                    compressed_result["error"] = str(value)[:200]
+
+                # 其他小型数据
+                elif not isinstance(value, (list, dict)) or len(str(value)) < 300:
+                    compressed_result[key] = value
+                # 大型数据只保留摘要
+                else:
+                    compressed_result[f"{key}_summary"] = (
+                        f"<{type(value).__name__}, {len(str(value))} chars>"
+                    )
+
+            compressed_step["result"] = compressed_result
+            compressed["step_history"].append(compressed_step)
+
+        # 3. 添加当前可用的中间数据摘要(更简洁)
+        available_data = {}
+        for key, value in self.state.items():
+            if key in ["inputs", "control", "last_failure"]:
+                continue  # 跳过内部字段
+
+            if key == "documents" and isinstance(value, list):
+                available_data["documents"] = f"{len(value)} docs available"
+            elif key == "document_ids" and isinstance(value, list):
+                available_data["document_ids"] = (
+                    f"{len(value)} IDs: {value[:5]}..." if len(
+                        value) > 5 else value
+                )
+            elif key == "outline":
+                if isinstance(value, dict):
+                    sections_count = len(value.get("sections", []))
+                    available_data["outline"] = f"outline with {sections_count} sections"
+                elif isinstance(value, list):
+                    available_data["outline"] = f"outline with {len(value)} sections"
+            elif key == "quality" and isinstance(value, dict):
+                available_data["quality"] = value  # 质量指标完整保留
+            elif key in ["composed_document", "reviewed_document"] and isinstance(value, dict):
+                # 文档字段: 只显示元信息,完整内容通过字段引用获取
+                available_data[key] = {
+                    "title": value.get("title", "")[:50],
+                    "word_count": value.get("word_count", 0),
+                    "_ref": key,  # 标记为可引用字段
+                }
+            elif key == "extracted_content" and isinstance(value, dict):
+                chapter_count = len(
+                    [k for k in value.keys() if k not in ["summary"]])
+                available_data[key] = f"{chapter_count} chapters"
+            elif isinstance(value, (list, dict)):
+                available_data[key] = f"{type(value).__name__}({len(str(value))} chars)"
+            else:
+                available_data[key] = value
+
+        compressed["available_data"] = available_data
+
+        # 4. 转换为JSON并检查长度
+        result_json = json.dumps(compressed, ensure_ascii=False, indent=1)
+
+        # 如果超过限制,进一步压缩
+        if len(result_json) > max_context_chars:
+            # 移除更多细节 - 只保留最后3个步骤
+            compressed["step_history"] = compressed["step_history"][-3:]
+            result_json = json.dumps(compressed, ensure_ascii=False, indent=1)
+
+            # 如果还是太长,使用单行格式
+            if len(result_json) > max_context_chars:
+                result_json = json.dumps(
+                    compressed, ensure_ascii=False, separators=(",", ":")
+                )
+
+        return result_json
+
+    def update_quality_from_result(self, step_name: str, result: Dict[str, Any]):
+        """根据工具执行结果更新质量指标"""
+        if not result.get("success"):
+            return
+
+        # 如果state schema中没有quality字段,则跳过
+        if "quality" not in self.state:
+            return
+
+        quality = self.state["quality"]
+
+        # 根据工具类型更新质量指标
+        if step_name == "generate_outline":
+            outline = result.get("outline", {})
+            if isinstance(outline, dict):
+                sections = outline.get("sections", [])
+                quality["sections_count"] = len(sections)
+            elif isinstance(outline, list):
+                quality["sections_count"] = len(outline)
+
+        elif step_name in ["multi_query_search", "es_fulltext_search", "search_documents_by_classification"]:
+            doc_ids = result.get("document_ids", [])
+            quality["retrieval_count"] = len(doc_ids)
+
+        elif step_name == "document_extraction":
+            summary = result.get("summary", {})
+            quality["extraction_chunks"] = summary.get(
+                "total_extracted_chunks", 0)
+
+        elif step_name == "document_compose":
+            doc = result.get("document", {})
+            quality["compose_word_count"] = doc.get("word_count", 0)
+
+        elif step_name == "document_review":
+            review_summary = result.get("review_summary", {})
+            quality["review_errors"] = review_summary.get("errors_found", 0)
+
+
+class DynamicPlanner:
+    """
+    动态规划器 - 根据Agent定义和当前query,动态生成执行计划 + state schema
+
+    核心思路:
+    - 不使用DB中的静态steps
+    - 根据Agent的goals、constraints、可用工具,让LLM规划步骤
+    - 同时生成state schema定义各个工具需要的字段
+    """
+
+    @staticmethod
+    async def plan_execution(
+        agent_name: str,
+        agent_description: str,
+        agent_goals: List[str],
+        agent_constraints: List[str],
+        query: str,
+        template_id: int,
+        db: AsyncSession,
+    ) -> Dict[str, Any]:
+        """
+        使用LLM动态规划执行步骤 + 生成state schema
+
+        Returns:
+            {
+                "steps": [...],         # 规划的步骤列表
+                "state_schema": {...},  # 状态字段定义
+                "errors": [...],        # 规划过程中发现的错误
+                "warnings": [...]       # 警告信息
+            }
+        """
+        from core.tools.tool_registry import get_tool_metadata
+        from core.tools.base import get_all_tools
+
+        # 1. 获取可用工具列表(包含output_fields信息)
+        all_tools_dict = get_all_tools()  # 返回字典: {tool_name: tool_info}
+        tools_summary = []
+        for tool_name in all_tools_dict.keys():
+            meta = get_tool_metadata(tool_name)
+            if meta:
+                tools_summary.append({
+                    "name": tool_name,
+                    "description": meta.get("description", ""),
+                    "category": meta.get("category", "general"),
+                    "output_fields": list(meta.get("output_schema", {}).keys()) if meta.get("output_schema") else [],
+                })
+
+        # 2. 构造规划prompt(包含state schema生成要求)
+        system_prompt = f"""你是一个专业的任务规划器。
+
+【任务背景】
+Agent名称: {agent_name}
+Agent描述: {agent_description}
+
+【Agent目标】
+{chr(10).join(f"- {g}" for g in agent_goals) if agent_goals else "- 完成用户查询"}
+
+【执行约束】
+{chr(10).join(f"- {c}" for c in agent_constraints) if agent_constraints else "- 无特殊约束"}
+
+【可用工具列表】
+{json.dumps(tools_summary, ensure_ascii=False, indent=2)}
+
+【核心要求】
+1. 根据用户查询和Agent目标,规划执行步骤
+2. 同时设计state schema(状态字段结构)
+3. 每个步骤必须指定:
+   - step: 步骤序号(从1开始)
+   - name: 工具名称(必须从可用工具列表中选择)
+   - description: 这一步做什么
+   - read_fields: 需要读取的state字段列表(如["documents", "outline"])
+   - write_fields: 将写入的state字段列表(如["document_ids", "quality.retrieval_count"])
+   - expectations: 自然语言描述的期望,如"检索到至少5个文档"
+   - on_fail_strategy: 失败策略,如"重试最多3次"、"回退到步骤2"
+4. state schema设计:
+   - 根据规划的步骤,汇总所有write_fields
+   - 每个字段指定type(list/dict/string/number)和default默认值
+   - 可包含quality子字段用于质量监控
+5. 步骤要简洁但完整,避免冗余
+6. 如果缺少关键工具,返回errors说明
+
+【返回格式】
+请返回JSON:
+{{
+    "steps": [
+        {{
+            "step": 1,
+            "name": "tool_name",
+            "description": "步骤描述",
+            "read_fields": [],
+            "write_fields": ["field1", "quality.metric1"],
+            "expectations": "期望结果描述",
+            "on_fail_strategy": "失败处理策略"
+        }}
+    ],
+    "state_schema": {{
+        "field1": {{ "type": "list", "default": [] }},
+        "quality": {{
+            "type": "dict",
+            "default": {{
+                "metric1": 0
+            }}
+        }}
+    }},
+    "errors": [],
+    "warnings": []
+}}
+"""
+
+        user_prompt = f"""用户查询: {query}
+模板ID: {template_id}
+
+请规划执行步骤并设计state schema。"""
+
+        try:
+            llm_client = get_llm_client()
+            response = await llm_client.extract_json_response(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                db=db,
+                max_tokens=4096,
+            )
+
+            steps = response.get("steps", [])
+            state_schema = response.get("state_schema", {})
+            errors = response.get("errors", [])
+            warnings = response.get("warnings", [])
+
+            logger.info(
+                f"🤖 LLM规划完成: {len(steps)}个步骤, {len(state_schema)}个状态字段, {len(errors)}个错误")
+
+            return {
+                "steps": steps,
+                "state_schema": state_schema,
+                "errors": errors,
+                "warnings": warnings,
+            }
+
+        except Exception as e:
+            logger.error(f"❌ LLM规划失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {
+                "steps": [],
+                "state_schema": {},
+                "errors": [f"规划失败: {str(e)}"],
+                "warnings": [],
+            }
+
+
+class ExpectationEvaluator:
+    """
+    期望评估器 - 使用LLM判断执行结果是否满足自然语言描述的期望
+
+    核心思路:
+    - 不使用符号化的checkpoint
+    - 用LLM理解"检索到至少5个文档"这类自然语言期望
+    - 返回简单的通过/不通过判定
+    """
+
+    @staticmethod
+    async def evaluate(
+        expectations: str,
+        step_result: Dict[str, Any],
+        state: UnifiedExecutionState,
+        db: AsyncSession,
+        step_name: Optional[str] = None,  # 新增: 工具名称
+    ) -> tuple[bool, str]:
+        """
+        评估步骤执行结果是否满足期望
+
+        Args:
+            expectations: 自然语言描述的期望
+            step_result: 步骤执行结果
+            state: 当前执行状态
+            step_name: 工具名称,用于获取validation_mode
+
+        Returns:
+            (passed, reason): 是否通过和原因
+        """
+        if not expectations:
+            # 没有明确期望,只要成功就算通过
+            return step_result.get("success", False), "无期望要求"
+
+        # 获取工具的validation_mode
+        from core.tools.base import get_tool
+        validation_mode = "loose"  # 默认宽松模式
+        if step_name:
+            tool_info = get_tool(step_name)
+            if tool_info:
+                validation_mode = tool_info.get("validation_mode", "loose")
+
+        # 构造简洁的上下文
+        context = {
+            "success": step_result.get("success", False),
+            "result_summary": {
+                k: v for k, v in step_result.items()
+                if k in ["document_ids", "documents", "outline", "count", "summary"]
+                and not isinstance(v, str) or (isinstance(v, str) and len(v) < 200)
+            },
+            "quality_metrics": state.state.get("quality", {}),
+        }
+
+        # 根据validation_mode调整prompt
+        if validation_mode == "strict":
+            system_prompt = """你是一个结果评估专家。
+
+【任务】
+严格判断执行结果是否满足用户的期望。
+
+【判定原则 - 严格模式】
+1. **准确性优先**: 结果必须准确满足期望要求
+2. **数量要求**: 明确的数量要求必须严格满足
+3. **质量标准**: 对结果质量有较高要求
+4. **完整性**: 期望的所有方面都应该被满足
+
+【什么情况下应该不通过】
+- 未满足明确的数量要求(如"至少5个"只有3个)
+- 结果质量明显不符合预期
+- 关键信息缺失或错误
+- 结构不完整
+
+【返回格式】
+{
+    "passed": true/false,
+    "reason": "详细说明通过/未通过的原因"
+}
+"""
+        else:  # loose mode
+            system_prompt = """你是一个结果评估专家。
+
+【任务】
+判断执行结果是否基本满足用户的期望。
+
+【判定原则 - 宽松模式】
+1. **宽松判定**: 只要大体符合期望,就应该通过,不要过分苛刻
+2. **实质优先**: 关注实质内容而非形式细节
+   - 例如:期望"包含法律分析",如果内容中有法律相关章节(即使名称不完全一致),就应该通过
+3. **容忍变通**: 允许合理的内容组织方式
+   - 例如:"法律分析"可以是独立章节,也可以分散在多个相关章节中
+4. **数量弹性**: 如果期望没有明确的数量要求,只要有内容就可以
+   - 例如:"检索相关文档"即使只有2-3个也可以通过(实际场景中数据可能就是不足)
+5. **避免无限重试**: 如果结果基本可用,就不要因为小问题否决
+6. **场景理解**: 考虑实际场景的限制
+   - 例如:数据库中可能就没有那么多相关文档,不应强求数量
+   - 例如:提取内容时某些章节可能确实找不到对应信息,这是正常的
+
+【什么情况下应该不通过】
+- 完全没有生成内容(success=false)
+- 生成的内容与期望完全不相关
+- 明确强调"必须"的硬性要求未满足
+
+【返回格式】
+{
+    "passed": true/false,
+    "reason": "简洁说明通过/未通过的核心原因"
+}
+"""
+
+        user_prompt = f"""【期望】
+{expectations}
+
+【执行结果】
+{json.dumps(context, ensure_ascii=False, indent=2)}
+
+【验证模式】{validation_mode}
+
+请判断是否满足期望。"""
+
+        try:
+            llm_client = get_llm_client()
+            response = await llm_client.extract_json_response(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                db=db,
+                max_tokens=4096,
+            )
+
+            passed = response.get("passed", False)
+            reason = response.get("reason", "")
+
+            logger.info(
+                f"{'✅' if passed else '❌'} 期望评估[{validation_mode}]: {reason}")
+
+            return passed, reason
+
+        except Exception as e:
+            logger.error(f"❌ 期望评估失败: {e}")
+            # fallback: 只要执行成功就算通过
+            return step_result.get("success", False), f"评估异常: {str(e)}"
+
+
+class CustomAgentExecutorV2:
+    """
+    自定义Agent执行器 V2
+
+    核心改进:
+    1. 执行时动态规划步骤(而非使用DB中的静态steps)
+    2. 基于统一state dict管理数据
+    3. 自然语言期望判定(而非符号化checkpoint)
+    4. 明确回退策略表
+    """
+
+    @staticmethod
+    async def execute(
+        agent,  # CustomAgent数据库模型实例
+        query: str,
+        template_id: int,
+        session_id: Optional[str],
+        db: AsyncSession,
+        es_client,
+        es_index: str = "dochive_documents",
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        执行自定义Agent
+
+        核心流程:
+        1. 动态规划: 使用LLM根据Agent定义和query规划步骤
+        2. 逐步执行: 执行每个步骤,更新state dict
+        3. 期望判定: 使用LLM判断结果是否满足自然语言期望
+        4. 智能回退: 失败时根据回退策略表决定下一步
+        """
+        logger.info(f"🚀 开始执行Agent V2: {agent.name}")
+
+        # 1. 动态规划阶段
+        yield {
+            "event": "planning",
+            "data": {
+                "message": "正在规划执行步骤...",
+            },
+        }
+
+        plan_result = await DynamicPlanner.plan_execution(
+            agent_name=agent.name,
+            agent_description=agent.description,
+            agent_goals=agent.goals or [],
+            agent_constraints=agent.constraints or [],
+            query=query,
+            template_id=template_id,
+            db=db,
+        )
+
+        if plan_result["errors"]:
+            yield {
+                "event": "error",
+                "data": {
+                    "message": "规划失败",
+                    "errors": plan_result["errors"],
+                },
+            }
+            return
+
+        steps = plan_result["steps"]
+        state_schema = plan_result.get("state_schema", {})
+
+        # 发送执行计划
+        yield {
+            "event": "execution_plan",
+            "data": {
+                "agent_name": agent.name,
+                "description": agent.description,
+                "steps": steps,
+                "state_schema": state_schema,
+                "warnings": plan_result.get("warnings", []),
+            },
+        }
+
+        # 2. 初始化执行状态(使用动态生成的state schema)
+        state = UnifiedExecutionState(
+            db=db,
+            es_client=es_client,
+            es_index=es_index,
+            template_id=template_id,
+            session_id=session_id,
+            query=query,
+            agent_goals=agent.goals,
+            agent_constraints=agent.constraints,
+            rollback_plan=agent.rollback_plan or {},
+        )
+
+        # 根据state_schema初始化动态字段
+        if state_schema:
+            state._initialize_state_from_schema(state_schema)
+
+        # 3. 执行步骤(支持跳转和回退)
+        from core.tools.base import execute_tool
+
+        current_step_index = 0
+        max_iterations = state.state["control"]["max_iterations"]
+
+        while current_step_index < len(steps) and state.state["control"]["iterations"] < max_iterations:
+            state.state["control"]["iterations"] += 1
+            step = steps[current_step_index]
+            step_num = step.get("step", current_step_index + 1)
+            step_name = step.get("name")
+            step_desc = step.get("description", "")
+            expectations = step.get("expectations")
+            on_fail_strategy = step.get("on_fail_strategy")
+
+            logger.info(f"🔧 执行步骤{step_num}: {step_name}")
+
+            # 发送步骤开始事件
+            yield {
+                "event": "stage_start",
+                "data": {
+                    "stage": f"step_{step_num}",
+                    "step": step_num,
+                    "name": step_name,
+                    "description": step_desc,
+                    "message": f"正在执行: {step_desc}",
+                    "status": "running",
+                },
+            }
+
+            try:
+                # 执行工具
+                arguments = await CustomAgentExecutorV2._build_tool_arguments(
+                    step=step,
+                    state=state,
+                    db=db,
+                )
+
+                result = await execute_tool(
+                    step_name,
+                    arguments,
+                    state.to_tool_context(),
+                )
+
+                # 更新state dict
+                CustomAgentExecutorV2._update_state_from_result(
+                    step_name=step_name,
+                    result=result,
+                    state=state,
+                )
+
+                # 更新质量指标
+                state.update_quality_from_result(step_name, result)
+
+                # 记录历史
+                state.add_step_to_history({
+                    "step": step_num,
+                    "name": step_name,
+                    "description": step_desc,
+                    "result": result,
+                })
+
+                # 评估期望
+                evaluation_reason = None  # 记录评估结果
+                if expectations and result.get("success"):
+                    passed, evaluation_reason = await ExpectationEvaluator.evaluate(
+                        expectations=expectations,
+                        step_result=result,
+                        state=state,
+                        db=db,
+                        step_name=step_name,  # 传递工具名称
+                    )
+
+                    if not passed:
+                        # 期望未满足,触发失败处理
+                        logger.warning(f"⚠️ 步骤{step_num}期望未满足: {expectations}")
+                        logger.warning(f"原因: {evaluation_reason}")
+                        result["success"] = False
+                        result["expectation_failed"] = True
+                        result["evaluation_reason"] = evaluation_reason  # 保存失败原因
+
+                        # 将失败原因记录到state中,供重试时参考
+                        if "last_failure" not in state.state:
+                            state.state["last_failure"] = {}
+                        state.state["last_failure"][step_name] = {
+                            "reason": evaluation_reason,
+                            "expectations": expectations,
+                            "step": step_num,
+                        }
+
+                # 发送步骤完成事件
+                yield {
+                    "event": "stage_complete",
+                    "data": {
+                        "stage": f"step_{step_num}",
+                        "step": step_num,
+                        "name": step_name,
+                        "description": step_desc,
+                        "success": result.get("success", False),
+                        "result": result,
+                        "status": "completed" if result.get("success") else "failed",
+                    },
+                }
+
+                # 如果成功,移动到下一步
+                if result.get("success"):
+                    current_step_index += 1
+                else:
+                    # 失败处理
+                    state.state["control"]["failed_steps"].append({
+                        "step": step_num,
+                        "name": step_name,
+                        "error": result.get("error", "执行失败"),
+                    })
+
+                    # 解析失败策略
+                    if on_fail_strategy:
+                        action = await CustomAgentExecutorV2._parse_fail_strategy(
+                            strategy=on_fail_strategy,
+                            step_name=step_name,
+                            state=state,
+                            db=db,
+                        )
+
+                        if action.get("type") == "retry":
+                            # 重试:不移动指针
+                            logger.info(f"↻ 重试步骤{step_num}")
+                            yield {
+                                "event": "stage_retry",
+                                "data": {
+                                    "step": step_num,
+                                    "message": f"重试步骤{step_num}",
+                                },
+                            }
+                            continue
+
+                        elif action.get("type") == "goto":
+                            # 跳转回退
+                            target_step = action.get("target_step")
+                            logger.info(f"↩️ 回退到步骤{target_step}")
+                            # 找到目标步骤的索引
+                            for i, s in enumerate(steps):
+                                if s.get("step") == target_step:
+                                    current_step_index = i
+                                    break
+                            yield {
+                                "event": "stage_jump",
+                                "data": {
+                                    "from_step": step_num,
+                                    "to_step": target_step,
+                                    "message": f"从步骤{step_num}回退到步骤{target_step}",
+                                },
+                            }
+                            continue
+
+                        elif action.get("type") == "fallback":
+                            # 使用默认值继续
+                            logger.info(f"🔄 使用默认值继续")
+                            yield {
+                                "event": "stage_fallback",
+                                "data": {
+                                    "step": step_num,
+                                    "message": "使用默认值继续执行",
+                                },
+                            }
+                            current_step_index += 1
+                            continue
+
+                    # 没有明确策略,或策略解析失败,直接跳过
+                    logger.warning(f"⚠️ 步骤{step_num}失败,跳过")
+                    current_step_index += 1
+
+            except Exception as e:
+                logger.error(f"❌ 步骤{step_num}执行失败: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+
+                yield {
+                    "event": "stage_error",
+                    "data": {
+                        "step": step_num,
+                        "name": step_name,
+                        "error": str(e),
+                        "message": f"步骤{step_num}出错: {str(e)}",
+                    },
+                }
+
+                # 异常情况,跳过该步骤
+                current_step_index += 1
+
+        # 4. 生成最终答案
+        logger.info("📝 生成最终答案")
+
+        final_document = state.state.get(
+            "reviewed_document") or state.state.get("composed_document")
+        documents = state.state.get("documents", [])
+
+        yield {
+            "event": "answer",
+            "data": {
+                "answer": "执行完成" if final_document or documents else "执行完成,但未生成结果",
+                "document": final_document,
+                "documents": documents,
+            },
+        }
+
+        # 5. 完成
+        yield {
+            "event": "done",
+            "data": {
+                "success": True,
+                "message": "Agent执行完成",
+                "iterations": state.state["control"]["iterations"],
+            },
+        }
+
+        logger.info(f"✅ Agent V2执行完成: {agent.name}")
+
+    @staticmethod
+    async def _build_tool_arguments(
+        step: Dict[str, Any],
+        state: UnifiedExecutionState,
+        db: AsyncSession,
+    ) -> Dict[str, Any]:
+        """
+        构造工具参数(使用LLM智能推断)
+
+        优先使用step中已定义的parameters,
+        如果没有则使用LLM从state中推断
+        """
+        step_name = step.get("name")
+        predefined_params = step.get("parameters", {})
+
+        if predefined_params:
+            # 步骤中已定义参数,优先使用
+            logger.debug(f"使用预定义参数: {predefined_params}")
+            return predefined_params
+
+        # 使用LLM推断参数
+        from core.tools.tool_registry import get_tool_metadata
+
+        tool_meta = get_tool_metadata(step_name)
+        if not tool_meta:
+            return {"template_id": state.template_id}
+
+        param_schema = tool_meta.get("parameters", {})
+
+        # 检查是否有上次失败记录
+        last_failure = state.state.get("last_failure", {}).get(step_name)
+        failure_context = ""
+        if last_failure:
+            failure_context = f"""
+
+【上次失败原因】
+期望: {last_failure.get('expectations', '')}
+失败原因: {last_failure.get('reason', '')}
+
+⚠️ 请根据上次失败原因调整参数,确保满足期望！
+"""
+
+        system_prompt = f"""你是参数构造助手。
+
+【工具】{step_name}
+【参数定义】
+{json.dumps(param_schema, ensure_ascii=False, indent=2)}
+
+【当前状态】
+{state.summarize_state(target_tool_name=step_name)}  # 传递target_tool_name实现智能过滤
+{failure_context}
+【任务】
+根据当前状态,生成工具参数(纯JSON)。
+
+【规则 - 重要！】
+1. **必须使用状态中的template_id**: 直接从当前状态中提取template_id,不要自己编造！
+2. 从状态中提取其他数据(如document_ids、outline等)
+3. **文档字段特殊处理**: 如果状态中有composed_document或reviewed_document的摘要信息(如{{"title": "...", "word_count": 1000, "has_content": true}}),
+   表示完整文档内容存在于state中但未显示,你应该:
+   - 引用该字段名(如"composed_document")
+   - 完整文档会自动从state中获取
+4. 只包含参数定义中的字段
+5. 返回纯JSON,无其他文字
+6. 如果有上次失败记录,请特别注意调整参数以满足期望
+
+示例:
+如果状态中 template_id=1, query="某某问题",那么生成:
+{{
+  "query": "某某问题",
+  "template_id": 1
+}}
+
+如果状态中有 composed_document: {{"title": "报告", "word_count": 5000, "has_content": true}}, 需要document参数时生成:
+{{
+  "document": "composed_document"  // 引用字段名,完整内容会自动获取
+}}
+"""
+
+        user_prompt = f"为工具 {step_name} 生成参数。"
+
+        try:
+            llm_client = get_llm_client()
+            response = await llm_client.extract_json_response(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                db=db,
+                max_tokens=4096,
+            )
+
+            logger.info(f"🤖 LLM生成参数: {response}")
+
+            # 处理字段引用: 如果参数值是字段名,从state中获取实际值
+            resolved_response = {}
+            for key, value in response.items():
+                if isinstance(value, str) and value in state.state:
+                    # 这是一个字段引用,替换为实际值
+                    resolved_response[key] = state.state[value]
+                    logger.info(f"🔗 解析字段引用: {key}={value} -> 从state获取实际值")
+                else:
+                    resolved_response[key] = value
+
+            return resolved_response
+
+        except Exception as e:
+            logger.error(f"❌ LLM生成参数失败: {e},使用fallback")
+            # fallback: 根据工具类型提供合理的默认参数
+            fallback_params = {"template_id": state.template_id}
+
+            # 根据工具类型添加必需参数(直接从state原始数据中获取,不使用压缩后的摘要)
+            if step_name == "document_compose":
+                fallback_params.update({
+                    "query": state.state["inputs"]["query"],
+                    "outline": state.state.get("outline", {}),
+                    "extracted_content": state.state.get("extracted_content", {}),
+                })
+            elif step_name == "document_extraction":
+                fallback_params.update({
+                    "query": state.state["inputs"]["query"],
+                    "outline": state.state.get("outline", {}),
+                    "document_ids": state.state.get("document_ids", []),
+                })
+            elif step_name == "document_review":
+                # 关键修复: 直接从state中获取完整的composed_document
+                fallback_params.update({
+                    "query": state.state["inputs"]["query"],
+                    "document": state.state.get("composed_document", {}),
+                })
+            elif step_name == "generate_outline":
+                fallback_params.update({
+                    "query": state.state["inputs"]["query"],
+                })
+            elif step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+                fallback_params.update({
+                    "document_ids": state.state.get("document_ids", []),
+                })
+            elif step_name in ["multi_query_search", "es_fulltext_search"]:
+                fallback_params.update({
+                    "query": state.state["inputs"]["query"],
+                })
+
+            logger.info(
+                f"🔧 Fallback参数: {json.dumps(fallback_params, ensure_ascii=False, default=str)[:200]}...")
+            return fallback_params
+
+    @staticmethod
+    def _update_state_from_result(
+        step_name: str,
+        result: Dict[str, Any],
+        state: UnifiedExecutionState,
+    ):
+        """根据工具执行结果更新state dict"""
+        if not result.get("success"):
+            return
+
+        # 根据工具类型更新对应字段
+        if step_name == "generate_outline":
+            outline = result.get("outline", {})
+            state.set_state("outline", outline)
+
+        elif step_name in ["multi_query_search", "es_fulltext_search", "search_documents_by_classification"]:
+            doc_ids = result.get("document_ids", [])
+            state.set_state("document_ids", doc_ids)
+            if result.get("documents"):
+                state.set_state("documents", result.get("documents", []))
+
+        elif step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+            docs = result.get("documents", [])
+            state.set_state("documents", docs)
+
+        elif step_name == "document_extraction":
+            content = result.get("extracted_content", {})
+            state.set_state("extracted_content", content)
+
+        elif step_name == "document_compose":
+            doc = result.get("document", {})
+            state.set_state("composed_document", doc)
+
+        elif step_name == "document_review":
+            doc = result.get("reviewed_document", {})
+            state.set_state("reviewed_document", doc)
+
+        elif step_name == "analyze_documents":
+            analysis = result.get("analysis", {})
+            state.set_state("analysis_result", analysis)
+
+    @staticmethod
+    async def _parse_fail_strategy(
+        strategy: str,
+        step_name: str,
+        state: UnifiedExecutionState,
+        db: AsyncSession,
+    ) -> Dict[str, Any]:
+        """
+        解析失败策略(自然语言 -> 结构化动作)
+
+        Returns:
+            {
+                "type": "retry" | "goto" | "fallback" | "abort",
+                "target_step": int,  # 仅当type=goto时
+            }
+        """
+        system_prompt = """你是失败策略解析专家。
+
+【任务】
+将自然语言描述的失败处理策略转换为结构化指令。
+
+【策略类型】
+1. retry: 重试当前步骤(如"重试最多3次"、"再试一次")
+2. goto: 跳转到指定步骤(如"回退到步骤2"、"返回步骤1重新检索")
+3. fallback: 使用默认值继续(如"使用空大纲继续"、"跳过该步骤")
+4. abort: 终止执行(如"停止执行"、"中止流程")
+
+【返回格式】
+JSON:
+{
+    "type": "retry" | "goto" | "fallback" | "abort",
+    "target_step": 步骤号(仅当type=goto时)
+}
+"""
+
+        user_prompt = f"""策略描述: {strategy}
+当前步骤: {step_name}
+
+请解析策略。"""
+
+        try:
+            llm_client = get_llm_client()
+            response = await llm_client.extract_json_response(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                db=db,
+                max_tokens=4096,
+            )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"❌ 策略解析失败: {e}")
+            # fallback: 继续执行
+            return {"type": "fallback"}

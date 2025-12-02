@@ -9,41 +9,60 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class AgentStepSchema(BaseModel):
-    """Agent执行步骤"""
+    """Agent执行步骤(仅用于初始计划或规划参考)"""
 
     step: int = Field(..., ge=1, description="步骤序号")
     type: str = Field(..., description="类型: tool | agent")
     name: str = Field(..., description="工具或智能体名称")
     description: str = Field(..., description="步骤描述")
-    parameters: Optional[Dict[str, Any]] = Field(None, description="步骤参数")
-    condition: Optional[str] = Field(
-        None, description="执行条件（已弃用，建议使用checkpoint）")
-    checkpoint: Optional[Dict[str, Any]] = Field(
-        None,
-        description="""
-        检查点配置，用于控制流程：
-        {
-            "expectations": [{ "left": "summary.xxx", "op": ">", "right": 0 }],
-            "on_fail": { "retry_limit": 2, "goto": 1, "set_state": {...} }
-        }
-        """
-    )
+    parameters: Optional[Dict[str, Any]] = Field(None, description="步骤参数(可选)")
+    read_fields: Optional[List[str]] = Field(None, description="需要读取的状态字段列表")
+    write_fields: Optional[List[str]] = Field(None, description="将写入的状态字段列表")
+    expectations: Optional[str] = Field(
+        None, description="自然语言描述的期望结果,如'检索到至少5个文档'、'大纲包含3个以上章节'")
+    on_fail_strategy: Optional[str] = Field(
+        None, description="失败处理策略的自然语言描述,如'重试最多3次'、'回退到步骤2重新检索'")
 
 
 class AgentDefinitionSchema(BaseModel):
-    """Agent定义"""
+    """Agent定义(新设计:能力导向而非步骤导向)"""
 
     name: str = Field(..., min_length=1, max_length=100, description="Agent名称")
     description: str = Field(..., description="Agent描述")
     template_id: Optional[int] = Field(None, description="关联的模板ID")
+
+    # 新增:目标与约束
+    goals: Optional[List[str]] = Field(None, description="Agent要达成的目标列表")
+    constraints: Optional[List[str]] = Field(
+        None, description="执行约束,如'文档数量不超过50'、'执行时间不超过5分钟'")
+
+    # 新增:状态结构定义
+    state_schema: Optional[Dict[str, Any]] = Field(
+        None, description="统一状态字典的结构定义,定义了各个工具将读写的字段")
+
+    # 新增:回退策略表
+    rollback_plan: Optional[Dict[str, str]] = Field(
+        None,
+        description="关键步骤的回退策略映射,如{'document_extraction': 'multi_query_search', 'document_compose': 'document_extraction'}",
+    )
+
+    # 保留但调整:初始执行计划(仅作为参考,非强制)
     execution_pattern: str = Field(
-        ...,
+        "hybrid",
         description="执行模式: tool_only | agent_only | agent_chain | hybrid | llm_direct",
     )
-    steps: List[AgentStepSchema] = Field(..., min_length=1, description="执行步骤")
+    initial_plan: Optional[List[AgentStepSchema]] = Field(
+        None,
+        description="初始执行计划(可选),实际执行时会由LLM动态规划,这里仅作为参考",
+    )
+
     version: str = Field("1.0", description="版本号")
     is_active: bool = Field(True, description="是否激活")
     metadata: Optional[Dict[str, Any]] = Field(None, description="元数据")
+
+    # 兼容性:保留steps字段但标记为已弃用
+    steps: Optional[List[AgentStepSchema]] = Field(
+        None, description="[已弃用]执行步骤,请使用initial_plan")
 
 
 class AgentMarkdownRequest(BaseModel):
@@ -65,12 +84,20 @@ class AgentMarkdownParseResponse(BaseModel):
 
 
 class AgentCreateRequest(BaseModel):
-    """创建Agent请求"""
+    """创建Agent请求(V2:直接接收解析好的Agent定义)"""
 
     name: str = Field(..., min_length=1, max_length=100)
     description: str = Field(...)
     template_id: Optional[int] = Field(None)
     markdown_content: str = Field(..., description="Markdown格式定义")
+
+    # V2: 直接接收已解析好的字段,避免重复LLM解析
+    execution_pattern: Optional[str] = Field("hybrid", description="执行模式")
+    goals: Optional[List[str]] = Field(None, description="Agent目标")
+    constraints: Optional[List[str]] = Field(None, description="执行约束")
+    initial_plan: Optional[List[AgentStepSchema]
+                           ] = Field(None, description="初始计划")
+    mermaid_diagram: Optional[str] = Field(None, description="Mermaid流程图")
 
 
 class AgentUpdateRequest(BaseModel):

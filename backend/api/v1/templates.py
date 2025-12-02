@@ -19,7 +19,7 @@ from schemas.api_schemas import (
 )
 from services.template_service import TemplateService
 
-router = APIRouter(prefix="/templates", tags=["分类模板管理"])
+router = APIRouter(prefix="/templates", tags=["编码模板管理"])
 
 
 @router.get("/all", response_model=ResponseBase)
@@ -53,7 +53,7 @@ async def create_template(
     current_user: User = Depends(get_current_user),
 ):
     """
-    创建分类模板(流式)
+    创建编码模板(流式)
 
     - **name**: 模板名称
     - **levels**: 层级定义列表
@@ -69,7 +69,8 @@ async def create_template(
     - error: 错误
     """
     return EventSourceResponse(
-        TemplateService.create_template_stream(db, template_data, current_user.id)
+        TemplateService.create_template_stream(
+            db, template_data, current_user.id)
     )
 
 

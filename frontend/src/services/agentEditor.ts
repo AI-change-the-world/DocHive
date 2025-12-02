@@ -14,6 +14,12 @@ export interface AgentCreateRequest {
   description: string;
   template_id?: number;
   markdown_content: string;
+  // V2: 直接传递已解析好的字段,避免后端重复LLM解析
+  execution_pattern?: string;
+  goals?: string[];
+  constraints?: string[];
+  initial_plan?: any[];
+  mermaid_diagram?: string;
 }
 
 export const agentEditorService = {

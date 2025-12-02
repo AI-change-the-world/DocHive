@@ -234,7 +234,7 @@ const TemplatePage: React.FC = () => {
     <div className="p-6">
       <Card>
         <div className="mb-4 flex justify-between items-center">
-          <h2 className="text-2xl font-bold">分类模板管理</h2>
+          <h2 className="text-2xl font-bold">编码模板管理</h2>
           <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
             创建模板
           </Button>

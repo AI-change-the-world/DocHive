@@ -81,26 +81,27 @@ export default function AppLayout() {
                 className:
                   "mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200",
               },
-              {
-                key: "qa",
-                label: (
-                  <span className="font-medium">
-                    智能问答{" "}
-                    <span className="ml-1 px-1.5 py-0.5 text-xs bg-purple-100 text-purple-600 rounded">
-                      已弃用
-                    </span>
-                  </span>
-                ),
-                onClick: () => navigate("/qa"),
-                icon: <QuestionCircleOutlined className="text-primary-600" />,
-                className:
-                  "mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200",
-              },
+              /* 已弃用 */
+              // {
+              //   key: "qa",
+              //   label: (
+              //     <span className="font-medium">
+              //       智能问答{" "}
+              //       <span className="ml-1 px-1.5 py-0.5 text-xs bg-purple-100 text-purple-600 rounded">
+              //         已弃用
+              //       </span>
+              //     </span>
+              //   ),
+              //   onClick: () => navigate("/qa"),
+              //   icon: <QuestionCircleOutlined className="text-primary-600" />,
+              //   className:
+              //     "mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200",
+              // },
               {
                 key: "qa-beta",
                 label: (
                   <span className="font-medium">
-                    智能体问答
+                    知识问答
                     <span className="ml-1 px-1.5 py-0.5 text-xs bg-purple-100 text-purple-600 rounded">
                       Beta
                     </span>
@@ -115,7 +116,7 @@ export default function AppLayout() {
                 key: "agent-editor",
                 label: (
                   <span className="font-medium">
-                    Agent编辑{" "}
+                    Agent{" "}
                     <span className="ml-1 px-1.5 py-0.5 text-xs bg-purple-100 text-purple-600 rounded">
                       Beta
                     </span>
@@ -128,7 +129,7 @@ export default function AppLayout() {
               },
               {
                 key: "templates",
-                label: <span className="font-medium">分类模板</span>,
+                label: <span className="font-medium">编码模板</span>,
                 onClick: () => navigate("/templates"),
                 icon: <FolderOpenOutlined className="text-primary-600" />,
                 className:

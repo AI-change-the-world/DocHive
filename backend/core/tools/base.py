@@ -55,6 +55,7 @@ def tool(
     category: str = "general",
     tags: Optional[List[str]] = None,
     output_schema: Optional[Dict[str, Any]] = None,
+    validation_mode: str = "loose",  # 新增: loose(宽松) | strict(严格)
 ):
     """
     工具装饰器 - 将函数注册为可调用的工具
@@ -76,7 +77,8 @@ def tool(
         output_schema={
             "success": {"type": "boolean", "description": "执行是否成功"},
             "data": {"type": "object", "description": "统计数据"}
-        }
+        },
+        validation_mode="loose"  # 结果验证模式
     )
     async def get_template_statistics(ctx: ToolContext, template_id: int):
         ...
@@ -90,6 +92,9 @@ def tool(
         category: 工具分类（retrieval/document/statistics/analysis）
         tags: 标签列表（用于筛选和分组）
         output_schema: 输出结构定义（可选，用于标准化输出和参数自动装配）
+        validation_mode: 结果验证模式
+            - "loose": 宽松模式,主要检查结构,对内容质量不做过多要求(默认,适合V2动态规划)
+            - "strict": 严格模式,对结果质量有较高要求(适合关键业务流程)
     """
 
     def decorator(func: Callable):
@@ -119,10 +124,12 @@ def tool(
             "category": category,
             "tags": tags or [],
             "is_async": inspect.iscoroutinefunction(func),
-            "output_schema": output_schema,  # 新增：输出结构定义
+            "output_schema": output_schema,
+            "validation_mode": validation_mode,  # 新增
         }
 
-        logger.debug(f"注册工具: {name} (category={category})")
+        logger.debug(
+            f"注册工具: {name} (category={category}, validation_mode={validation_mode})")
 
         @wraps(func)
         async def wrapper(*args, **kwargs):
