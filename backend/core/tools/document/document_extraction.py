@@ -12,6 +12,26 @@ from loguru import logger
 from core.tools.base import ToolContext, tool, ValidationMode
 
 
+def _compress_document_extraction(result: Dict[str, Any], state: Any) -> Dict[str, Any]:
+    """
+    document_extraction 工具的结果压缩函数
+
+    摘取工具不压缩，返回 None 表示保留完整结果。
+    原因:
+    - 摘取的内容是LLM分析生成的，压缩后需要重新摘取，浪费token
+    - 摘取内容是后续步骤（如document_compose）的重要输入
+    - 摘取的段落和来源信息都很重要
+
+    Args:
+        result: 工具执行结果
+        state: 执行状态
+
+    Returns:
+        None 表示不压缩
+    """
+    return None  # 不压缩,保留完整结果
+
+
 def _validate_document_extraction(
     result: Dict[str, Any],
     expectations: str,
@@ -74,6 +94,7 @@ def _validate_document_extraction(
     category="document",
     tags=["文档", "摘取", "提取", "extraction"],
     validate_function=_validate_document_extraction,
+    compress_function=_compress_document_extraction,
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "extracted_content": {

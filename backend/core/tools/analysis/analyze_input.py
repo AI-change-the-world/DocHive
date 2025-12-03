@@ -13,6 +13,61 @@ from loguru import logger
 from core.tools.base import ToolContext, tool, ValidationMode
 
 
+def _compress_analyze_result(result: Dict[str, Any], state: Any) -> Dict[str, Any]:
+    """
+    analyze_input 工具的结果压缩函数
+
+    分析工具需要保留核心分析结果:
+    - success: 执行状态
+    - case_type: 案件类型(关键信息)
+    - case_summary: 案件摘要(关键信息,但可以截断)
+
+    压缩的信息:
+    - key_info: 只保留关键字段
+    - analysis_result: 完全不保留(冠余信息)
+
+    Args:
+        result: 工具执行结果
+        state: 执行状态
+
+    Returns:
+        压缩后的结果
+    """
+    compressed = {
+        "success": result.get("success", False),
+    }
+
+    # 保留案件类型
+    case_type = result.get("case_type", [])
+    if case_type:
+        compressed["case_type"] = case_type
+
+    # 保留案件摘要(截断到300字)
+    case_summary = result.get("case_summary", "")
+    if case_summary:
+        compressed["case_summary"] = case_summary[:300]
+        if len(case_summary) > 300:
+            compressed["case_summary"] += "..."
+
+    # key_info 只保留关键字段
+    key_info = result.get("key_info", {})
+    if key_info:
+        compressed_key_info = {}
+        # 只保留关键人物和组织
+        if key_info.get("persons"):
+            compressed_key_info["persons"] = key_info["persons"][:5]
+        if key_info.get("organizations"):
+            compressed_key_info["organizations"] = key_info["organizations"][:3]
+        if compressed_key_info:
+            compressed["key_info"] = compressed_key_info
+
+    # 错误信息必须保留
+    if result.get("error"):
+        compressed["error"] = str(result["error"])[:200]
+
+    return compressed
+
+
 def _validate_analyze_input(
     result: Dict[str, Any],
     expectations: str,
@@ -74,6 +129,7 @@ def _validate_analyze_input(
     category="analysis",
     tags=["分析", "用户输入", "案件类型", "信息提取"],
     validate_function=_validate_analyze_input,
+    compress_function=_compress_analyze_result,
     output_schema={
         "case_summary": {"type": "string", "description": "内容摘要"},
         "case_type": {"type": "list", "description": "识别出的案件/内容类型"},

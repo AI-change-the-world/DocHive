@@ -12,6 +12,26 @@ from loguru import logger
 from core.tools.base import ToolContext, tool, ValidationMode
 
 
+def _compress_generate_outline(result: Dict[str, Any], state: Any) -> Dict[str, Any]:
+    """
+    generate_outline 工具的结果压缩函数
+
+    生成性工具不压缩，返回 None 表示保留完整结果。
+    原因:
+    - 大纲是LLM生成的，压缩后需要重新生成，浪费token
+    - 大纲是后续步骤（如document_compose）的重要输入
+    - 大纲本身数据量不大，不需要压缩
+
+    Args:
+        result: 工具执行结果
+        state: 执行状态
+
+    Returns:
+        None 表示不压缩
+    """
+    return None  # 不压缩,保留完整结果
+
+
 async def _validate_generate_outline(
     result: Dict[str, Any],
     expectations: str,
@@ -108,6 +128,7 @@ async def _validate_generate_outline(
     category="document",
     tags=["文档", "大纲", "outline"],
     validate_function=_validate_generate_outline,
+    compress_function=_compress_generate_outline,
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "title": {"type": "string", "description": "文档标题"},

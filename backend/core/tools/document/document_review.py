@@ -12,6 +12,26 @@ from loguru import logger
 from core.tools.base import ToolContext, tool, ValidationMode
 
 
+def _compress_document_review(result: Dict[str, Any], state: Any) -> Dict[str, Any]:
+    """
+    document_review 工具的结果压缩函数
+
+    生成性工具不压缩，返回 None 表示保留完整结果。
+    原因:
+    - 审阅后的文档是LLM生成的，压缩后需要重新审阅，浪费大量token
+    - 审阅结果是最终输出，必须保留完整内容
+    - 审阅建议和修改记录都很重要
+
+    Args:
+        result: 工具执行结果
+        state: 执行状态
+
+    Returns:
+        None 表示不压缩
+    """
+    return None  # 不压缩,保留完整结果
+
+
 async def _validate_document_review(
     result: Dict[str, Any],
     expectations: str,
@@ -142,6 +162,7 @@ async def _validate_document_review(
     category="document",
     tags=["文档", "校对", "润色", "review"],
     validate_function=_validate_document_review,
+    compress_function=_compress_document_review,
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "reviewed_document": {

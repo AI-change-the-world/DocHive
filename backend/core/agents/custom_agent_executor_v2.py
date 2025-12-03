@@ -15,6 +15,7 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import ExecutionContext
+from core.tools.base import get_tool_compress_function
 from utils.llm_client import get_llm_client
 
 
@@ -136,8 +137,8 @@ class UnifiedExecutionState(ExecutionContext):
     def summarize_state(
         self,
         target_tool_name: Optional[str] = None,
-        max_steps: int = 5,
-        max_context_chars: int = 8000,
+        max_steps: int = 10,
+        max_context_chars: int = 51_200,
     ) -> str:
         """
         生成压缩的状态摘要供LLM使用(完全采用V1的优秀压缩策略)
@@ -147,8 +148,8 @@ class UnifiedExecutionState(ExecutionContext):
 
         Args:
             target_tool_name: 目标工具名称(用于过滤相关步骤)
-            max_steps: 最多保留的历史步骤数(默认5个)
-            max_context_chars: 最大上下文字符数(默认8000)
+            max_steps: 最多保留的历史步骤数(默认10个)
+            max_context_chars: 最大上下文字符数(默认51_200)
 
         Returns:
             压缩后的状态描述(JSON字符串)
@@ -216,71 +217,29 @@ class UnifiedExecutionState(ExecutionContext):
                 "success": step.get("result", {}).get("success"),
             }
 
-            # 压缩结果数据
+            # 获取工具的压缩函数
+            tool_name = step.get("name", "")
+            compress_func = get_tool_compress_function(tool_name)
             result = step.get("result", {})
-            compressed_result = {}
 
-            for key, value in result.items():
-                # 文档内容特殊处理 - 只保留元数据
-                if key == "documents" and isinstance(value, list):
-                    compressed_result["documents"] = [
-                        {
-                            "id": doc.get("id") or doc.get("document_id"),
-                            "title": doc.get("title", "")[:50],  # 限制标题长度
-                            "content_length": len(doc.get("content", "")),
-                        }
-                        for doc in value[:5]  # 最多显示5个文档
-                    ]
-                    if len(value) > 5:
-                        compressed_result["documents_count"] = len(value)
-
-                # 文档ID列表 - 只保留前20个
-                elif key == "document_ids" and isinstance(value, list):
-                    compressed_result["document_ids"] = value[:20]
-                    if len(value) > 20:
-                        compressed_result["document_ids_count"] = len(value)
-
-                # 大纲结构 - 压缩处理
-                elif key == "outline":
-                    if isinstance(value, dict):
-                        compressed_outline = {
-                            "title": value.get("title", "")[:100],
-                            "sections_count": len(value.get("sections", [])),
-                        }
-                        # 只保留前3个章节的标题
-                        sections = value.get("sections", [])[:3]
-                        compressed_outline["sections"] = [
-                            {"title": s.get("title", "")[:50]}
-                            for s in sections
-                        ]
-                        compressed_result["outline"] = compressed_outline
-                    elif isinstance(value, list):
-                        # 列表格式的outline
-                        compressed_result["outline"] = f"{len(value)} sections"
+            if compress_func is not None:
+                # 使用工具自定义的压缩函数
+                try:
+                    compressed_result = compress_func(result, self)
+                    if compressed_result is None:
+                        # 返回 None 表示不压缩,保留完整结果
+                        compressed_step["result"] = result
                     else:
-                        compressed_result["outline"] = value
+                        compressed_step["result"] = compressed_result
+                except Exception as e:
+                    logger.warning(f"压缩函数执行失败 {tool_name}: {e}, 使用默认压缩")
+                    compressed_step["result"] = self._default_compress_result(
+                        result)
+            else:
+                # 使用默认压缩策略
+                compressed_step["result"] = self._default_compress_result(
+                    result)
 
-                # 文档内容 - 只保留引用
-                elif key == "document" and isinstance(value, dict):
-                    compressed_result["document"] = {
-                        "title": value.get("title", "")[:50],
-                        "word_count": value.get("word_count", 0),
-                    }
-
-                # 错误信息
-                elif key == "error":
-                    compressed_result["error"] = str(value)[:200]
-
-                # 其他小型数据
-                elif not isinstance(value, (list, dict)) or len(str(value)) < 300:
-                    compressed_result[key] = value
-                # 大型数据只保留摘要
-                else:
-                    compressed_result[f"{key}_summary"] = (
-                        f"<{type(value).__name__}, {len(str(value))} chars>"
-                    )
-
-            compressed_step["result"] = compressed_result
             compressed["step_history"].append(compressed_step)
 
         # 3. 添加当前可用的中间数据摘要(更简洁)
@@ -338,6 +297,80 @@ class UnifiedExecutionState(ExecutionContext):
                 )
 
         return result_json
+
+    def _default_compress_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        默认结果压缩策略
+
+        当工具没有定义 compress_function 时使用此策略
+
+        Args:
+            result: 工具执行结果
+
+        Returns:
+            压缩后的结果
+        """
+        compressed_result = {}
+
+        for key, value in result.items():
+            # 文档内容特殊处理 - 只保留元数据
+            if key == "documents" and isinstance(value, list):
+                compressed_result["documents"] = [
+                    {
+                        "id": doc.get("id") or doc.get("document_id"),
+                        "title": doc.get("title", "")[:50],
+                        "content_length": len(doc.get("content", "")),
+                    }
+                    for doc in value[:5]
+                ]
+                if len(value) > 5:
+                    compressed_result["documents_count"] = len(value)
+
+            # 文档ID列表 - 只保留前20个
+            elif key == "document_ids" and isinstance(value, list):
+                compressed_result["document_ids"] = value[:20]
+                if len(value) > 20:
+                    compressed_result["document_ids_count"] = len(value)
+
+            # 大纲结构 - 压缩处理
+            elif key == "outline":
+                if isinstance(value, dict):
+                    compressed_outline = {
+                        "title": value.get("title", "")[:100],
+                        "sections_count": len(value.get("sections", [])),
+                    }
+                    sections = value.get("sections", [])[:3]
+                    compressed_outline["sections"] = [
+                        {"title": s.get("title", "")[:50]}
+                        for s in sections
+                    ]
+                    compressed_result["outline"] = compressed_outline
+                elif isinstance(value, list):
+                    compressed_result["outline"] = f"{len(value)} sections"
+                else:
+                    compressed_result["outline"] = value
+
+            # 文档内容 - 只保留引用
+            elif key == "document" and isinstance(value, dict):
+                compressed_result["document"] = {
+                    "title": value.get("title", "")[:50],
+                    "word_count": value.get("word_count", 0),
+                }
+
+            # 错误信息
+            elif key == "error":
+                compressed_result["error"] = str(value)[:200]
+
+            # 其他小型数据
+            elif not isinstance(value, (list, dict)) or len(str(value)) < 300:
+                compressed_result[key] = value
+            # 大型数据只保留摘要
+            else:
+                compressed_result[f"{key}_summary"] = (
+                    f"<{type(value).__name__}, {len(str(value))} chars>"
+                )
+
+        return compressed_result
 
     def update_quality_from_result(self, step_name: str, result: Dict[str, Any]):
         """根据工具执行结果更新质量指标"""

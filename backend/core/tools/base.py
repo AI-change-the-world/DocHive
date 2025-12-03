@@ -68,6 +68,7 @@ def tool(
     tags: Optional[List[str]] = None,
     output_schema: Optional[Dict[str, Any]] = None,
     validate_function: Optional[Callable] = None,  # 自定义验证函数
+    compress_function: Optional[Callable] = None,  # 自定义结果压缩函数
 ):
     """
     工具装饰器 - 将函数注册为可调用的工具
@@ -119,6 +120,12 @@ def tool(
             - 签名: (result, expectations, state, mode: ValidationMode) -> (passed: bool, reason: str)
             - 如果为None,则不进行校验,直接通过
             - mode是ValidationMode枚举: NONE/LOOSE/STRICT
+        compress_function: 自定义结果压缩函数
+            - 签名: (result: Dict, state: Any) -> Dict
+            - 用于在summarize_state时压缩工具执行结果
+            - 如果为None,则使用默认压缩策略
+            - 检索类工具: 只保留document_ids等关键信息
+            - 生成类工具: 返回None表示不压缩,保留完整结果
     """
 
     def decorator(func: Callable):
@@ -150,10 +157,11 @@ def tool(
             "is_async": inspect.iscoroutinefunction(func),
             "output_schema": output_schema,
             "validate_function": validate_function,
+            "compress_function": compress_function,
         }
 
         logger.debug(
-            f"注册工具: {name} (category={category}, has_validate_func={validate_function is not None})")
+            f"注册工具: {name} (category={category}, has_validate_func={validate_function is not None}, has_compress_func={compress_function is not None})")
 
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -257,6 +265,22 @@ def get_tool_output_schema(name: str) -> Optional[Dict[str, Any]]:
     if not tool_info:
         return None
     return tool_info.get("output_schema")
+
+
+def get_tool_compress_function(name: str) -> Optional[Callable]:
+    """
+    获取指定工具的结果压缩函数
+
+    Args:
+        name: 工具名称
+
+    Returns:
+        压缩函数，如果未定义则返回 None
+    """
+    tool_info = _TOOL_REGISTRY.get(name)
+    if not tool_info:
+        return None
+    return tool_info.get("compress_function")
 
 
 def get_tool_metadata(name: str) -> Optional[Dict[str, Any]]:

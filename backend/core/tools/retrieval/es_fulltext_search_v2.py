@@ -12,6 +12,45 @@ from loguru import logger
 from core.tools.base import ToolContext, tool, ValidationMode
 
 
+def _compress_search_result(result: Dict[str, Any], state: Any) -> Dict[str, Any]:
+    """
+    检索工具的结果压缩函数
+
+    检索工具只需保留核心信息:
+    - success: 执行状态
+    - document_ids: 文档ID列表(关键信息,后续步骤需要)
+    - count: 文档数量
+
+    不保留的信息:
+    - documents: 文档详细信息(可以通过ID重新获取)
+    - snippet: 文档摘要(不是必要信息)
+
+    Args:
+        result: 工具执行结果
+        state: 执行状态
+
+    Returns:
+        压缩后的结果
+    """
+    compressed = {
+        "success": result.get("success", False),
+        "count": result.get("count", 0),
+    }
+
+    # 保留文档ID列表(只保留前20个)
+    doc_ids = result.get("document_ids", [])
+    if doc_ids:
+        compressed["document_ids"] = doc_ids[:20]
+        if len(doc_ids) > 20:
+            compressed["document_ids_total"] = len(doc_ids)
+
+    # 错误信息必须保留
+    if result.get("error"):
+        compressed["error"] = str(result["error"])[:200]
+
+    return compressed
+
+
 def _validate_search(
     result: Dict[str, Any],
     expectations: str,
@@ -70,6 +109,7 @@ def _validate_search(
     category="retrieval",
     tags=["检索", "ES", "全文搜索"],
     validate_function=_validate_search,
+    compress_function=_compress_search_result,
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "document_ids": {
