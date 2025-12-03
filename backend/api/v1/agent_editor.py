@@ -260,7 +260,7 @@ async def execute_agent(
     """
     import json
 
-    from fastapi.responses import StreamingResponse
+    from sse_starlette import EventSourceResponse
 
     # 使用新的V2执行器
     from core.agents.custom_agent_executor_v2 import CustomAgentExecutorV2
@@ -314,25 +314,17 @@ async def execute_agent(
                     es_client=es_client,
                     es_index=es_index,
                 ):
-                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    yield json.dumps(event, ensure_ascii=False)
             except Exception as e:
                 logger.error(f"❌ 执行过程出错: {e}")
                 import traceback
 
                 logger.error(traceback.format_exc())
                 error_event = {"event": "error", "data": {"error": str(e)}}
-                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+                yield json.dumps(error_event, ensure_ascii=False)
 
         # 5. 返回SSE响应
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
+        return EventSourceResponse(event_generator())
 
     except HTTPException:
         raise

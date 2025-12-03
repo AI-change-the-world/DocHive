@@ -8,6 +8,7 @@
 4. 明确回退策略表,关键步骤失败时有清晰的回退路径
 """
 
+import asyncio
 import json
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
@@ -621,7 +622,7 @@ class ExpectationEvaluator:
         if validate_function is None:
             success = step_result.get("success", False)
             if success:
-                logger.info(f"\u2705 跳过验证[{step_name}]: 未定义validate_function")
+                logger.info(f"👎🏻 跳过验证[{step_name}]: 未定义validate_function")
                 return True, "无需验证,执行成功即通过"
             else:
                 error = step_result.get("error", "执行失败")
@@ -645,14 +646,15 @@ class ExpectationEvaluator:
             if isinstance(result, tuple) and len(result) == 2:
                 passed, reason = result
                 mode_name = validation_mode.value
-                logger.info(f"{'\u2705' if passed else '\u274c'} 验证[{step_name}][{mode_name}]: {reason}")
+                icon = "👍🏻" if passed else "👎🏻"
+                logger.info(f"{icon} 验证[{step_name}][{mode_name}]: {reason}")
                 return passed, reason
             else:
                 logger.warning(
                     f"validate_function返回格式错误,期望(bool, str),实际: {result}")
                 return step_result.get("success", False), "验证函数返回格式错误"
         except Exception as e:
-            logger.error(f"\u274c validate_function执行失败: {e}")
+            logger.error(f"👎🏻 validate_function执行失败: {e}")
             import traceback
             logger.error(traceback.format_exc())
             # 失败时回退到只检查success

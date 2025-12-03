@@ -1,6 +1,7 @@
 from typing import Optional
 
 from loguru import logger
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import declarative_base
+from sqlalchemy.pool import StaticPool
 
 from config import DynamicConfig
 
@@ -33,6 +35,23 @@ def get_database_url(url: str) -> str:
     return url
 
 
+def _set_sqlite_pragma(dbapi_conn, connection_record):
+    """为 SQLite 连接设置 PRAGMA 配置
+
+    WAL 模式允许并发读写，大幅提升并发性能
+    """
+    cursor = dbapi_conn.cursor()
+    # WAL 模式：允许读写并发
+    cursor.execute("PRAGMA journal_mode=WAL")
+    # 设置忙等待超时（毫秒），避免立即报错
+    cursor.execute("PRAGMA busy_timeout=30000")
+    # 同步模式：NORMAL 平衡性能和安全性
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    # 启用外键约束
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+
 def init_engine(config: DynamicConfig):
     """初始化数据库引擎
 
@@ -46,19 +65,33 @@ def init_engine(config: DynamicConfig):
 
     _config = config
     database_url = config.DATABASE_URL
+    is_sqlite = database_url.startswith("sqlite")
 
     # 创建异步引擎
     engine_kwargs: dict = {
         "echo": False,
     }
 
-    # SQLite 不需要连接池配置
-    if not database_url.startswith("sqlite"):
+    if is_sqlite:
+        # SQLite 特殊配置
+        # 使用 StaticPool 确保连接复用，配合 WAL 模式
+        engine_kwargs["poolclass"] = StaticPool
+        # 允许多线程访问（aiosqlite 需要）
+        engine_kwargs["connect_args"] = {"check_same_thread": False}
+        logger.info("📦 使用 SQLite 数据库，已启用 WAL 模式和 StaticPool")
+    else:
+        # PostgreSQL/MySQL 使用连接池
         engine_kwargs["pool_size"] = config.DATABASE_POOL_SIZE
         engine_kwargs["max_overflow"] = config.DATABASE_MAX_OVERFLOW
 
     engine = create_async_engine(
         get_database_url(database_url), **engine_kwargs)
+
+    # 为 SQLite 添加 PRAGMA 配置
+    if is_sqlite:
+        @event.listens_for(engine.sync_engine, "connect")
+        def set_sqlite_pragma(dbapi_conn, connection_record):
+            _set_sqlite_pragma(dbapi_conn, connection_record)
 
     # 创建异步会话工厂
     AsyncSessionLocal = async_sessionmaker(

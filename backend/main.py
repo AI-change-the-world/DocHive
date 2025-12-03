@@ -2,7 +2,7 @@ import logging
 import traceback
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -10,7 +10,7 @@ from loguru import logger
 
 from api.router import api_v1_router
 from config import LocalSettings, close_dynamic_config, create_dynamic_config
-from database import init_db
+from database import get_db, init_db
 from middleware import RequestLoggingMiddleware
 from utils.llm_client import init_llm_client
 from utils.search_engine import init_search_client
