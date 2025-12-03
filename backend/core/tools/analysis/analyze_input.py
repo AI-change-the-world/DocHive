@@ -10,7 +10,45 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
-from core.tools.base import ToolContext, tool
+from core.tools.base import ToolContext, tool, ValidationMode
+
+
+def _validate_analyze_input(
+    result: Dict[str, Any],
+    expectations: str,
+    state: Any,
+    mode: ValidationMode,
+    llm_client=None,
+    db=None,
+) -> tuple[bool, str]:
+    """
+    analyze_input 工具的验证函数(规则验证)
+
+    核心检查: 是否识别出了案件类型
+    """
+    if mode == ValidationMode.NONE:
+        if result.get("success", False):
+            return True, "无需校验"
+        return False, f"执行失败: {result.get('error', '未知错误')}"
+
+    if not result.get("success", False):
+        return False, f"执行失败: {result.get('error', '未知错误')}"
+
+    case_type = result.get("case_type", [])
+    case_summary = result.get("case_summary", "")
+
+    if mode == ValidationMode.STRICT:
+        # 严格模式: 需要识别出案件类型且有摘要
+        if not case_type:
+            return False, "未识别出案件类型"
+        if not case_summary:
+            return False, "未生成案件摘要"
+        return True, f"识别出{len(case_type)}个案件类型"
+    else:  # LOOSE
+        # 宽松模式: 只要成功执行就通过
+        if case_type or case_summary:
+            return True, "分析完成"
+        return True, "执行成功"
 
 
 @tool(
@@ -35,7 +73,7 @@ from core.tools.base import ToolContext, tool
     required=["input_text"],
     category="analysis",
     tags=["分析", "用户输入", "案件类型", "信息提取"],
-    validation_mode="loose",  # 使用宽松模式评估,只要识别出案件类型就算通过
+    validate_function=_validate_analyze_input,
     output_schema={
         "case_summary": {"type": "string", "description": "内容摘要"},
         "case_type": {"type": "list", "description": "识别出的案件/内容类型"},

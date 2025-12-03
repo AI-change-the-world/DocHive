@@ -9,7 +9,43 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
-from core.tools.base import ToolContext, tool
+from core.tools.base import ToolContext, tool, ValidationMode
+
+
+def _validate_document_extraction(
+    result: Dict[str, Any],
+    expectations: str,
+    state: Any,
+    mode: ValidationMode,
+    llm_client=None,
+    db=None,
+) -> tuple[bool, str]:
+    """
+    document_extraction 工具的验证函数(规则验证)
+
+    核心检查: 是否提取了内容
+    注: 提取是从文档中抽取内容,不是生成,所以用规则验证即可
+    """
+    if mode == ValidationMode.NONE:
+        if result.get("success", False):
+            return True, "无需校验"
+        return False, f"执行失败: {result.get('error', '未知错误')}"
+
+    if not result.get("success", False):
+        return False, f"执行失败: {result.get('error', '未知错误')}"
+
+    extracted_content = result.get("extracted_content", {})
+
+    if mode == ValidationMode.STRICT:
+        # 严格模式: 需要提取到内容
+        if isinstance(extracted_content, dict) and len(extracted_content) > 0:
+            return True, f"提取了{len(extracted_content)}个章节的内容"
+        return False, "未提取到任何内容"
+    else:  # LOOSE
+        # 宽松模式: 只要执行成功就通过
+        if extracted_content:
+            return True, "内容提取完成"
+        return True, "执行成功"
 
 
 @tool(
@@ -37,6 +73,7 @@ from core.tools.base import ToolContext, tool
     required=["outline", "documents", "query"],
     category="document",
     tags=["文档", "摘取", "提取", "extraction"],
+    validate_function=_validate_document_extraction,
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "extracted_content": {

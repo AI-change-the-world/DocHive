@@ -5,10 +5,22 @@
 """
 
 import inspect
+from enum import Enum
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, Type, get_type_hints
 
 from loguru import logger
+
+
+# ==================== 验证模式枚举 ====================
+
+
+class ValidationMode(Enum):
+    """验证模式枚举"""
+    NONE = "none"      # 不校验
+    LOOSE = "loose"    # 宽松模式
+    STRICT = "strict"  # 严格模式
+
 
 # ==================== 全局注册表 ====================
 
@@ -55,32 +67,43 @@ def tool(
     category: str = "general",
     tags: Optional[List[str]] = None,
     output_schema: Optional[Dict[str, Any]] = None,
-    validation_mode: str = "loose",  # 新增: loose(宽松) | strict(严格)
+    validate_function: Optional[Callable] = None,  # 自定义验证函数
 ):
     """
     工具装饰器 - 将函数注册为可调用的工具
 
     使用方式:
     ```python
+    # 方式1: 不校验(默认,validate_function=None)
     @tool(
         name="get_template_statistics",
         description="获取指定模板的统计信息",
-        parameters={
-            "template_id": {
-                "type": "integer",
-                "description": "模板ID"
-            }
-        },
-        required=["template_id"],
-        category="statistics",
-        tags=["统计", "模板"],
-        output_schema={
-            "success": {"type": "boolean", "description": "执行是否成功"},
-            "data": {"type": "object", "description": "统计数据"}
-        },
-        validation_mode="loose"  # 结果验证模式
+        parameters={...},
     )
     async def get_template_statistics(ctx: ToolContext, template_id: int):
+        ...
+
+    # 方式2: 使用自定义验证函数
+    def validate_search(result, expectations, state, mode: ValidationMode):
+        # mode是ValidationMode枚举: NONE/LOOSE/STRICT
+        if mode == ValidationMode.NONE:
+            return result.get("success", False), "无需校验"
+        if mode == ValidationMode.STRICT:
+            # 严格校验逻辑
+            if result.get("count", 0) >= 5:
+                return True, "结果数量达标"
+            return False, "结果数量不足"
+        else:  # LOOSE
+            # 宽松校验逻辑
+            if result.get("success", False):
+                return True, "执行成功"
+            return False, "执行失败"
+
+    @tool(
+        name="es_fulltext_search",
+        validate_function=validate_search,
+    )
+    async def es_fulltext_search(...):
         ...
     ```
 
@@ -91,10 +114,11 @@ def tool(
         required: 必需参数列表
         category: 工具分类（retrieval/document/statistics/analysis）
         tags: 标签列表（用于筛选和分组）
-        output_schema: 输出结构定义（可选，用于标准化输出和参数自动装配）
-        validation_mode: 结果验证模式
-            - "loose": 宽松模式,主要检查结构,对内容质量不做过多要求(默认,适合V2动态规划)
-            - "strict": 严格模式,对结果质量有较高要求(适合关键业务流程)
+        output_schema: 输出结构定义
+        validate_function: 自定义验证函数
+            - 签名: (result, expectations, state, mode: ValidationMode) -> (passed: bool, reason: str)
+            - 如果为None,则不进行校验,直接通过
+            - mode是ValidationMode枚举: NONE/LOOSE/STRICT
     """
 
     def decorator(func: Callable):
@@ -125,11 +149,11 @@ def tool(
             "tags": tags or [],
             "is_async": inspect.iscoroutinefunction(func),
             "output_schema": output_schema,
-            "validation_mode": validation_mode,  # 新增
+            "validate_function": validate_function,
         }
 
         logger.debug(
-            f"注册工具: {name} (category={category}, validation_mode={validation_mode})")
+            f"注册工具: {name} (category={category}, has_validate_func={validate_function is not None})")
 
         @wraps(func)
         async def wrapper(*args, **kwargs):

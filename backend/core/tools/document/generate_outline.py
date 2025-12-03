@@ -5,10 +5,90 @@
 """
 
 from typing import Any, Dict
+import json
 
 from loguru import logger
 
-from core.tools.base import ToolContext, tool
+from core.tools.base import ToolContext, tool, ValidationMode
+
+
+async def _validate_generate_outline(
+    result: Dict[str, Any],
+    expectations: str,
+    state: Any,
+    mode: ValidationMode,
+    llm_client=None,
+    db=None,
+) -> tuple[bool, str]:
+    """generate_outline工具的验证函数(LLM验证)"""
+    # NONE模式:只检查success
+    if mode == ValidationMode.NONE:
+        if result.get("success", False):
+            return True, "无需校验"
+        return False, f"执行失败: {result.get('error', '未知错误')}"
+
+    if not result.get("success", False):
+        return False, f"执行失败: {result.get('error', '未知错误')}"
+
+    # 生成性工具必须使用LLM验证
+    if llm_client is None:
+        # 没有LLM客户端时降级为简单规则验证
+        outline = result.get("outline", [])
+        if outline:
+            return True, "LLM不可用,降级为简单验证:有大纲输出"
+        return False, "LLM不可用,降级为简单验证:无大纲输出"
+
+    # 获取输入上下文
+    input_query = state.state.get("inputs", {}).get("query", "")
+    outline = result.get("outline", [])
+
+    # 构造验证prompt
+    strictness = "严格" if mode == ValidationMode.STRICT else "宽松"
+    system_prompt = f"""你是一个大纲质量评估专家。请评估生成的大纲是否满足期望。
+
+【评估模式】{strictness}模式
+- 严格模式:大纲必须结构完整、逻辑清晰、章节合理
+- 宽松模式:只要大纲基本可用、有基本结构即可
+
+【重要】如果用户输入本身不支持生成符合期望的大纲(如信息不足、目标不合理),请在原因中明确指出这是输入问题,不应该重试。
+
+请返回JSON格式:
+{{
+    "passed": true/false,
+    "reason": "评估原因(如果不通过是因为输入问题,请明确说明)"
+}}"""
+
+    user_prompt = f"""【用户输入】
+{input_query}
+
+【期望】
+{expectations}
+
+【生成的大纲】
+{json.dumps(outline, ensure_ascii=False, indent=2)}
+
+请评估这个大纲是否满足期望。"""
+
+    try:
+        response = await llm_client.extract_json_response(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            db=db,
+            max_tokens=512,
+        )
+
+        passed = response.get("passed", False)
+        reason = response.get("reason", "LLM未返回原因")
+        return passed, reason
+
+    except Exception as e:
+        # LLM调用失败时降级为简单规则验证
+        logger.error(f"LLM验证失败: {e}")
+        if outline:
+            return True, f"LLM验证异常,降级为简单验证:有大纲输出"
+        return False, f"LLM验证异常,降级为简单验证:无大纲输出"
 
 
 @tool(
@@ -27,6 +107,7 @@ from core.tools.base import ToolContext, tool
     required=["query"],
     category="document",
     tags=["文档", "大纲", "outline"],
+    validate_function=_validate_generate_outline,
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "title": {"type": "string", "description": "文档标题"},

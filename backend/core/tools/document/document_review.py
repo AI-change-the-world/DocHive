@@ -9,7 +9,109 @@ from typing import Any, Dict, Optional
 
 from loguru import logger
 
-from core.tools.base import ToolContext, tool
+from core.tools.base import ToolContext, tool, ValidationMode
+
+
+async def _validate_document_review(
+    result: Dict[str, Any],
+    expectations: str,
+    state: Any,
+    mode: ValidationMode,
+    llm_client=None,
+    db=None,
+) -> tuple[bool, str]:
+    """
+    document_review 工具的验证函数(LLM验证)
+
+    核心检查: 是否完成了审阅
+    生成性工具必须使用LLM验证,并包含输入上下文
+    """
+    # NONE模式:只检查success
+    if mode == ValidationMode.NONE:
+        if result.get("success", False):
+            return True, "无需校验"
+        return False, f"执行失败: {result.get('error', '未知错误')}"
+
+    if not result.get("success", False):
+        return False, f"执行失败: {result.get('error', '未知错误')}"
+
+    # 生成性工具必须使用LLM验证
+    if llm_client is None:
+        # 没有LLM客户端时降级为简单规则验证
+        reviewed = result.get("reviewed_document", {})
+        if reviewed and reviewed.get("content"):
+            return True, "LLM不可用,降级为简单验证:有审阅结果"
+        return False, "LLM不可用,降级为简单验证:无审阅结果"
+
+    # 获取输入上下文
+    input_query = state.state.get("inputs", {}).get("query", "")
+    composed_document = state.state.get("composed_document", {})
+    reviewed_document = result.get("reviewed_document", {})
+    review_suggestions = result.get("review_suggestions", [])
+
+    # 构造验证prompt
+    strictness = "严格" if mode == ValidationMode.STRICT else "宽松"
+    system_prompt = f"""你是一个文档审阅质量评估专家。请评估审阅结果是否满足期望。
+
+【评估模式】{strictness}模式
+- 严格模式:审阅必须全面、准确、有价值
+- 宽松模式:只要完成了基本审阅即可
+
+【重要】如果用户输入或文档本身不支持完成符合期望的审阅(如要求不合理),请在原因中明确指出这是输入问题,不应该重试。
+
+请返回JSON格式:
+{{
+    "passed": true/false,
+    "reason": "评估原因(如果不通过是因为输入问题,请明确说明)"
+}}"""
+
+    # 只传递文档的摘要信息
+    doc_summary = {
+        "title": composed_document.get("title", ""),
+        "word_count": composed_document.get("word_count", 0),
+    }
+
+    review_summary = {
+        "has_reviewed_document": bool(reviewed_document and reviewed_document.get("content")),
+        "suggestions_count": len(review_suggestions),
+        "suggestions_preview": review_suggestions[:3] if review_suggestions else [],
+    }
+
+    user_prompt = f"""【用户输入】
+{input_query}
+
+【被审阅文档摘要】
+{json.dumps(doc_summary, ensure_ascii=False, indent=2)}
+
+【期望】
+{expectations}
+
+【审阅结果摘要】
+{json.dumps(review_summary, ensure_ascii=False, indent=2)}
+
+请评估这个审阅是否满足期望。"""
+
+    try:
+        response = await llm_client.extract_json_response(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            db=db,
+            max_tokens=512,
+        )
+
+        passed = response.get("passed", False)
+        reason = response.get("reason", "LLM未返回原因")
+        return passed, reason
+
+    except Exception as e:
+        # LLM调用失败时降级为简单规则验证
+        logger.error(f"LLM验证失败: {e}")
+        reviewed = result.get("reviewed_document", {})
+        if reviewed and reviewed.get("content"):
+            return True, "LLM验证异常,降级为简单验证:有审阅结果"
+        return False, "LLM验证异常,降级为简单验证:无审阅结果"
 
 
 @tool(
@@ -39,6 +141,7 @@ from core.tools.base import ToolContext, tool
     required=["document"],
     category="document",
     tags=["文档", "校对", "润色", "review"],
+    validate_function=_validate_document_review,
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "reviewed_document": {
@@ -222,7 +325,8 @@ async def document_review(
                     reviewed_content = reviewed_content[:8000]
                 # 拼接后续内容
                 remaining_content = content[8000:]
-                reviewed_document["content"] = reviewed_content + remaining_content
+                reviewed_document["content"] = reviewed_content + \
+                    remaining_content
                 logger.info("✅ 已合并文档的后续内容")
 
             # 计算字数

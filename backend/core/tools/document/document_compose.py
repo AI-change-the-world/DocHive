@@ -9,7 +9,105 @@ from typing import Any, Dict, List
 
 from loguru import logger
 
-from core.tools.base import ToolContext, tool
+from core.tools.base import ToolContext, tool, ValidationMode
+
+
+async def _validate_document_compose(
+    result: Dict[str, Any],
+    expectations: str,
+    state: Any,
+    mode: ValidationMode,
+    llm_client=None,
+    db=None,
+) -> tuple[bool, str]:
+    """
+    document_compose 工具的验证函数(LLM验证)
+
+    核心检查: 是否生成了文档
+    生成性工具必须使用LLM验证,并包含输入上下文
+    """
+    # NONE模式:只检查success
+    if mode == ValidationMode.NONE:
+        if result.get("success", False):
+            return True, "无需校验"
+        return False, f"执行失败: {result.get('error', '未知错误')}"
+
+    if not result.get("success", False):
+        return False, f"执行失败: {result.get('error', '未知错误')}"
+
+    # 生成性工具必须使用LLM验证
+    if llm_client is None:
+        # 没有LLM客户端时降级为简单规则验证
+        document = result.get("document", {})
+        word_count = document.get("word_count", 0) if document else 0
+        if word_count > 50:
+            return True, f"LLM不可用,降级为简单验证:生成{word_count}字文档"
+        return False, f"LLM不可用,降级为简单验证:文档过短({word_count}字)"
+
+    # 获取输入上下文
+    input_query = state.state.get("inputs", {}).get("query", "")
+    outline = state.state.get("outline", {})
+    document = result.get("document", {})
+
+    # 构造验证prompt
+    strictness = "严格" if mode == ValidationMode.STRICT else "宽松"
+    system_prompt = f"""你是一个文档质量评估专家。请评估生成的文档是否满足期望。
+
+【评估模式】{strictness}模式
+- 严格模式:文档必须内容完整、逻辑清晰、符合大纲要求、质量高
+- 宽松模式:只要文档基本可用、有基本内容即可
+
+【重要】如果用户输入或大纲本身不支持生成符合期望的文档(如信息不足、要求不合理),请在原因中明确指出这是输入问题,不应该重试。
+
+请返回JSON格式:
+{{
+    "passed": true/false,
+    "reason": "评估原因(如果不通过是因为输入问题,请明确说明)"
+}}"""
+
+    # 只传递文档的摘要信息,避免传递过长内容
+    doc_summary = {
+        "title": document.get("title", ""),
+        "word_count": document.get("word_count", 0),
+        "sections_count": len(document.get("sections", [])),
+        "content_preview": document.get("content", "")[:500] + "..." if document.get("content") else "",
+    }
+
+    user_prompt = f"""【用户输入】
+{input_query}
+
+【大纲】
+{json.dumps(outline, ensure_ascii=False, indent=2)}
+
+【期望】
+{expectations}
+
+【生成的文档摘要】
+{json.dumps(doc_summary, ensure_ascii=False, indent=2)}
+
+请评估这个文档是否满足期望。"""
+
+    try:
+        response = await llm_client.extract_json_response(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            db=db,
+            max_tokens=512,
+        )
+
+        passed = response.get("passed", False)
+        reason = response.get("reason", "LLM未返回原因")
+        return passed, reason
+
+    except Exception as e:
+        # LLM调用失败时降级为简单规则验证
+        logger.error(f"LLM验证失败: {e}")
+        word_count = document.get("word_count", 0) if document else 0
+        if word_count > 50:
+            return True, f"LLM验证异常,降级为简单验证:生成{word_count}字文档"
+        return False, f"LLM验证异常,降级为简单验证:文档过短({word_count}字)"
 
 
 @tool(
@@ -41,6 +139,7 @@ from core.tools.base import ToolContext, tool
     required=["outline", "extracted_content", "query"],
     category="document",
     tags=["文档", "组合", "生成", "compose"],
+    validate_function=_validate_document_compose,
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "document": {

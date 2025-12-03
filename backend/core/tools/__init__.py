@@ -11,6 +11,7 @@ from core.tools.analysis.document_analyzer_v2 import analyze_documents
 # 基础设施
 from core.tools.base import (
     ToolContext,
+    ValidationMode,
     execute_tool,
     get_all_tools,
     get_tool,
@@ -46,6 +47,7 @@ __all__ = [
     # 基础设施
     "tool",
     "ToolContext",
+    "ValidationMode",
     "get_tool",
     "get_all_tools",
     "get_tools_by_category",

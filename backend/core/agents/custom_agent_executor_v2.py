@@ -545,143 +545,85 @@ class ExpectationEvaluator:
         step_result: Dict[str, Any],
         state: UnifiedExecutionState,
         db: AsyncSession,
-        step_name: Optional[str] = None,  # 新增: 工具名称
+        step_name: Optional[str] = None,
+        mode: Optional[str] = None,  # 外部传入的模式: none/loose/strict
     ) -> tuple[bool, str]:
         """
-        评估步骤执行结果是否满足期望
+                评估步骤执行结果是否满足期望
+
+        验证逻辑:
+        1. 如果工具没有定义 validate_function,直接通过(只检查success)
+        2. 如果有 validate_function,调用它并传入 ValidationMode 枚举、llm_client、db
 
         Args:
             expectations: 自然语言描述的期望
             step_result: 步骤执行结果
             state: 当前执行状态
-            step_name: 工具名称,用于获取validation_mode
+            db: 数据库会话
+            step_name: 工具名称
+            mode: 验证模式(none/loose/strict),默认none
 
         Returns:
             (passed, reason): 是否通过和原因
         """
-        if not expectations:
-            # 没有明确期望,只要成功就算通过
-            return step_result.get("success", False), "无期望要求"
+        from core.tools.base import ValidationMode, get_tool
 
-        # 获取工具的validation_mode
-        from core.tools.base import get_tool
-        validation_mode = "loose"  # 默认宽松模式
+        # 获取工具信息
+        validate_function = None
         if step_name:
             tool_info = get_tool(step_name)
             if tool_info:
-                validation_mode = tool_info.get("validation_mode", "loose")
+                validate_function = tool_info.get("validate_function")
 
-        # 构造简洁的上下文 - 保留更多关键字段
-        context = {
-            "success": step_result.get("success", False),
-            "result_summary": {
-                k: v for k, v in step_result.items()
-                if k in [
-                    # 通用字段
-                    "document_ids", "documents", "outline", "count", "summary",
-                    # analyze_input 工具的输出字段
-                    "case_summary", "case_type", "key_info", "analysis_result",
-                    # 其他工具的关键输出
-                    "extracted_content", "composed_document", "reviewed_document",
-                ]
-                and (not isinstance(v, str) or len(v) < 500)
-            },
-            "quality_metrics": state.state.get("quality", {}),
-        }
+        # 解析模式
+        validation_mode = ValidationMode.NONE
+        if mode:
+            mode_lower = mode.lower()
+            if mode_lower == "strict":
+                validation_mode = ValidationMode.STRICT
+            elif mode_lower == "loose":
+                validation_mode = ValidationMode.LOOSE
 
-        # 根据validation_mode调整prompt
-        if validation_mode == "strict":
-            system_prompt = """你是一个结果评估专家。
+        # 如果没有定义 validate_function,直接通过(只检查success)
+        if validate_function is None:
+            success = step_result.get("success", False)
+            if success:
+                logger.info(f"\u2705 跳过验证[{step_name}]: 未定义validate_function")
+                return True, "无需验证,执行成功即通过"
+            else:
+                error = step_result.get("error", "执行失败")
+                return False, f"执行失败: {error}"
 
-【任务】
-严格判断执行结果是否满足用户的期望。
-
-【判定原则 - 严格模式】
-1. **准确性优先**: 结果必须准确满足期望要求
-2. **数量要求**: 明确的数量要求必须严格满足
-3. **质量标准**: 对结果质量有较高要求
-4. **完整性**: 期望的所有方面都应该被满足
-
-【什么情况下应该不通过】
-- 结果质量明显不符合预期
-- 关键信息缺失或错误
-- 结构不完整
-
-【返回格式】
-{
-    "passed": true/false,
-    "reason": "详细说明通过/未通过的原因"
-}
-"""
-        else:  # loose mode
-            system_prompt = """你是一个结果评估专家。
-
-【任务】
-判断执行结果是否基本满足用户的期望。
-
-【判定原则 - 超宽松模式】
-
-**核心原则: 只要有输出,就应该通过!**
-
-1. **数量要求完全忽略**: 期望中的"至少N个"、"每个查询返回3个"等数量要求全部忽略
-   - 1个结果 = 通过
-   - 0个结果但执行成功 = 通过(数据库可能没有相关数据)
-   - 数量不足不是失败的理由
-
-2. **核心结果优先**: 只要完成了期望中的核心任务,就应该通过
-   - "检索相关文档" + 找到1个 = 通过
-   - "识别案件类型" + 识别出1个 = 通过
-
-3. **附加要求全部忽略**: "并且xxx"、"同时xxx"、"覆盖xxx"等都是可选的
-
-4. **避免死循环**: 极力避免重试,让流程继续
-
-【唯一不通过的情况】
-- success=false(工具执行本身报错)
-- 完全无关的输出(如期望分析案件,却输出天气预报)
-
-【返回格式】
-{
-    "passed": true,
-    "reason": "简洁说明"
-}
-
-注意: 默认应该返回passed=true, 只有极端情况才返回false!
-"""
-
-        user_prompt = f"""【期望】
-{expectations}
-
-【执行结果】
-{json.dumps(context, ensure_ascii=False, indent=2)}
-
-【验证模式】{validation_mode}
-
-请判断是否满足期望。"""
-
+        # 调用自定义验证函数,传入 ValidationMode 枚举、llm_client、db
         try:
+            # 获取 llm_client
             llm_client = get_llm_client()
-            response = await llm_client.extract_json_response(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                db=db,
-                max_tokens=4096,
-            )
 
-            passed = response.get("passed", False)
-            reason = response.get("reason", "")
+            # 检查函数是否是异步的
+            if asyncio.iscoroutinefunction(validate_function):
+                result = await validate_function(
+                    step_result, expectations, state, validation_mode, llm_client, db
+                )
+            else:
+                result = validate_function(
+                    step_result, expectations, state, validation_mode, llm_client, db
+                )
 
-            logger.info(
-                f"{'✅' if passed else '❌'} 期望评估[{validation_mode}]: {reason}")
-
-            return passed, reason
-
+            if isinstance(result, tuple) and len(result) == 2:
+                passed, reason = result
+                mode_name = validation_mode.value
+                logger.info(f"{'\u2705' if passed else '\u274c'} 验证[{step_name}][{mode_name}]: {reason}")
+                return passed, reason
+            else:
+                logger.warning(
+                    f"validate_function返回格式错误,期望(bool, str),实际: {result}")
+                return step_result.get("success", False), "验证函数返回格式错误"
         except Exception as e:
-            logger.error(f"❌ 期望评估失败: {e}")
-            # fallback: 只要执行成功就算通过
-            return step_result.get("success", False), f"评估异常: {str(e)}"
+            logger.error(f"\u274c validate_function执行失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            # 失败时回退到只检查success
+            return step_result.get("success", False), f"验证异常: {str(e)}"
 
 
 class CustomAgentExecutorV2:

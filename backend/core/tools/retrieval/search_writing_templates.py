@@ -44,7 +44,7 @@ from core.tools.base import ToolContext, tool
     required=["query", "template_id"],
     category="retrieval",
     tags=["检索", "写作模板", "文档润色", "参考样本"],
-    validation_mode="loose",  # 宽松模式，查不到也不算失败
+    validate_function=None,
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "templates": {

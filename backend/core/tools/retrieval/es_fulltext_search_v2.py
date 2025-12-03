@@ -9,7 +9,45 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
-from core.tools.base import ToolContext, tool
+from core.tools.base import ToolContext, tool, ValidationMode
+
+
+def _validate_search(
+    result: Dict[str, Any],
+    expectations: str,
+    state: Any,
+    mode,
+    llm_client=None,
+    db=None,
+) -> tuple[bool, str]:
+    """
+    检索工具(规则验证)
+
+    核心检查: 是否检索到了文档
+    """
+    if mode == ValidationMode.NONE:
+        if result.get("success", False):
+            return True, "无需校验"
+        return False, f"执行失败: {result.get('error', '未知错误')}"
+
+    if not result.get("success", False):
+        return False, f"执行失败: {result.get('error', '未知错误')}"
+
+    doc_ids = result.get("document_ids", [])
+    count = result.get("count", len(doc_ids))
+
+    if mode == ValidationMode.STRICT:
+        # 严格模式: 需要检索到至少一定数量的文档
+        if count >= 3:
+            return True, f"检索到{count}个文档"
+        elif count > 0:
+            return True, f"检索到{count}个文档(数量较少)"
+        return False, "未检索到任何文档"
+    else:  # LOOSE
+        # 宽松模式: 只要执行成功就通过,有无结果都可以
+        if count > 0:
+            return True, f"检索到{count}个文档"
+        return True, "检索完成,暂无匹配文档"
 
 
 @tool(
@@ -31,7 +69,7 @@ from core.tools.base import ToolContext, tool
     required=["query", "template_id"],
     category="retrieval",
     tags=["检索", "ES", "全文搜索"],
-    validation_mode="loose",  # 宽松模式: 找到任何结果就算通过,不强求数量
+    validate_function=_validate_search,
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "document_ids": {
