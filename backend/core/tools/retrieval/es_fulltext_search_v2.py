@@ -31,6 +31,7 @@ from core.tools.base import ToolContext, tool
     required=["query", "template_id"],
     category="retrieval",
     tags=["检索", "ES", "全文搜索"],
+    validation_mode="loose",  # 宽松模式: 找到任何结果就算通过,不强求数量
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "document_ids": {

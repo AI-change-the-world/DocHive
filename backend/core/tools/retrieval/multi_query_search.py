@@ -36,6 +36,7 @@ from core.tools.base import ToolContext, tool
     required=["queries", "template_id"],
     category="retrieval",
     tags=["检索", "ES", "多查询", "全文搜索"],
+    validation_mode="loose",  # 宽松模式: 找到任何结果就算通过,不强求数量
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "document_ids": {
@@ -217,7 +218,8 @@ async def multi_query_search(
                     documents.extend(doc_list)
                 else:
                     documents.append(doc_list)
-            documents = sorted(documents, key=lambda x: x["score"], reverse=True)
+            documents = sorted(
+                documents, key=lambda x: x["score"], reverse=True)
 
         document_ids = [doc["document_id"] for doc in documents]
 

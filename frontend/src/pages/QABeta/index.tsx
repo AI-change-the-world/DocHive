@@ -740,9 +740,9 @@ export default function QABetaPage() {
         <div className="flex flex-wrap items-center gap-2">
           <ThunderboltOutlined className="text-2xl text-purple-600" />
           <Title level={3} className="!mb-0 !text-lg">
-            智能体问答 - Beta
+            知识问答
           </Title>
-          <Tag color="purple">V2架构</Tag>
+          {/* <Tag color="purple">V2架构</Tag> */}
         </div>
         <div className="flex items-center space-x-2">
           {messages.length > 0 && (
@@ -788,16 +788,14 @@ export default function QABetaPage() {
         {messages.map((msg) => (
           <div
             key={msg.id}
-            className={`flex ${
-              msg.type === "user" ? "justify-end" : "justify-start"
-            }`}
+            className={`flex ${msg.type === "user" ? "justify-end" : "justify-start"
+              }`}
           >
             <Card
-              className={`w-full md:max-w-[85%] lg:max-w-[80%] ${
-                msg.type === "user"
+              className={`w-full md:max-w-[85%] lg:max-w-[80%] ${msg.type === "user"
                   ? "bg-primary-50 border-primary-200"
                   : "bg-white border-gray-200"
-              }`}
+                }`}
             >
               <div className="flex items-start space-x-2">
                 <div className="flex-shrink-0">
@@ -859,13 +857,12 @@ export default function QABetaPage() {
                                     <Card
                                       key={idx}
                                       size="small"
-                                      className={`${
-                                        stage.status === "finish"
+                                      className={`${stage.status === "finish"
                                           ? "bg-green-50 border-green-200"
                                           : stage.status === "process"
-                                          ? "bg-blue-50 border-blue-200"
-                                          : "bg-gray-50 border-gray-200"
-                                      }`}
+                                            ? "bg-blue-50 border-blue-200"
+                                            : "bg-gray-50 border-gray-200"
+                                        }`}
                                     >
                                       <div className="flex flex-wrap items-start justify-between gap-2">
                                         <div className="flex items-start space-x-2 flex-1 min-w-0">
@@ -1003,10 +1000,9 @@ export default function QABetaPage() {
                           智能体正在执行...
                         </Text>
                         <Badge
-                          count={`${
-                            agentStages.filter((s) => s.status === "finish")
+                          count={`${agentStages.filter((s) => s.status === "finish")
                               .length
-                          }/${agentStages.length}`}
+                            }/${agentStages.length}`}
                           style={{ backgroundColor: "#722ed1" }}
                         />
                       </div>
@@ -1019,13 +1015,12 @@ export default function QABetaPage() {
                           <Card
                             key={idx}
                             size="small"
-                            className={`${
-                              stage.status === "finish"
+                            className={`${stage.status === "finish"
                                 ? "bg-green-50 border-green-200"
                                 : stage.status === "process"
-                                ? "bg-white border-purple-300"
-                                : "bg-gray-50 border-gray-200"
-                            }`}
+                                  ? "bg-white border-purple-300"
+                                  : "bg-gray-50 border-gray-200"
+                              }`}
                           >
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <div className="flex items-start space-x-2 flex-1 min-w-0">
@@ -1344,8 +1339,8 @@ export default function QABetaPage() {
                         const docId = doc.id || doc.document_id;
                         const newSelection = currentSelection.includes(docId)
                           ? currentSelection.filter(
-                              (id: number) => id !== docId
-                            )
+                            (id: number) => id !== docId
+                          )
                           : [...currentSelection, docId];
                         setSelectedUserInput({
                           action: "select",

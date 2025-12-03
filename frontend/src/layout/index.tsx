@@ -69,7 +69,7 @@ export default function AppLayout() {
           <div className="hidden md:flex items-center space-x-2 bg-primary-50 px-3 py-1 rounded-full">
             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
             <span className="text-primary-700 text-sm font-medium">
-              智能文档分类分级系统
+              分类分级与个性化智能体赋能
             </span>
           </div>
         </div>
@@ -153,9 +153,9 @@ export default function AppLayout() {
                 label: (
                   <span className="font-medium">
                     知识问答
-                    <span className="ml-1 px-1.5 py-0.5 text-xs bg-purple-100 text-purple-600 rounded">
+                    {/* <span className="ml-1 px-1.5 py-0.5 text-xs bg-purple-100 text-purple-600 rounded">
                       Beta
-                    </span>
+                    </span> */}
                   </span>
                 ),
                 onClick: () => navigate("/qa-beta"),
@@ -166,9 +166,9 @@ export default function AppLayout() {
                 label: (
                   <span className="font-medium">
                     Agent{" "}
-                    <span className="ml-1 px-1.5 py-0.5 text-xs bg-purple-100 text-purple-600 rounded">
+                    {/* <span className="ml-1 px-1.5 py-0.5 text-xs bg-purple-100 text-purple-600 rounded">
                       Beta
-                    </span>
+                    </span> */}
                   </span>
                 ),
                 onClick: () => navigate("/agent-editor"),

@@ -465,7 +465,7 @@ def discover_tools():
     通过导入各模块触发 @tool 装饰器执行
     """
     # 导入所有工具模块（装饰器会自动注册）
-    from core.tools.analysis import document_analyzer_v2
+    from core.tools.analysis import analyze_input, document_analyzer_v2
     from core.tools.document import (
         document_compose,
         document_extraction,

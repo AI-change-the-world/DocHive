@@ -5,6 +5,7 @@
 """
 
 # 分析工具
+from core.tools.analysis.analyze_input import analyze_input
 from core.tools.analysis.document_analyzer_v2 import analyze_documents
 
 # 基础设施
