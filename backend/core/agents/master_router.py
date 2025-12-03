@@ -7,6 +7,8 @@
 3. 支持用户干预（检索结果过多/过少时请求用户输入）
 4. 三步执行流程：规划 → 执行 → 总结
 
+**这个智能体后续可能只会支持检索智能体以及多轮对话，其他工具都不会支持了**
+
 特点：内存管理会话状态，支持暂停和恢复执行
 """
 
@@ -31,7 +33,237 @@ from core.registry import (
 
 # 导入新版工具基础设施
 from core.tools.base import ToolContext, execute_tool
+from core.tools.tool_registry import get_tool_metadata
 from utils.llm_client import get_llm_client
+
+
+# ==================== 智能参数构造 ====================
+
+
+async def build_tool_arguments(
+    step: Dict[str, Any],
+    state: "ExecutionState",
+    db: AsyncSession,
+) -> Dict[str, Any]:
+    """
+    智能构造工具参数（参考 CustomAgentExecutorV2 的实现）
+
+    核心逻辑:
+    1. 使用 LLM 根据【步骤目标】(description) 构造参数
+    2. 用户原始输入只作为背景参考，不直接作为 query
+    3. 从 state 中提取中间数据（如 document_ids, documents 等）
+    """
+    step_name = step.get("name", "")
+    step_description = step.get("description", "")  # 步骤的具体目标
+    step_type = step.get("type", "tool")
+
+    query = state.get("query", "")
+    template_id = state.get("template_id")
+
+    # 获取工具元数据
+    tool_meta = get_tool_metadata(step_name) if step_type == "tool" else None
+    param_schema = tool_meta.get("parameters", {}) if tool_meta else {}
+
+    # 构建当前状态摘要
+    state_summary = _summarize_state(state)
+
+    llm_client = get_llm_client()
+
+    system_prompt = f"""你是参数构造助手。你需要根据【当前步骤的目标】来构造工具参数。
+
+【重要理解】
+- 当前步骤目标: 这是本步骤具体要做的事情
+- 用户原始输入: 这是用户提供的原始信息，作为背景参考
+
+⚠️ 核心原则: 工具参数（尤其是 query）应该反映【当前步骤的目标】，而不是简单复制用户原始输入!
+
+【当前步骤信息】
+- 工具/智能体名称: {step_name}
+- 步骤目标: {step_description}
+
+【用户原始输入(背景参考)】
+{query}
+
+【工具参数定义】
+{json.dumps(param_schema, ensure_ascii=False, indent=2)}
+
+【当前执行状态】
+{state_summary}
+
+【任务】
+根据【当前步骤目标】和【执行状态】，生成工具参数（纯 JSON）。
+
+【规则 - 重要！】
+1. **query 参数构造**: 
+   - 如果工具需要 query 参数，应该根据【步骤目标】来构造
+   - 例如: 步骤目标是"检索关于安全的文档"，则 query 应该是"安全相关的文档"
+   - 不要简单地把用户原始输入作为 query!
+2. **template_id**: 直接使用状态中的 template_id = {template_id}
+3. **document_ids/documents**: 如果状态中有，直接使用
+4. 只包含参数定义中的字段
+5. 返回纯 JSON，无其他文字
+"""
+
+    user_prompt = f"为工具/智能体 {step_name} 生成参数。当前步骤目标: {step_description}"
+
+    try:
+        response = await llm_client.extract_json_response(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            db=db,
+            max_tokens=2048,
+        )
+
+        logger.info(f"🤖 LLM 生成参数: {response}")
+
+        # 确保 template_id 正确
+        if "template_id" not in response and template_id is not None:
+            response["template_id"] = template_id
+
+        return response
+
+    except Exception as e:
+        logger.error(f"❌ LLM 生成参数失败: {e}，使用 fallback")
+        # fallback: 根据步骤目标构造简单参数
+        return _build_fallback_arguments(step, state)
+
+
+def _summarize_state(state: "ExecutionState") -> str:
+    """生成状态摘要供 LLM 使用"""
+    summary = {
+        "query": state.get("query", "")[:200],
+        "template_id": state.get("template_id"),
+    }
+
+    # 添加中间数据
+    intermediate = state.get("intermediate_data", {})
+
+    # 文档 ID 列表
+    if intermediate.get("document_ids"):
+        doc_ids = intermediate["document_ids"]
+        summary["document_ids"] = f"{len(doc_ids)} 个文档 ID"
+        summary["document_ids_sample"] = doc_ids[:5]
+
+    # 文档列表
+    if intermediate.get("documents"):
+        docs = intermediate["documents"]
+        summary["documents"] = f"{len(docs)} 篇文档可用"
+        summary["documents_titles"] = [
+            d.get("title", "")[:50] for d in docs[:5]]
+
+    # ⭐ 大纲
+    if intermediate.get("outline"):
+        outline = intermediate["outline"]
+        if isinstance(outline, dict):
+            sections = outline.get("sections", [])
+            summary["outline"] = {
+                "title": outline.get("title", "")[:100],
+                "sections_count": len(sections),
+                "sections": [s.get("title", "")[:50] for s in sections[:5]]
+            }
+        else:
+            summary["outline"] = "已生成大纲"
+
+    # ⭐ 提取的内容
+    if intermediate.get("extracted_content"):
+        extracted = intermediate["extracted_content"]
+        if isinstance(extracted, dict):
+            summary["extracted_content"] = f"{len(extracted)} 个章节的内容已提取"
+        else:
+            summary["extracted_content"] = "已提取内容"
+
+    # ⭐ 生成的文档
+    if intermediate.get("composed_document"):
+        doc = intermediate["composed_document"]
+        if isinstance(doc, dict):
+            summary["composed_document"] = {
+                "title": doc.get("title", "")[:100],
+                "word_count": doc.get("word_count", len(doc.get("content", ""))),
+                "has_content": bool(doc.get("content"))
+            }
+        else:
+            summary["composed_document"] = "已生成文档"
+
+    # 添加已执行步骤
+    tool_results = state.get("tool_results", [])
+    agent_results = state.get("agent_results", [])
+    if tool_results or agent_results:
+        completed_steps = []
+        for r in tool_results:
+            step_info = f"工具 {r.get('name')}: {'成功' if r.get('result', {}).get('success') else '失败'}"
+            # 添加关键结果信息
+            result = r.get('result', {})
+            if r.get('name') in ['multi_query_search', 'es_fulltext_search'] and result.get('success'):
+                step_info += f" - 检索到 {len(result.get('documents', []))} 篇文档"
+            elif r.get('name') == 'generate_outline' and result.get('success'):
+                outline = result.get('outline', {})
+                if isinstance(outline, dict):
+                    step_info += f" - 生成 {len(outline.get('sections', []))} 个章节"
+                elif isinstance(outline, list):
+                    step_info += f" - 生成 {len(outline)} 个章节"
+            completed_steps.append(step_info)
+        for r in agent_results:
+            completed_steps.append(
+                f"智能体 {r.get('name')}: {'成功' if r.get('result', {}).get('success') else '失败'}")
+        summary["completed_steps"] = completed_steps
+
+    return json.dumps(summary, ensure_ascii=False, indent=2)
+
+
+def _build_fallback_arguments(
+    step: Dict[str, Any],
+    state: "ExecutionState",
+) -> Dict[str, Any]:
+    """回退参数构造（当 LLM 失败时使用）"""
+    step_name = step.get("name", "")
+    step_description = step.get("description", "")
+
+    query = state.get("query", "")
+    template_id = state.get("template_id")
+    intermediate = state.get("intermediate_data", {})
+
+    # 简化用户输入
+    user_input_brief = query[:50] + "..." if len(query) > 50 else query
+    # 使用步骤目标构造 query
+    goal_based_query = f"{step_description}：基于用户输入'{user_input_brief}'"
+
+    fallback_params = {"template_id": template_id}
+
+    if step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+        fallback_params["document_ids"] = intermediate.get("document_ids", [])
+        if step_name == "read_documents":
+            fallback_params["max_documents"] = 10
+    elif step_name == "analyze_documents":
+        fallback_params["query"] = goal_based_query
+        fallback_params["documents"] = intermediate.get("documents", [])
+        fallback_params["max_context_length"] = 10000
+    elif step_name == "search_documents_by_classification":
+        fallback_params["class_code"] = None
+    elif step_name in ["multi_query_search", "es_fulltext_search"]:
+        fallback_params["query"] = goal_based_query
+    elif step_name == "get_template_statistics":
+        pass  # 只需要 template_id
+    # ⭐ 新增：内容提取工具
+    elif step_name == "document_extraction":
+        fallback_params["query"] = goal_based_query
+        fallback_params["outline"] = intermediate.get("outline", {})
+        fallback_params["documents"] = intermediate.get("documents", [])
+    # ⭐ 新增：文档组合工具
+    elif step_name == "document_compose":
+        fallback_params["query"] = goal_based_query
+        fallback_params["outline"] = intermediate.get("outline", {})
+        fallback_params["extracted_content"] = intermediate.get(
+            "extracted_content", {})
+    # ⭐ 新增：文档审查工具
+    elif step_name == "document_review":
+        fallback_params["document"] = intermediate.get("composed_document", {})
+    else:
+        # 默认添加 query
+        fallback_params["query"] = goal_based_query
+
+    return fallback_params
 
 # ==================== 用户意图识别 ====================
 
@@ -240,7 +472,8 @@ async def plan_execution(
     # 获取对话历史（用于元问题识别和回答）
     conversation_manager = get_conversation_manager()
     session_data = conversation_manager.get_session(session_id)
-    conversation_history = session_data.get("messages", []) if session_data else []
+    conversation_history = session_data.get(
+        "messages", []) if session_data else []
 
     # 构建系统能力描述
     tools_desc = get_tools_description()
@@ -490,7 +723,8 @@ async def plan_execution(
 
         logger.info(f"📋 规划结果: {json.dumps(response, ensure_ascii=False)}")
 
-        state["execution_pattern"] = response.get("execution_pattern", "llm_direct")
+        state["execution_pattern"] = response.get(
+            "execution_pattern", "llm_direct")
         state["reasoning"] = response.get("reasoning", "")
         state["execution_plan"] = response.get("execution_plan", [])
 
@@ -520,7 +754,8 @@ async def plan_execution(
                         role = msg.get("role")
                         content = msg.get("content", "")
                         if role in ["user", "assistant"]:
-                            llm_messages.append({"role": role, "content": content})
+                            llm_messages.append(
+                                {"role": role, "content": content})
 
                 # 添加当前问题
                 llm_messages.append({"role": "user", "content": query})
@@ -573,17 +808,28 @@ async def execute_steps(
     # 从 config 获取所需资源
     db: AsyncSession = config.get("configurable", {}).get("db")
     es_client = config.get("configurable", {}).get("es")
-    es_index: str = config.get("configurable", {}).get("es_index", "dochive_documents")
-    max_read_documents = config.get("configurable", {}).get("max_read_documents", 10)
-    rag_max_length = config.get("configurable", {}).get("rag_max_length", 10000)
+    es_index: str = config.get("configurable", {}).get(
+        "es_index", "dochive_documents")
+    max_read_documents = config.get(
+        "configurable", {}).get("max_read_documents", 10)
+    rag_max_length = config.get(
+        "configurable", {}).get("rag_max_length", 10000)
 
-    # helper: 实际调用工具/智能体实现 - 使用新版工具系统
-    async def _dispatch_to_impl(step_type: str, step_name: str):
+    # helper: 实际调用工具/智能体实现 - 使用智能参数构造
+    async def _dispatch_to_impl(step: Dict[str, Any]):
         """
-        通用的工具/智能体调度器
+        通用的工具/智能体调度器（智能版）
+        - 使用 LLM 根据步骤目标智能构造参数
         - 工具调用：使用新版 execute_tool 统一处理
         - 智能体调用：直接调用智能体函数
         """
+        step_type = step.get("type")
+        step_name = step.get("name")
+        step_desc = step.get("description", "")
+
+        # ⭐ 使用 LLM 智能构造参数（仅作参考）
+        arguments = await build_tool_arguments(step, state, db)
+
         if step_type == "tool":
             # 创建工具上下文
             tool_ctx = ToolContext(
@@ -594,48 +840,79 @@ async def execute_steps(
                 session_id=session_id,
             )
 
-            # 准备工具参数
-            arguments = {"template_id": template_id}
+            # ⭐⭐⭐ 关键工具硬编码：必须从 intermediate_data 获取真实数据 ⭐⭐⭐
+            if step_name == "document_extraction":
+                arguments["outline"] = state["intermediate_data"].get(
+                    "outline", {})
+                arguments["documents"] = state["intermediate_data"].get(
+                    "documents", [])
+                if "query" not in arguments:
+                    arguments["query"] = query
+                logger.info(
+                    f"🔧 硬编码 document_extraction: outline={type(arguments['outline'])}, docs={len(arguments['documents'])}")
 
-            # 特殊处理：从 state 中获取中间数据
-            if step_name in [
-                "get_document_contents",
-                "skim_documents",
-                "read_documents",
-            ]:
-                arguments["document_ids"] = state["intermediate_data"].get(
-                    "document_ids", []
-                )
-                if step_name == "read_documents":
+            if step_name == "document_compose":
+                arguments["outline"] = state["intermediate_data"].get(
+                    "outline", {})
+                arguments["extracted_content"] = state["intermediate_data"].get(
+                    "extracted_content", {})
+                if "query" not in arguments:
+                    arguments["query"] = query
+                logger.info(
+                    f"🔧 硬编码 document_compose: outline={type(arguments['outline'])}, extracted={len(arguments.get('extracted_content', {}))} 章节")
+
+            if step_name == "document_review":
+                composed_doc = state["intermediate_data"].get(
+                    "composed_document", {})
+                if composed_doc:
+                    arguments["document"] = composed_doc
+                    logger.info(
+                        f"🔧 硬编码 document_review: title={composed_doc.get('title', '')}, content_len={len(composed_doc.get('content', ''))}")
+                else:
+                    logger.warning("⚠️ document_review: 未找到 composed_document")
+
+            # 其他工具的参数补充（如果 LLM 没有生成）
+            if step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+                if "document_ids" not in arguments:
+                    arguments["document_ids"] = state["intermediate_data"].get(
+                        "document_ids", [])
+                if step_name == "read_documents" and "max_documents" not in arguments:
                     arguments["max_documents"] = max_read_documents
-            elif step_name == "analyze_documents":
-                # analyze_documents 参数
-                arguments["query"] = query
-                arguments["documents"] = state["intermediate_data"].get("documents", [])
-                arguments["max_context_length"] = rag_max_length
-            elif step_name == "search_documents_by_classification":
-                arguments["class_code"] = None  # 默认返回所有文档
+
+            if step_name == "analyze_documents":
+                if "documents" not in arguments:
+                    arguments["documents"] = state["intermediate_data"].get(
+                        "documents", [])
+                if "max_context_length" not in arguments:
+                    arguments["max_context_length"] = rag_max_length
+
+            # 输出最终参数（硬编码之后）
+            logger.info(
+                f"📦 步骤 {step_name} 最终参数: {json.dumps(arguments, ensure_ascii=False, default=str)[:500]}...")
 
             # 调用新版工具执行器
             return await execute_tool(step_name, arguments, tool_ctx)
 
         elif step_type == "agent":
-            # 智能体调用：直接调用智能体函数
+            # 智能体调用：根据 LLM 生成的参数调用
             if step_name == "retrieval_agent":
+                # 使用 LLM 构造的 query
+                agent_query = arguments.get("query", query)
                 return await retrieve_documents_v2(
-                    query=query,
+                    query=agent_query,
                     template_id=template_id,
                     session_id=session_id,
                     db=db,
                     es_client=es_client,
                     es_index=es_index,
-                    top_k=20,
+                    top_k=arguments.get("top_k", 20),
                     enable_deduplication=True,
                 )
             elif step_name == "qa_agent":
                 documents = state["intermediate_data"].get("documents", [])
+                agent_query = arguments.get("query", query)
                 return await generate_answer_v2(
-                    query=query,
+                    query=agent_query,
                     documents=documents,
                     db=db,
                     max_context_length=rag_max_length,
@@ -656,8 +933,8 @@ async def execute_steps(
             logger.info(f"🔧 执行第{i+1}步: {step_type}/{step_name}")
 
             try:
-                # 执行步骤
-                result = await _dispatch_to_impl(step_type, step_name)
+                # ⭐ 使用智能参数构造执行步骤
+                result = await _dispatch_to_impl(step)
 
                 # 记录结果
                 result_entry = {
@@ -674,7 +951,17 @@ async def execute_steps(
 
                 # 特殊处理：更新中间数据
                 if result.get("success"):
-                    if step_type == "agent" and step_name == "retrieval_agent":
+                    # 检索类工具：保存文档列表
+                    if step_name in ["multi_query_search", "es_fulltext_search"]:
+                        documents = result.get("documents", [])
+                        document_ids = result.get("document_ids", [])
+                        state["intermediate_data"]["documents"] = documents
+                        state["intermediate_data"]["document_ids"] = document_ids
+                        state["documents"] = documents
+                        logger.info(
+                            f"💾 保存检索结果: {len(documents)} 篇文档, {len(document_ids)} 个 ID")
+
+                    elif step_type == "agent" and step_name == "retrieval_agent":
                         state["intermediate_data"]["documents"] = result.get(
                             "documents", []
                         )
@@ -694,6 +981,111 @@ async def execute_steps(
                         state["intermediate_data"]["documents"] = result.get(
                             "documents", []
                         )
+
+                    # ⭐ 大纲生成工具：保存大纲
+                    elif step_name == "generate_outline":
+                        outline = result.get("outline", {})
+                        state["intermediate_data"]["outline"] = outline
+                        if isinstance(outline, dict):
+                            logger.info(
+                                f"💾 保存大纲: {len(outline.get('sections', []))} 个章节")
+                        elif isinstance(outline, list):
+                            logger.info(f"💾 保存大纲: {len(outline)} 个章节")
+                        else:
+                            logger.info(f"💾 保存大纲")
+
+                    # ⭐ 内容提取工具：保存提取的内容
+                    elif step_name == "document_extraction":
+                        extracted_content = result.get("extracted_content", {})
+                        state["intermediate_data"]["extracted_content"] = extracted_content
+                        logger.info(f"💾 保存提取内容: {len(extracted_content)} 个章节")
+
+                    # ⭐ 文档组合工具：保存生成的文档
+                    elif step_name == "document_compose":
+                        document = result.get("document", {})
+                        state["intermediate_data"]["composed_document"] = document
+                        logger.info(
+                            f"💾 保存生成文档: {document.get('title', '')}, 字数: {len(document.get('content', ''))}")
+
+                    # ⭐ 文档审查工具：保存审查后的文档
+                    elif step_name == "document_review":
+                        reviewed_document = result.get("reviewed_document", {})
+                        state["intermediate_data"]["reviewed_document"] = reviewed_document
+                        logger.info(
+                            f"💾 保存审查文档: {reviewed_document.get('title', '')}, 字数: {len(reviewed_document.get('content', ''))}")
+
+                # ⭐⭐⭐ 最后一步且是生成类工具，直接写入 final_answer ⭐⭐⭐
+                is_last_step = (i == len(plan) - 1)
+                if is_last_step and result.get("success"):
+                    if step_name == "document_review":
+                        reviewed = result.get("reviewed_document", {})
+                        if reviewed and reviewed.get("content"):
+                            title = reviewed.get("title", "生成的文档")
+                            content = reviewed.get("content", "")
+                            state["final_answer"] = f"# {title}\n\n{content}"
+                            logger.info(
+                                f"✅ 最后一步 document_review，直接写入 final_answer")
+
+                    elif step_name == "document_compose":
+                        doc = result.get("document", {})
+                        if doc and doc.get("content"):
+                            title = doc.get("title", "生成的文档")
+                            content = doc.get("content", "")
+                            state["final_answer"] = f"# {title}\n\n{content}"
+                            logger.info(
+                                f"✅ 最后一步 document_compose，直接写入 final_answer")
+
+                    elif step_name == "generate_outline":
+                        outline = result.get("outline", {})
+                        if outline:
+                            if isinstance(outline, dict):
+                                title = outline.get("title", "生成的大纲")
+                                sections = outline.get("sections", [])
+                                content_lines = [f"# {title}", ""]
+                                for sec in sections:
+                                    if isinstance(sec, dict):
+                                        content_lines.append(
+                                            f"## {sec.get('title', '')}")
+                                        if sec.get('description'):
+                                            content_lines.append(
+                                                sec.get('description'))
+                                        content_lines.append("")
+                                    else:
+                                        content_lines.append(f"## {sec}")
+                                        content_lines.append("")
+                                state["final_answer"] = "\n".join(
+                                    content_lines)
+                            elif isinstance(outline, list):
+                                content_lines = ["生成的大纲", ""]
+                                for sec in outline:
+                                    content_lines.append(f"## {sec}")
+                                    content_lines.append("")
+                                state["final_answer"] = "\n".join(
+                                    content_lines)
+                            else:
+                                state["final_answer"] = f"# 生成的大纲\n\n{str(outline)}"
+                            logger.info(
+                                f"✅ 最后一步 generate_outline，直接写入 final_answer")
+
+                    elif step_name == "document_extraction":
+                        extracted = result.get("extracted_content", {})
+                        if extracted:
+                            content_lines = ["提取的内容", ""]
+                            for section_name, chunks in extracted.items():
+                                content_lines.append(f"## {section_name}")
+                                if isinstance(chunks, list):
+                                    for chunk in chunks:
+                                        if isinstance(chunk, dict):
+                                            content_lines.append(
+                                                chunk.get("content", str(chunk)))
+                                        else:
+                                            content_lines.append(str(chunk))
+                                else:
+                                    content_lines.append(str(chunks))
+                                content_lines.append("")
+                            state["final_answer"] = "\n".join(content_lines)
+                            logger.info(
+                                f"✅ 最后一步 document_extraction，直接写入 final_answer")
 
                 logger.info(f"✅ 步骤{i+1}完成: {step_name}")
 
@@ -738,12 +1130,16 @@ async def finalize_answer(
     """
     节点: 生成最终答案
 
-    整合执行结果，生成最终答案。
+    让 LLM 根据上下文智能决定如何回答：
+    - 如果有完整文档，直接使用
+    - 如果需要总结，生成总结
+    - 如果结果不好，自己重新回答
     """
     logger.info("📝 ========== 节点: 生成最终答案 ===========")
 
     query = state["query"]
     db: AsyncSession = config.get("configurable", {}).get("db")  # type: ignore
+    intermediate = state.get("intermediate_data", {})
 
     try:
         # 如果已经有答案（qa_agent生成的），直接返回
@@ -752,16 +1148,14 @@ async def finalize_answer(
             state["success"] = True
             return state
 
-        # 根据执行模式生成答案
+        # 根据执行模式处理特殊情况
         if state["execution_pattern"] == "llm_direct":
-            # LLM直接回答的情况，已经有答案
             state["success"] = True
             return state
 
         elif state["execution_pattern"] == "agent_only":
-            # 仅检索模式
             if state["documents"]:
-                state["final_answer"] = None  # 仅检索，不生成答案
+                state["final_answer"] = None
                 logger.info("📚 仅检索模式，不生成答案")
             else:
                 state["final_answer"] = "抱歉，没有找到相关文档。"
@@ -769,132 +1163,140 @@ async def finalize_answer(
             state["success"] = True
             return state
 
-        # 其他模式：根据所有步骤结果生成详细答案
-        logger.info("🤖 根据执行结果生成详细答案")
+        # ⭐⭐⭐ 收集所有可用的输出数据，让 LLM 智能决定如何回答 ⭐⭐⭐
+        logger.info("🤖 让 LLM 智能决定如何回答")
 
         llm_client = get_llm_client()
 
-        # 构建执行过程描述
-        execution_summary = []
-        execution_summary.append(f"用户问题：{query}\n")
-        execution_summary.append(f"执行模式：{state['execution_pattern']}")
-        execution_summary.append(f"执行推理：{state['reasoning']}\n")
+        # 收集可用的输出字段
+        available_outputs = {}
 
-        execution_summary.append("执行步骤及结果：")
+        # 审查后的文档（最高优先级）
+        reviewed_doc = intermediate.get("reviewed_document", {})
+        if reviewed_doc and reviewed_doc.get("content"):
+            available_outputs["reviewed_document"] = {
+                "title": reviewed_doc.get("title", ""),
+                "content": reviewed_doc.get("content", ""),
+                "word_count": len(reviewed_doc.get("content", "")),
+                "说明": "经过校对和润色的最终文档"
+            }
 
-        # 添加工具执行结果
+        # 生成的文档
+        composed_doc = intermediate.get("composed_document", {})
+        if composed_doc and composed_doc.get("content"):
+            available_outputs["composed_document"] = {
+                "title": composed_doc.get("title", ""),
+                "content": composed_doc.get("content", ""),
+                "word_count": len(composed_doc.get("content", "")),
+                "说明": "根据大纲和提取内容生成的文档"
+            }
+
+        # 提取的内容
+        extracted = intermediate.get("extracted_content", {})
+        if extracted:
+            available_outputs["extracted_content"] = {
+                "sections": list(extracted.keys()) if isinstance(extracted, dict) else [],
+                "说明": "从检索文档中提取的内容片段"
+            }
+
+        # 大纲
+        outline = intermediate.get("outline", {})
+        if outline:
+            available_outputs["outline"] = {
+                "structure": outline if isinstance(outline, (dict, list)) else str(outline)[:500],
+                "说明": "生成的文档大纲"
+            }
+
+        # 检索到的文档
+        documents = intermediate.get("documents", [])
+        if documents:
+            available_outputs["documents"] = {
+                "count": len(documents),
+                "titles": [d.get("title", "")[:50] for d in documents[:5]],
+                "说明": "检索到的相关文档"
+            }
+
+        # 构建执行步骤摘要
+        steps_summary = []
         for i, tool_result in enumerate(state["tool_results"]):
-            step_num = tool_result.get("step", i + 1)
-            name = tool_result.get("name", "未知工具")
+            name = tool_result.get("name", "")
             desc = tool_result.get("description", "")
             result = tool_result.get("result", {})
+            success = result.get("success", False)
+            error = result.get("error", "") if not success else ""
+            steps_summary.append({
+                "step": i + 1,
+                "tool": name,
+                "description": desc,
+                "success": success,
+                "error": error[:100] if error else ""
+            })
 
-            execution_summary.append(f"\n步骤{step_num}：{desc} (工具: {name})")
+        logger.info(f"🤖 构建执行步骤摘要 {steps_summary}")
 
-            if result.get("success"):
-                # 根据不同工具类型格式化结果
-                if name == "get_template_statistics":
-                    # get_template_statistics 直接返回数据，不是嵌套在statistics里
-                    total_docs = result.get("total_documents", 0)
-                    execution_summary.append(f"  - 文档总数：{total_docs}")
+        # 构建 LLM 决策 prompt
+        system_prompt = """你是一个智能答案生成器。根据执行结果和可用输出，决定如何最佳地回答用户。
 
-                    # 显示分类分布
-                    class_dist = result.get("class_code_distribution", [])
-                    if class_dist:
-                        execution_summary.append(
-                            f"  - 分类分布：{len(class_dist)}个分类"
-                        )
-                        for item in class_dist[:3]:  # 只显示前3个
-                            execution_summary.append(
-                                f"    * {item.get('class_code', '未知')}: {item.get('count', 0)}篇"
-                            )
-                elif name == "search_documents_by_classification":
-                    doc_ids = result.get("document_ids", [])
-                    execution_summary.append(f"  - 找到{len(doc_ids)}篇文档")
-                elif name in [
-                    "get_document_contents",
-                    "skim_documents",
-                    "read_documents",
-                ]:
-                    docs = result.get("documents", [])
-                    execution_summary.append(f"  - 读取{len(docs)}篇文档")
-                    for doc in docs[:3]:  # 只显示前3篇
-                        execution_summary.append(f"    * {doc.get('title', '未命名')}")
-                elif name == "analyze_documents":
-                    analysis = result.get("analysis", "")
-                    if analysis:
-                        execution_summary.append(f"  - 分析结果：{analysis[:200]}...")
-                else:
-                    # 通用处理
-                    execution_summary.append(f"  - 执行成功")
-            else:
-                execution_summary.append(
-                    f"  - 执行失败：{result.get('error', '未知错误')}"
-                )
+【决策逻辑】
+1. 如果有 reviewed_document 且内容完整 → 直接输出该文档内容
+2. 否则如果有 composed_document 且内容完整 → 直接输出该文档内容
+3. 如果文档内容质量不佳（太短、不完整、不相关）→ 根据其他数据重新生成答案
+4. 如果没有文档但有其他有用信息 → 综合总结回答
+5. 如果执行失败或数据不足 → 说明原因并尽可能提供帮助
 
-        # 添加智能体执行结果
-        for i, agent_result in enumerate(state["agent_results"]):
-            step_num = agent_result.get("step", len(state["tool_results"]) + i + 1)
-            name = agent_result.get("name", "未知智能体")
-            desc = agent_result.get("description", "")
-            result = agent_result.get("result", {})
+【输出要求】
+- 使用 Markdown 格式
+- 如果直接使用文档，不要添加额外的"执行过程"描述，直接输出文档内容
+- 如果需要总结，请按用户问题组织答案
+- 语气专业、友好
 
-            execution_summary.append(f"\n步骤{step_num}：{desc} (智能体: {name})")
-
-            if result.get("success"):
-                if name == "retrieval_agent":
-                    docs = result.get("documents", [])
-                    execution_summary.append(f"  - 检索到{len(docs)}篇相关文档")
-                    for doc in docs[:5]:  # 显示前5篇
-                        execution_summary.append(
-                            f"    * {doc.get('title', '未命名')} (相关度: {doc.get('score', 0):.2f})"
-                        )
-                elif name == "qa_agent":
-                    answer = result.get("answer", "")
-                    execution_summary.append(f"  - 生成答案：{answer[:200]}...")
-                else:
-                    execution_summary.append(f"  - 执行成功")
-            else:
-                execution_summary.append(
-                    f"  - 执行失败：{result.get('error', '未知错误')}"
-                )
-
-        execution_context = "\n".join(execution_summary)
-
-        # 调用LLM生成最终答案
-        system_prompt = """你是一个专业的智能助手，负责根据执行过程和结果生成详细的答案。
-
-要求：
-1. 按照执行步骤顺序组织答案
-2. 每个步骤说明：做了什么、得到了什么结果
-3. 用清晰的格式（标题、列表等）呈现
-4. 最后总结回答用户的问题
-5. 使用Markdown格式
-
-注意：
-- 不要编造信息，只使用执行结果中的实际内容
-- 如果某步骤失败，说明原因
-- 语气友好、专业
+【重要】
+- 绝对不要编造信息
+- 如果有完整文档，优先直接使用，不要画蛇添足
 """
 
-        user_prompt = f"""请根据以下执行过程生成详细答案：
+        # 构建用户 prompt
+        user_prompt = f"""【用户问题】
+{query}
 
-{execution_context}
+【执行步骤摘要】
+{json.dumps(steps_summary, ensure_ascii=False, indent=2)}
 
-请生成一个清晰、详细、有条理的答案。
+【可用输出数据】
 """
 
+        # 添加可用输出
+        for field_name, field_data in available_outputs.items():
+            if field_name in ["reviewed_document", "composed_document"]:
+                # 文档类：直接包含完整内容
+                user_prompt += f"\n### {field_name}\n"
+                user_prompt += f"标题: {field_data.get('title', '无标题')}\n"
+                user_prompt += f"字数: {field_data.get('word_count', 0)}\n"
+                user_prompt += f"说明: {field_data.get('说明', '')}\n"
+                user_prompt += f"\n内容:\n{field_data.get('content', '')}\n"
+            else:
+                # 其他字段：简要信息
+                user_prompt += f"\n### {field_name}\n"
+                user_prompt += f"{json.dumps(field_data, ensure_ascii=False, indent=2)}\n"
+
+        if not available_outputs:
+            user_prompt += "\n无可用输出数据\n"
+
+        user_prompt += "\n请根据以上信息，生成最佳答案。"
+
+        # 调用 LLM
         final_answer = await llm_client.chat_completion(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             db=db,
+            max_tokens=16000,  # 文档可能很长
         )
 
         state["final_answer"] = final_answer
         state["success"] = True
-        logger.info("✅ 最终答案生成完成")
+        logger.info(f"✅ LLM 智能生成最终答案，字数: {len(final_answer)}")
 
     except Exception as e:
         logger.error(f"❌ 生成最终答案失败: {e}")
@@ -1014,7 +1416,8 @@ async def execute_master_router(
             logger.info("✅ 用户选择继续使用当前结果")
 
             # 从会话的state中获取上次检索的文档
-            previous_documents = session_data.get("state", {}).get("documents", [])
+            previous_documents = session_data.get(
+                "state", {}).get("documents", [])
 
             if previous_documents:
                 logger.info(f"📚 使用上次检索的{len(previous_documents)}篇文档继续执行")
@@ -1065,7 +1468,8 @@ async def execute_master_router(
     if not state.get("execution_plan"):
         logger.info("🧠 ========== 第一步：规划 ===========")
 
-        config = {"configurable": {"db": db, "es": es_client, "es_index": es_index}}
+        config = {"configurable": {
+            "db": db, "es": es_client, "es_index": es_index}}
         state = await plan_execution(state, config)
 
         # Yield 执行计划
@@ -1110,7 +1514,8 @@ async def execute_master_router(
         )
 
     # 标记会话完成
-    conversation_manager.complete_session(session_id, state.get("final_answer"))
+    conversation_manager.complete_session(
+        session_id, state.get("final_answer"))
 
     # Yield 最终结果
     yield {
@@ -1163,6 +1568,9 @@ async def execute_steps_with_intervention(
         try:
             result = None
 
+            # ⭐ 使用 LLM 智能构造参数（仅作参考）
+            arguments = await build_tool_arguments(step, state, db)
+
             # 执行工具或智能体
             if step_type == "tool":
                 # 创建工具上下文
@@ -1174,46 +1582,84 @@ async def execute_steps_with_intervention(
                     session_id=session_id,
                 )
 
-                arguments = {"template_id": template_id}
+                # ⭐⭐⭐ 关键工具硬编码：必须从 intermediate_data 获取真实数据，不能让 LLM 猜 ⭐⭐⭐
+                # 使用独立的 if 语句，不使用 elif，确保每个工具都能正确处理
 
-                if step_name in [
-                    "get_document_contents",
-                    "skim_documents",
-                    "read_documents",
-                ]:
-                    arguments["document_ids"] = state["intermediate_data"].get(
-                        "document_ids", []
-                    )
-                    if step_name == "read_documents":
-                        arguments["max_documents"] = max_read_documents
-                elif step_name == "analyze_documents":
-                    arguments["query"] = current_query
+                if step_name == "document_extraction":
+                    # 内容提取：需要大纲 + 文档，必须从 intermediate_data 获取
+                    arguments["outline"] = state["intermediate_data"].get(
+                        "outline", {})
                     arguments["documents"] = state["intermediate_data"].get(
-                        "documents", []
-                    )
-                    arguments["max_context_length"] = rag_max_length
-                elif step_name == "search_documents_by_classification":
-                    arguments["class_code"] = None
+                        "documents", [])
+                    if "query" not in arguments:
+                        arguments["query"] = current_query
+                    logger.info(
+                        f"🔧 硬编码 document_extraction: outline={type(arguments['outline'])}, docs={len(arguments['documents'])}")
+
+                if step_name == "document_compose":
+                    # 文档组合：需要大纲 + 提取的内容，必须从 intermediate_data 获取
+                    arguments["outline"] = state["intermediate_data"].get(
+                        "outline", {})
+                    arguments["extracted_content"] = state["intermediate_data"].get(
+                        "extracted_content", {})
+                    if "query" not in arguments:
+                        arguments["query"] = current_query
+                    logger.info(
+                        f"🔧 硬编码 document_compose: outline={type(arguments['outline'])}, extracted={len(arguments.get('extracted_content', {}))} 章节")
+
+                if step_name == "document_review":
+                    # 文档审查：需要完整的生成文档，必须从 intermediate_data 获取
+                    composed_doc = state["intermediate_data"].get(
+                        "composed_document", {})
+                    if composed_doc:
+                        arguments["document"] = composed_doc
+                        logger.info(
+                            f"🔧 硬编码 document_review: title={composed_doc.get('title', '')}, content_len={len(composed_doc.get('content', ''))}")
+                    else:
+                        logger.warning(
+                            "⚠️ document_review: 未找到 composed_document，使用 LLM 生成的参数")
+
+                # 其他工具的参数补充（如果 LLM 没有生成）
+                if step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+                    if "document_ids" not in arguments:
+                        arguments["document_ids"] = state["intermediate_data"].get(
+                            "document_ids", [])
+                    if step_name == "read_documents" and "max_documents" not in arguments:
+                        arguments["max_documents"] = max_read_documents
+
+                if step_name == "analyze_documents":
+                    if "documents" not in arguments:
+                        arguments["documents"] = state["intermediate_data"].get(
+                            "documents", [])
+                    if "max_context_length" not in arguments:
+                        arguments["max_context_length"] = rag_max_length
+
+                # 输出最终参数（硬编码之后）
+                logger.info(
+                    f"📦 步骤 {step_name} 最终参数: {json.dumps(arguments, ensure_ascii=False, default=str)[:500]}...")
 
                 # 调用新版工具执行器
                 result = await execute_tool(step_name, arguments, tool_ctx)
 
             elif step_type == "agent":
                 if step_name == "retrieval_agent":
+                    # 使用 LLM 构造的 query
+                    agent_query = arguments.get("query", current_query)
                     result = await retrieve_documents_v2(
-                        query=current_query,  # 使用current_query
+                        query=agent_query,
                         template_id=template_id,
                         session_id=session_id,
                         db=db,
                         es_client=es_client,
                         es_index=es_index,
-                        top_k=20,
+                        top_k=arguments.get("top_k", 20),
                         enable_deduplication=True,
                     )
                 elif step_name == "qa_agent":
                     documents = state["intermediate_data"].get("documents", [])
+                    agent_query = arguments.get("query", current_query)
                     result = await generate_answer_v2(
-                        query=current_query,  # 使用current_query
+                        query=agent_query,
                         documents=documents,
                         db=db,
                         max_context_length=rag_max_length,
@@ -1238,7 +1684,17 @@ async def execute_steps_with_intervention(
 
             # 更新中间数据
             if result.get("success"):
-                if step_type == "agent" and step_name == "retrieval_agent":
+                # ⭐ 检索类工具：保存文档列表
+                if step_name in ["multi_query_search", "es_fulltext_search"]:
+                    documents = result.get("documents", [])
+                    document_ids = result.get("document_ids", [])
+                    state["intermediate_data"]["documents"] = documents
+                    state["intermediate_data"]["document_ids"] = document_ids
+                    state["documents"] = documents
+                    logger.info(
+                        f"💾 保存检索结果: {len(documents)} 篇文档, {len(document_ids)} 个 ID")
+
+                elif step_type == "agent" and step_name == "retrieval_agent":
                     documents = result.get("documents", [])
                     state["intermediate_data"]["documents"] = documents
                     state["documents"] = documents
@@ -1268,6 +1724,37 @@ async def execute_steps_with_intervention(
 
                     # 如果检索结果正常（≤20篇），直接继续执行，不需要用户确认
 
+                # ⭐ 大纲生成工具：保存大纲
+                elif step_name == "generate_outline":
+                    outline = result.get("outline", {})
+                    state["intermediate_data"]["outline"] = outline
+                    if isinstance(outline, dict):
+                        logger.info(
+                            f"💾 保存大纲: {len(outline.get('sections', []))} 个章节")
+                    elif isinstance(outline, list):
+                        logger.info(f"💾 保存大纲: {len(outline)} 个章节")
+                    else:
+                        logger.info(f"💾 保存大纲")
+
+                # ⭐ 内容提取工具：保存提取的内容
+                elif step_name == "document_extraction":
+                    extracted_content = result.get("extracted_content", {})
+                    state["intermediate_data"]["extracted_content"] = extracted_content
+                    logger.info(f"💾 保存提取内容: {len(extracted_content)} 个章节")
+
+                # ⭐ 文档组合工具：保存生成的文档
+                elif step_name == "document_compose":
+                    document = result.get("document", {})
+                    state["intermediate_data"]["composed_document"] = document
+                    logger.info(
+                        f"💾 保存生成文档: {document.get('title', '')}, 字数: {len(document.get('content', ''))}")
+
+                # ⭐ 文档审查工具：保存审查后的文档
+                elif step_name == "document_review":
+                    reviewed_document = result.get("reviewed_document", {})
+                    state["intermediate_data"]["reviewed_document"] = reviewed_document
+                    logger.info(
+                        f"💾 保存审查文档: {reviewed_document.get('title', '')}, 字数: {len(reviewed_document.get('content', ''))}")
                 elif (
                     step_type == "tool"
                     and step_name == "search_documents_by_classification"
@@ -1286,6 +1773,82 @@ async def execute_steps_with_intervention(
                 elif step_type == "agent" and step_name == "qa_agent":
                     state["final_answer"] = result.get("answer")
 
+            # ⭐⭐⭐ 最后一步且是生成类工具，直接写入 final_answer ⭐⭐⭐
+            is_last_step = (i == len(state["execution_plan"]) - 1)
+            if is_last_step and result.get("success"):
+                # 文档审查：直接输出审查后的文档
+                if step_name == "document_review":
+                    reviewed = result.get("reviewed_document", {})
+                    if reviewed and reviewed.get("content"):
+                        title = reviewed.get("title", "生成的文档")
+                        content = reviewed.get("content", "")
+                        state["final_answer"] = f"# {title}\n\n{content}"
+                        logger.info(
+                            f"✅ 最后一步 document_review，直接写入 final_answer，字数: {len(content)}")
+
+                # 文档生成：直接输出生成的文档
+                elif step_name == "document_compose":
+                    doc = result.get("document", {})
+                    if doc and doc.get("content"):
+                        title = doc.get("title", "生成的文档")
+                        content = doc.get("content", "")
+                        state["final_answer"] = f"# {title}\n\n{content}"
+                        logger.info(
+                            f"✅ 最后一步 document_compose，直接写入 final_answer，字数: {len(content)}")
+
+                # 大纲生成：直接输出大纲
+                elif step_name == "generate_outline":
+                    outline = result.get("outline", {})
+                    if outline:
+                        if isinstance(outline, dict):
+                            title = outline.get("title", "生成的大纲")
+                            # 将大纲转换为 Markdown 格式
+                            sections = outline.get("sections", [])
+                            content_lines = [f"# {title}", ""]
+                            for sec in sections:
+                                if isinstance(sec, dict):
+                                    content_lines.append(
+                                        f"## {sec.get('title', '')}")
+                                    if sec.get('description'):
+                                        content_lines.append(
+                                            sec.get('description'))
+                                    content_lines.append("")
+                                else:
+                                    content_lines.append(f"## {sec}")
+                                    content_lines.append("")
+                            state["final_answer"] = "\n".join(content_lines)
+                        elif isinstance(outline, list):
+                            content_lines = ["# 生成的大纲", ""]
+                            for sec in outline:
+                                content_lines.append(f"## {sec}")
+                                content_lines.append("")
+                            state["final_answer"] = "\n".join(content_lines)
+                        else:
+                            state["final_answer"] = f"# 生成的大纲\n\n{str(outline)}"
+                        logger.info(
+                            f"✅ 最后一步 generate_outline，直接写入 final_answer")
+
+                # 内容提取：直接输出提取的内容
+                elif step_name == "document_extraction":
+                    extracted = result.get("extracted_content", {})
+                    if extracted:
+                        content_lines = ["# 提取的内容", ""]
+                        for section_name, chunks in extracted.items():
+                            content_lines.append(f"## {section_name}")
+                            if isinstance(chunks, list):
+                                for chunk in chunks:
+                                    if isinstance(chunk, dict):
+                                        content_lines.append(
+                                            chunk.get("content", str(chunk)))
+                                    else:
+                                        content_lines.append(str(chunk))
+                            else:
+                                content_lines.append(str(chunks))
+                            content_lines.append("")
+                        state["final_answer"] = "\n".join(content_lines)
+                        logger.info(
+                            f"✅ 最后一步 document_extraction，直接写入 final_answer")
+
             logger.info(f"✅ 步骤{i+1}完成: {step_name}")
 
             # Yield 每一步的结果
@@ -1299,7 +1862,8 @@ async def execute_steps_with_intervention(
                     "description": step_desc,
                     "result": result,
                     "documents": (
-                        state.get("documents", []) if step_type == "agent" else None
+                        state.get("documents", []
+                                  ) if step_type == "agent" else None
                     ),
                 },
             }

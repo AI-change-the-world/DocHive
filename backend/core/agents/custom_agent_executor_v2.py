@@ -980,10 +980,14 @@ class CustomAgentExecutorV2:
         """
         构造工具参数(使用LLM智能推断)
 
-        优先使用step中已定义的parameters,
-        如果没有则使用LLM从state中推断
+        核心逻辑:
+        1. 优先使用step中已定义的parameters
+        2. 使用LLM根据【步骤目标】(description/expectations)构造参数
+        3. 用户原始输入只作为背景参考,不直接作为query
         """
         step_name = step.get("name")
+        step_description = step.get("description", "")  # 步骤的具体目标
+        step_expectations = step.get("expectations", "")  # 期望结果
         predefined_params = step.get("parameters", {})
 
         if predefined_params:
@@ -1013,43 +1017,61 @@ class CustomAgentExecutorV2:
 ⚠️ 请根据上次失败原因调整参数,确保满足期望！
 """
 
-        system_prompt = f"""你是参数构造助手。
+        # 获取Agent的总体目标
+        agent_goals = state.agent_goals or []
+        agent_goals_text = "\n".join(
+            f"- {g}" for g in agent_goals) if agent_goals else "完成用户请求"
 
-【工具】{step_name}
-【参数定义】
+        system_prompt = f"""你是参数构造助手。你需要根据【当前步骤的目标】来构造工具参数。
+
+【重要理解】
+- Agent总体目标: 这是整个智能体要完成的任务
+- 当前步骤目标: 这是本步骤具体要做的事情
+- 用户原始输入: 这是用户提供的原始信息,作为背景参考
+
+⚠️ 核心原则: 工具参数(尤其是query)应该反映【当前步骤的目标】,而不是简单复制用户原始输入!
+
+【Agent总体目标】
+{agent_goals_text}
+
+【当前步骤信息】
+- 工具名称: {step_name}
+- 步骤目标: {step_description}
+- 期望结果: {step_expectations}
+
+【用户原始输入(背景参考)】
+{state.state["inputs"]["query"]}
+
+【工具参数定义】
 {json.dumps(param_schema, ensure_ascii=False, indent=2)}
 
-【当前状态】
-{state.summarize_state(target_tool_name=step_name)}  # 传递target_tool_name实现智能过滤
+【当前执行状态】
+{state.summarize_state(target_tool_name=step_name)}
 {failure_context}
 【任务】
-根据当前状态,生成工具参数(纯JSON)。
+根据【当前步骤目标】和【执行状态】,生成工具参数(纯JSON)。
 
 【规则 - 重要！】
-1. **必须使用状态中的template_id**: 直接从当前状态中提取template_id,不要自己编造！
-2. 从状态中提取其他数据(如document_ids、outline等)
-3. **文档字段特殊处理**: 如果状态中有composed_document或reviewed_document的摘要信息(如{{"title": "...", "word_count": 1000, "has_content": true}}),
-   表示完整文档内容存在于state中但未显示,你应该:
-   - 引用该字段名(如"composed_document")
-   - 完整文档会自动从state中获取
-4. 只包含参数定义中的字段
-5. 返回纯JSON,无其他文字
-6. 如果有上次失败记录,请特别注意调整参数以满足期望
+1. **query参数构造**: 
+   - 如果工具需要query参数,应该根据【步骤目标】来构造
+   - 例如: 步骤目标是"生成案件备忘录大纲",则query应该是"生成一份关于XXX的案件备忘录大纲"
+   - 不要简单地把用户原始输入作为query!
+2. **必须使用状态中的template_id**: 直接从当前状态中提取template_id,不要自己编造！
+3. 从状态中提取其他数据(如document_ids、outline等)
+4. **文档字段特殊处理**: 如果状态中有composed_document或reviewed_document的摘要信息,引用该字段名
+5. 只包含参数定义中的字段
+6. 返回纯JSON,无其他文字
+7. 如果有上次失败记录,请特别注意调整参数以满足期望
 
-示例:
-如果状态中 template_id=1, query="某某问题",那么生成:
-{{
-  "query": "某某问题",
-  "template_id": 1
-}}
-
-如果状态中有 composed_document: {{"title": "报告", "word_count": 5000, "has_content": true}}, 需要document参数时生成:
-{{
-  "document": "composed_document"  // 引用字段名,完整内容会自动获取
-}}
+【示例】
+场景: 用户输入是一段举报内容,Agent目标是生成案件备忘录,当前步骤是生成大纲
+- 用户原始输入: "张三于2024年1月被某平台骗取资金..."
+- 步骤目标: "根据举报内容生成案件备忘录大纲"
+- 正确的query: "请根据张三被某平台骗取资金的举报内容,生成一份案件备忘录大纲"
+- 错误的query: "张三于2024年1月被某平台骗取资金..." (这是错误的!不应直接复制原始输入)
 """
 
-        user_prompt = f"为工具 {step_name} 生成参数。"
+        user_prompt = f"为工具 {step_name} 生成参数。当前步骤目标: {step_description}"
 
         try:
             llm_client = get_llm_client()
@@ -1081,41 +1103,50 @@ class CustomAgentExecutorV2:
             # fallback: 根据工具类型提供合理的默认参数
             fallback_params = {"template_id": state.template_id}
 
-            # 根据工具类型添加必需参数(直接从state原始数据中获取,不使用压缩后的摘要)
+            # 根据步骤目标构造query，而不是简单使用用户原始输入
+            user_input = state.state["inputs"]["query"]
+            # 简化用户输入，取前50个字符作为概要
+            user_input_brief = user_input[:50] + \
+                "..." if len(user_input) > 50 else user_input
+            # 使用步骤目标构造query
+            goal_based_query = f"{step_description}：基于用户输入'{user_input_brief}'"
+
+            # 根据工具类型添加必需参数
             if step_name == "analyze_input":
-                # 分析用户输入: 将query作为待分析的文本
+                # 分析用户输入: 将原始输入作为待分析的文本（这是合理的，因为分析的就是原始输入）
                 fallback_params.update({
-                    "input_text": state.state["inputs"]["query"],
+                    "input_text": user_input,
                 })
             elif step_name == "document_compose":
                 fallback_params.update({
-                    "query": state.state["inputs"]["query"],
+                    "query": goal_based_query,
                     "outline": state.state.get("outline", {}),
                     "extracted_content": state.state.get("extracted_content", {}),
                 })
             elif step_name == "document_extraction":
                 fallback_params.update({
-                    "query": state.state["inputs"]["query"],
+                    "query": goal_based_query,
                     "outline": state.state.get("outline", {}),
                     "document_ids": state.state.get("document_ids", []),
                 })
             elif step_name == "document_review":
-                # 关键修复: 直接从state中获取完整的composed_document
                 fallback_params.update({
-                    "query": state.state["inputs"]["query"],
+                    "query": goal_based_query,
                     "document": state.state.get("composed_document", {}),
                 })
             elif step_name == "generate_outline":
+                # 生成大纲：使用步骤目标构造query
                 fallback_params.update({
-                    "query": state.state["inputs"]["query"],
+                    "query": goal_based_query,
                 })
             elif step_name in ["get_document_contents", "skim_documents", "read_documents"]:
                 fallback_params.update({
                     "document_ids": state.state.get("document_ids", []),
                 })
             elif step_name in ["multi_query_search", "es_fulltext_search"]:
+                # 检索工具：使用步骤目标构造检索query
                 fallback_params.update({
-                    "query": state.state["inputs"]["query"],
+                    "query": goal_based_query,
                 })
 
             logger.info(

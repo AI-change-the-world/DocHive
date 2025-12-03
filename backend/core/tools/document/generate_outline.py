@@ -190,39 +190,78 @@ async def generate_outline(
         llm_client = get_llm_client()
 
         prompt = f"""
-你是一名专业的技术文档与方案编写专家，请根据用户的输入生成一个完整的大纲结构。
+你是一名专业的技术文档与方案编写专家，请根据用户输入生成对应文体的“专业大纲结构”。
 
 【用户输入】
 {query}
 
 【你的任务】
-1. 推断用户想生成什么类型的文档（如：实施方案、技术方案、分析报告、规划文档、PPT、大模型方案等）
-2. 自动生成文档标题（如果用户没有指定标题）
-3. 生成结构化大纲：包含章节标题、每章内容说明，如有需要可包含二级或三级小节
-4. 给出后续完成文档需要检索的资料（以 query 列表形式输出）
-5. 输出格式必须是 JSON，结构如下：
+1. 判断用户意图生成的文档类型（必须从以下文体中选择）：
+   - 备忘录（Memo）
+   - 技术方案（Tech Proposal）
+   - 实施方案（Implementation Plan）
+   - 分析报告（Analysis Report）
+   - 规划方案（Planning Document）
+   - 项目汇报 / PPT（Presentation）
+   - 政策解读（Policy Brief）
+   - 设计文档（Design Doc）
+   - 其他（必须给出理由）
 
-{{
-    "title": "文档标题",
-    "outline": [
-        {{
-            "section_title": "章节标题",
-            "description": "该章节的说明",
-            "subsections": [
-                {{
-                    "title": "小节标题",
-                    "description": "说明"
-                }}
-            ]
-        }}
-    ],
-    "search_query": ["应检索的关键内容1", "应检索的关键内容2"]
-}}
+2. 依据所识别的文体，使用预定义的“文体结构规范”生成大纲。
+   文体结构规范如下：
 
-【注意】
-- outline 要结构清晰、专业，必须可直接用于写方案
-- search_query 要尽量覆盖写文档所需的资料范围
-- 所有内容必须专业、简洁、可执行
+   【备忘录 Memo】
+   - 主题事项（What）
+   - 背景/原因（Why）
+   - 当前状态（Now）
+   - 待办事项（Todo List）
+   - 风险与提醒（Risks）
+   - 需要的支持（Support）
+
+   【技术方案 Tech Proposal】
+   - 背景与目标
+   - 需求分析
+   - 总体架构
+   - 模块设计
+   - 技术路线
+   - 实施步骤
+   - 风险与对策
+
+   【实施方案 Implementation Plan】
+   - 项目目标
+   - 工作范围
+   - 时间计划
+   - 人员与分工
+   - 实施步骤
+   - 验收标准
+
+   【分析报告 Analysis Report】
+   - 摘要
+   - 背景
+   - 现状分析
+   - 数据/案例分析
+   - 结论与建议
+
+   【PPT / 汇报 Presentation】
+   - 封面标题
+   - 现状/痛点
+   - 方案/内容模块
+   - 数据/亮点
+   - 实施计划
+   - 总结
+
+   （如文体为“其他”，你需要给出一个合理的结构）
+
+3. 自动生成文档标题（如果用户未指定）。
+
+4. 输出 JSON 格式：
+{{ "title": "文档标题", "outline": [ {{ "section_title": "章节标题", "description": "该章节的说明", "subsections": [ {{ "title": "小节标题", "description": "说明" }} ] }} ], "search_query": ["应检索的关键内容1", "应检索的关键内容2"] }}
+
+【要求】
+- 严格按照文体结构规范生成，不得混入其他文体特征（例如 Memo 不得出现“引言”和“架构设计”）
+- 大纲必须结构清晰、专业、可直接用于实际写作
+- search_query 必须覆盖写作所需的核心资料
+
 """
 
         response = await llm_client.chat_completion(
