@@ -339,7 +339,7 @@ async def execute_agent(
 @router.post("/markdown-template")
 async def get_markdown_template() -> ResponseBase:
     """
-    获取Agent Markdown模板(V2:能力导向)
+    获取Agent Markdown模板(V2:能力导向 + 固定步骤支持)
     """
     template = """# Agent: 智能问答助手
 
@@ -362,48 +362,86 @@ async def get_markdown_template() -> ResponseBase:
 
 ---
 
-# Agent: 报表生成助手
+# Agent: 主题检索助手
 
 ## 描述
-根据用户要求,自动检索相关数据、生成报表框架、填充内容并格式化输出。
+根据用户指定的主题,精确检索对应分类的文档。支持用户用自然语言描述主题。
 
 ## 目标
-- 检索相关数据文档
-- 生成结构化报表框架
-- 填充关键数据和图表
-- 格式化输出(Markdown或Excel)
+- 理解用户想查询的主题
+- 精确检索对应分类的文档
+
+## 固定步骤
+1. [模板] es_fulltext_search | 按用户指定的主题检索
+   ```json
+   {"must_match": [{"field": "category", "value": "$TOPIC"}], "size": 30}
+   ```
+   - $TOPIC: 从用户输入中提取的主题关键词,如"财务"、"合同"、"人事"等
 
 ## 约束
-- 数据必须真实,不能传造
-- 报表结构须清晰易读
-- 执行时间不超过10分钟
-
-## 推荐工具
-- multi_query_search: 多维度检索数据
-- get_template_statistics: 获取统计数据
-- document_compose: 组装生成文档
+- 检索结果不超过30条
 
 ---
 
-# Agent: 文档分类助手
+# Agent: 财务报表检索助手
 
 ## 描述
-自动对上传的文档进行分类和打标签,提高文档管理效率。
+精确检索财务相关文档,使用固定查询条件,确保检索结果稳定可靠。
 
 ## 目标
-- 读取文档内容
-- 分析文档类型和主题
-- 按照模板规则分类
-- 自动生成标签
+- 精确检索财务类文档
+- 生成结构化报告
+
+## 固定步骤
+1. [固定] es_fulltext_search | 搜索财务类文档
+   ```json
+   {"must_match": [{"field": "doc_type", "value": "财务"}], "size": 30}
+   ```
+
+2. [可选] generate_outline | 生成报告大纲
 
 ## 约束
-- 支持PDF、Word、文本等格式
-- 分类准确率高于85%
-- 单个文档处理时间不超过30秒
+- 只检索最近一年的文档
+- 数据必须真实
 
-## 推荐工具
-- read_documents: 读取文档内容
-- analyze_documents: 分析文档特征
+---
+
+# Agent: 合同文档分析助手
+
+## 描述
+自动检索合同文档并进行结构化分析。
+
+## 目标
+- 检索合同类文档
+- 提取关键条款
+- 生成分析报告
+
+## 固定步骤
+1. [固定] es_fulltext_search | 精确检索合同文档
+   ```json
+   {
+     "must_match": [
+       {"field": "category", "value": "合同"},
+       {"field": "status", "value": "已生效"}
+     ],
+     "should_match": [
+       {"field": "content", "value": "甲方乙方"}
+     ],
+     "size": 50
+   }
+   ```
+
+2. [固定] multi_query_search | 按章节检索补充信息
+   ```json
+   {
+     "queries": ["合同标的", "付款条件", "违约责任"],
+     "top_k_per_query": 5
+   }
+   ```
+
+## 约束
+- 支持PDF、Word格式
+- 单个文档处理时间不超过30秒
 
 ---
 
@@ -412,7 +450,9 @@ async def get_markdown_template() -> ResponseBase:
 2. **不需要**写具体的执行步骤,只需描述目标和约束
 3. 执行时系统会根据你的描述自动规划步骤
 4. 可以推荐工具,但不是强制的
-5. 系统会根据目标和约束智能选择工具
+5. **固定步骤**: 使用`[固定]`标记的步骤,参数不会被AI修改,确保结果稳定
+6. **模板步骤**: 使用`[模板]`标记的步骤,参数结构固定但变量值(如$TOPIC)由AI推断
+7. **可选步骤**: 使用`[可选]`标记的步骤,参数可被AI根据上下文调整
 """
 
     return ResponseBase(code=200, message="模板获取成功", data={"template": template})

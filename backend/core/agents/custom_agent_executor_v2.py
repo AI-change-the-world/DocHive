@@ -978,24 +978,119 @@ class CustomAgentExecutorV2:
         db: AsyncSession,
     ) -> Dict[str, Any]:
         """
-        构造工具参数(使用LLM智能推断)
+        构造工具参数
 
-        核心逻辑:
-        1. 优先使用step中已定义的parameters
-        2. 使用LLM根据【步骤目标】(description/expectations)构造参数
-        3. 用户原始输入只作为背景参考,不直接作为query
+        核心逻辑(用户定义优先):
+        1. ⭐ 完全固定(is_pinned=True, pinned_parameters存在): 直接使用,跳过LLM
+        2. ⭐ 模板化固定(is_pinned=True, parameter_template存在): LLM推断变量值并填充模板
+        3. 使用step中已定义的parameters
+        4. 使用LLM根据【步骤目标】构造参数
+
+        重要: 用户定义的参数优先级最高,不会被LLM覆盖
         """
         step_name = step.get("name")
         step_description = step.get("description", "")  # 步骤的具体目标
         step_expectations = step.get("expectations", "")  # 期望结果
-        predefined_params = step.get("parameters", {})
+        predefined_params = step.get("parameters", {}) or {}
 
+        is_pinned = step.get("is_pinned", False)
+        pinned_parameters = step.get("pinned_parameters")
+        parameter_template = step.get("parameter_template")
+        template_variables = step.get("template_variables", {}) or {}
+
+        # ⭐ 模式1: 完全固定参数 - 直接使用,跳过LLM
+        if is_pinned and pinned_parameters:
+            logger.info(f"📌 完全固定步骤 [{step_name}]: 直接使用用户指定参数")
+            final_params = dict(pinned_parameters)
+            # 补充必需但未指定的参数(template_id)
+            if "template_id" not in final_params and state.template_id:
+                final_params["template_id"] = state.template_id
+            # 从 state 补充工具所需的中间数据
+            return CustomAgentExecutorV2._supplement_params_from_state(step_name, final_params, state)
+
+        # ⭐ 模式2: 模板化固定参数 - LLM推断变量值并填充模板
+        if is_pinned and parameter_template:
+            logger.info(f"📋 模板化固定步骤 [{step_name}]: LLM推断变量值并填充模板")
+
+            variables_desc = "\n".join(
+                f"- {k}: {v}" for k, v in template_variables.items())
+
+            llm_client = get_llm_client()
+            system_prompt = f"""你是参数推断助手。用户有一个固定的参数模板,你需要根据用户输入推断模板变量的值。
+
+【参数模板】
+```json
+{json.dumps(parameter_template, ensure_ascii=False, indent=2)}
+```
+
+【模板变量说明】
+{variables_desc}
+
+【用户输入】
+{state.state["inputs"]["query"]}
+
+【任务】
+分析用户输入,推断每个模板变量($开头)应该填充的值。
+
+【返回格式】
+返回JSON,包含每个变量的推断值:
+```json
+{{
+  "$TOPIC": "推断出的值"
+}}
+```
+
+【规则】
+1. 仔细分析用户输入,提取与变量说明匹配的信息
+2. 如果用户输入中没有明确提及,根据上下文合理推断
+3. 返回的值应该可以直接替换到模板中
+4. 只返回JSON,不要其他文字
+"""
+
+            try:
+                response = await llm_client.extract_json_response(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"请根据用户输入推断变量值"},
+                    ],
+                    db=db,
+                    max_tokens=1024,
+                )
+
+                logger.info(f"🔮 LLM推断变量值: {response}")
+
+                # 将变量值填充到模板中
+                template_str = json.dumps(
+                    parameter_template, ensure_ascii=False)
+                for var_name, var_value in response.items():
+                    if var_name.startswith("$"):
+                        template_str = template_str.replace(
+                            var_name, str(var_value))
+
+                final_params = json.loads(template_str)
+
+                # 补充必需参数
+                if "template_id" not in final_params and state.template_id:
+                    final_params["template_id"] = state.template_id
+
+                logger.info(
+                    f"📋 填充后的参数: {json.dumps(final_params, ensure_ascii=False, default=str)[:500]}")
+                return CustomAgentExecutorV2._supplement_params_from_state(step_name, final_params, state)
+
+            except Exception as e:
+                logger.error(f"❌ 模板变量推断失败: {e}")
+                # Fallback: 直接使用模板(变量未替换)
+                return dict(parameter_template)
+
+        # ⭐ 模式3: 用户预定义参数 - 直接使用
         if predefined_params:
-            # 步骤中已定义参数,优先使用
-            logger.debug(f"使用预定义参数: {predefined_params}")
-            return predefined_params
+            logger.info(f"📝 使用用户预定义参数: {list(predefined_params.keys())}")
+            final_params = dict(predefined_params)
+            if "template_id" not in final_params and state.template_id:
+                final_params["template_id"] = state.template_id
+            return CustomAgentExecutorV2._supplement_params_from_state(step_name, final_params, state)
 
-        # 使用LLM推断参数
+        # ⭐ 模式4: LLM智能推断参数
         from core.tools.tool_registry import get_tool_metadata
 
         tool_meta = get_tool_metadata(step_name)
@@ -1152,6 +1247,44 @@ class CustomAgentExecutorV2:
             logger.info(
                 f"🔧 Fallback参数: {json.dumps(fallback_params, ensure_ascii=False, default=str)[:200]}...")
             return fallback_params
+
+    @staticmethod
+    def _supplement_params_from_state(
+        step_name: str,
+        params: Dict[str, Any],
+        state: "UnifiedExecutionState"
+    ) -> Dict[str, Any]:
+        """
+        从state中补充工具所需但用户未指定的参数
+
+        重要: 用户已指定的参数不会被覆盖
+        """
+        # document_extraction 需要 outline 和 documents
+        if step_name == "document_extraction":
+            if "outline" not in params:
+                params["outline"] = state.state.get("outline", {})
+            if "documents" not in params:
+                params["documents"] = state.state.get("documents", [])
+
+        # document_compose 需要 outline 和 extracted_content
+        elif step_name == "document_compose":
+            if "outline" not in params:
+                params["outline"] = state.state.get("outline", {})
+            if "extracted_content" not in params:
+                params["extracted_content"] = state.state.get(
+                    "extracted_content", {})
+
+        # document_review 需要 document
+        elif step_name == "document_review":
+            if "document" not in params:
+                params["document"] = state.state.get("composed_document", {})
+
+        # 文档读取工具需要 document_ids
+        elif step_name in ["get_document_contents", "skim_documents", "read_documents"]:
+            if "document_ids" not in params:
+                params["document_ids"] = state.state.get("document_ids", [])
+
+        return params
 
     @staticmethod
     def _update_state_from_result(

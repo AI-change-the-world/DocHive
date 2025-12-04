@@ -54,27 +54,72 @@ class AgentMarkdownParser:
 3. **目标**: Agent要达成的目标列表(可选)
 4. **约束**: 执行时的约束条件(可选)
 5. **推荐工具**: 用户推荐使用的工具(可选,仅作参考)
+6. **固定步骤/Pinned Steps**: 用户明确指定的工具调用及参数(关键功能!)
 
 【核心原则】
 1. **重点提取目标和约束**: 这是最重要的,执行时会基于目标和约束动态规划步骤
-2. **不强制规划步骤**: 不需要在解析阶段规划详细步骤,执行时会动态规划
-3. **理解用户意图**: 从描述中提取核心目标和关键约束
-4. **工具仅作参考**: 推荐工具不是强制的,执行时会智能选择
+2. **识别固定步骤的两种模式**:
+   - `[固定]`/`[pinned]`: 参数完全固定,不经过LLM推断
+   - `[模板]`/`[template]`: 参数结构固定,但包含占位符(如$TOPIC),由LLM从用户输入推断填充
+3. **工具仅作参考**: 推荐工具部分不是固定的,执行时会智能选择
+
+【固定步骤语法示例】
+
+**模式1: 完全固定参数**
+```
+## 固定步骤
+1. [固定] es_fulltext_search | 搜索财务类文档
+   ```json
+   {{"must_match": [{{"field": "category", "value": "财务"}}], "size": 30}}
+   ```
+```
+解析为: is_pinned=true, pinned_parameters有值, parameter_template=null
+
+**模式2: 模板化固定参数(关键新功能！)**
+```
+## 固定步骤
+1. [模板] es_fulltext_search | 按用户指定的主题检索
+   ```json
+   {{"must_match": [{{"field": "category", "value": "$TOPIC"}}], "size": 30}}
+   ```
+   - $TOPIC: 从用户输入中提取的主题关键词,如"财务"、"合同"等
+```
+解析为:
+```json
+{{
+  "is_pinned": true,
+  "pinned_parameters": null,
+  "parameter_template": {{"must_match": [{{"field": "category", "value": "$TOPIC"}}], "size": 30}},
+  "template_variables": {{"$TOPIC": "从用户输入中提取的主题关键词,如财务、合同等"}}
+}}
+```
 
 【返回格式】
 返回JSON:
 {{
     "name": "Agent名称",
     "description": "详细描述",
-    "goals": ["目标1", "目标2", ...],  # 从Markdown中提取
-    "constraints": ["约束1", "约束2", ...],  # 从Markdown中提取
-    "execution_pattern": "hybrid",  # 默认hybrid
-    "initial_plan": null,  # 可选,通常为空,执行时动态规划
+    "goals": ["目标1", "目标2", ...],
+    "constraints": ["约束1", "约束2", ...],
+    "execution_pattern": "hybrid",
+    "pinned_steps": [  // 用户固定的步骤
+        {{
+            "step": 1,
+            "type": "tool",
+            "name": "工具名称",
+            "description": "步骤描述",
+            "is_pinned": true,
+            "pinned_parameters": {{}},  // 完全固定时有值
+            "parameter_template": {{}},  // 模板化时有值
+            "template_variables": {{}}   // 模板变量说明
+        }}
+    ],
+    "initial_plan": null,
     "errors": [],
     "warnings": []
 }}
 
-【示例1 - 简单问答Agent】
+【示例1 - 简单问答Agent(无固定步骤)】
 输入Markdown:
 ```
 # Agent: 智能问答助手
@@ -88,7 +133,6 @@ class AgentMarkdownParser:
 
 ## 约束
 - 检索文档数不超过50个
-- 答案长度不超过1000字
 ```
 
 输出JSON:
@@ -96,70 +140,69 @@ class AgentMarkdownParser:
 {{
     "name": "智能问答助手",
     "description": "根据用户提问,检索相关文档并生成答案",
-    "goals": [
-        "快速检索相关文档",
-        "生成准确答案"
-    ],
-    "constraints": [
-        "检索文档数不超过50个",
-        "答案长度不超过1000字"
-    ],
+    "goals": ["快速检索相关文档", "生成准确答案"],
+    "constraints": ["检索文档数不超过50个"],
     "execution_pattern": "hybrid",
+    "pinned_steps": [],
     "initial_plan": null,
     "errors": [],
     "warnings": []
 }}
 ```
 
-【示例2 - 报表生成Agent】
+【示例2 - 带模板化固定步骤的Agent】
 输入Markdown:
 ```
-# Agent: 报表生成助手
+# Agent: 主题检索助手
 
-## 描述
-根据要求自动生成数据报表
+## 描述  
+根据用户指定的主题检索文档
 
 ## 目标
-- 检索相关数据
-- 生成结构化报表
-- 格式化输出
+- 理解用户想查询的主题
+- 精确检索对应分类的文档
 
-## 约束  
-- 数据必须真实
-- 执行时间不超过10分钟
-
-## 推荐工具
-- multi_query_search
-- document_compose
+## 固定步骤
+1. [模板] es_fulltext_search | 按用户指定的主题检索
+   ```json
+   {{"must_match": [{{"field": "category", "value": "$TOPIC"}}], "size": 30}}
+   ```
+   - $TOPIC: 从用户输入中提取的主题关键词
 ```
 
 输出JSON:
 ```json
 {{
-    "name": "报表生成助手",
-    "description": "根据要求自动生成数据报表",
-    "goals": [
-        "检索相关数据",
-        "生成结构化报表",
-        "格式化输出"
-    ],
-    "constraints": [
-        "数据必须真实",
-        "执行时间不超过10分钟"
-    ],
+    "name": "主题检索助手",
+    "description": "根据用户指定的主题检索文档",
+    "goals": ["理解用户想查询的主题", "精确检索对应分类的文档"],
+    "constraints": [],
     "execution_pattern": "hybrid",
+    "pinned_steps": [
+        {{
+            "step": 1,
+            "type": "tool",
+            "name": "es_fulltext_search",
+            "description": "按用户指定的主题检索",
+            "is_pinned": true,
+            "pinned_parameters": null,
+            "parameter_template": {{"must_match": [{{"field": "category", "value": "$TOPIC"}}], "size": 30}},
+            "template_variables": {{"$TOPIC": "从用户输入中提取的主题关键词"}}
+        }}
+    ],
     "initial_plan": null,
     "errors": [],
-    "warnings": ["推荐工具仅作参考,执行时会根据目标智能选择"]
+    "warnings": []
 }}
 ```
 
 【注意】
-1. goals和constraints从Markdown的## 目标和## 约束部分提取
-2. 如果Markdown中没有明确的目标/约束,从描述中推断
-3. 不需要规划具体步骤(initial_plan保持null)
-4. execution_pattern通常设为"hybrid"
-5. 如果用户描述过于模糊,在warnings中说明
+1. `[固定]`标记 → pinned_parameters有值, parameter_template为null
+2. `[模板]`标记 → pinned_parameters为null, parameter_template有值
+3. 模板变量以$开头,如$TOPIC, $CATEGORY, $DATE_RANGE等
+4. template_variables字段说明每个变量的含义,帮助LLM推断
+5. 执行时,LLM会根据用户输入和变量说明,推断变量值并填充到模板中
+6. 如果没有固定步骤,pinned_steps为空数组[]
 """
 
             user_prompt = f"""请解析以下Markdown格式的Agent定义：
@@ -179,12 +222,13 @@ class AgentMarkdownParser:
                 db=db,
             )
 
-            # 提取解析结果(新结构:goals/constraints/initial_plan)
+            # 提取解析结果(新结构:goals/constraints/pinned_steps/initial_plan)
             name = response.get("name", "")
             description = response.get("description", "")
             execution_pattern = response.get("execution_pattern", "hybrid")
             goals = response.get("goals", [])
             constraints = response.get("constraints", [])
+            pinned_steps_data = response.get("pinned_steps", [])
             initial_plan_data = response.get("initial_plan", [])
             errors = response.get("errors", [])
             warnings = response.get("warnings", [])
@@ -199,6 +243,35 @@ class AgentMarkdownParser:
                     success=False, errors=errors, warnings=warnings
                 )
 
+            # 构建pinned_steps
+            pinned_steps = []
+            if pinned_steps_data:
+                for step_data in pinned_steps_data:
+                    try:
+                        step = AgentStepSchema(
+                            step=step_data.get("step", len(pinned_steps) + 1),
+                            type=step_data.get("type", "tool").lower(),
+                            name=step_data.get("name", ""),
+                            description=step_data.get("description", ""),
+                            parameters=step_data.get("parameters"),
+                            is_pinned=step_data.get("is_pinned", True),
+                            pinned_parameters=step_data.get(
+                                "pinned_parameters"),
+                            parameter_template=step_data.get(
+                                "parameter_template"),
+                            template_variables=step_data.get(
+                                "template_variables"),
+                            read_fields=step_data.get("read_fields"),
+                            write_fields=step_data.get("write_fields"),
+                            expectations=step_data.get("expectations"),
+                            on_fail_strategy=step_data.get("on_fail_strategy"),
+                        )
+                        pinned_steps.append(step)
+                    except Exception as e:
+                        warnings.append(
+                            f"固定步骤{step_data.get('step', '?')}格式错误: {str(e)}"
+                        )
+
             # 构建initial_plan(如果有)
             initial_plan = []
             if initial_plan_data:
@@ -210,6 +283,13 @@ class AgentMarkdownParser:
                             name=step_data.get("name", ""),
                             description=step_data.get("description", ""),
                             parameters=step_data.get("parameters"),
+                            is_pinned=step_data.get("is_pinned", False),
+                            pinned_parameters=step_data.get(
+                                "pinned_parameters"),
+                            parameter_template=step_data.get(
+                                "parameter_template"),
+                            template_variables=step_data.get(
+                                "template_variables"),
                             read_fields=step_data.get("read_fields"),
                             write_fields=step_data.get("write_fields"),
                             expectations=step_data.get("expectations"),
@@ -220,6 +300,17 @@ class AgentMarkdownParser:
                         warnings.append(
                             f"步骤{step_data.get('step', '?')}格式错误: {str(e)}"
                         )
+
+            # 合并 pinned_steps 到 initial_plan（pinned_steps 优先）
+            if pinned_steps:
+                if not initial_plan:
+                    initial_plan = pinned_steps
+                else:
+                    # 将固定步骤放到初始计划开头
+                    initial_plan = pinned_steps + initial_plan
+                    # 重新编号
+                    for i, step in enumerate(initial_plan):
+                        step.step = i + 1
 
             # 构建Agent定义(新结构)
             agent = AgentDefinitionSchema(

@@ -23,6 +23,15 @@ class AgentStepSchema(BaseModel):
     on_fail_strategy: Optional[str] = Field(
         None, description="失败处理策略的自然语言描述,如'重试最多3次'、'回退到步骤2重新检索'")
 
+    # 新增: 固定步骤相关字段
+    is_pinned: bool = Field(False, description="是否为固定步骤,固定步骤的参数结构不会被LLM修改")
+    pinned_parameters: Optional[Dict[str, Any]] = Field(
+        None, description="完全固定的参数,直接使用不经过LLM推断")
+    parameter_template: Optional[Dict[str, Any]] = Field(
+        None, description="参数模板,包含占位符(如$TOPIC),由LLM根据用户输入推断填充")
+    template_variables: Optional[Dict[str, str]] = Field(
+        None, description="模板变量说明,如{'$TOPIC': '从用户输入中提取的主题关键词'}")
+
 
 class AgentDefinitionSchema(BaseModel):
     """Agent定义(新设计:能力导向而非步骤导向)"""
