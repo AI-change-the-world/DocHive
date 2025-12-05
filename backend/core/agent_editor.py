@@ -515,6 +515,13 @@ Agent现在支持两种定义方式:
 1. **能力导向**(V2推荐): 只定义goals和constraints,执行时动态规划步骤
 2. **步骤导向**(兼容): 明确定义steps或initial_plan
 
+**⭐⭐⭐ 参数自动补充机制(极其重要!) ⭐⭐⭐**:
+系统支持参数自动补充,因此:
+1. 步骤的 parameters/pinned_parameters 可以为空
+2. 执行时系统会自动从 state 中获取所需参数(如 template_id, document_ids, outline 等)
+3. 如果 state 中没有,系统会使用 LLM 智能推断参数
+4. **不要因为参数未定义而判定失败!** 这是系统的正常设计
+
 **验证规则**:
 - 如果Agent有**goals**:
   - 只需验证goals是否清晰、可实现
@@ -523,12 +530,14 @@ Agent现在支持两种定义方式:
   - Mermaid图只需展示高层逻辑流程
   
 - 如果Agent有**steps**:
-  1. **步骤完整性**: 是否缺少关键步骤？
-  2. **工具/智能体存在性**: 所有用到的工具/智能体是否都在系统中存在？
-  3. **步骤顺序**: 步骤顺序是否合理？
-  4. **执行模式匹配**: 执行模式和实际步骤是否匹配？
-  5. **逻辑连贯性**: 每个步骤之间的数据流转是否合理？
-  6. **控制流可行性**: 如果有expectations/on_fail_strategy,执行器能否实现？
+  1. **工具/智能体存在性**: 所有用到的工具/智能体是否都在系统中存在？
+  2. **步骤顺序**: 步骤顺序是否大致合理？
+  3. **逻辑连贯性**: 每个步骤之间的数据流转是否合理？
+  
+  **不需要验证**:
+  - 参数是否完整(系统会自动补充)
+  - read_fields/write_fields 是否定义(可选字段)
+  - template_id 等必需参数(系统自动提供)
 
 【Mermaid流程图设计原则】
 
@@ -562,8 +571,18 @@ graph TD
     "errors": ["错误信息1"],
     "warnings": ["警告信息1"],
     "suggestions": ["优化建议1"],
-    "mermaid_diagram": "graph TD\\n    A[...]"
+    "mermaid_diagram": "graph TD\n    A[...]"
 }}
+
+**判定为失败(is_valid=false)的情况**:
+- 使用了不存在的工具或智能体
+- 步骤顺序严重不合理(如先写文档再检索)
+- 目标与系统能力完全不匹配
+
+**不应该判定为失败的情况**:
+- 参数未定义(系统自动补充)
+- 缺少某个中间步骤(可以作为建议提出)
+- read_fields/write_fields 未定义
 
 **mermaid_diagram 要求**:
 - 必须使用 graph TD 开头
@@ -596,7 +615,33 @@ graph TD
     "errors": [],
     "warnings": [],
     "suggestions": ["建议在执行时动态规划检索和问答步骤"],
-    "mermaid_diagram": "graph TD\\n    Start[[开始]] --> G1[目标: 快速检索相关文档]\\n    G1 --> G2[目标: 生成准确答案]\\n    G2 --> End[[结束]]"
+    "mermaid_diagram": "graph TD\n    Start[[开始]] --> G1[目标: 快速检索相关文档]\n    G1 --> G2[目标: 生成准确答案]\n    G2 --> End[[结束]]"
+}}
+```
+
+【示例2 - 步骤导向的Agent(参数未定义也应通过)】
+
+输入的Agent定义：
+```json
+{{
+    "name": "文档写作助手",
+    "steps": [
+        {{"step": 1, "name": "analyze_input", "description": "分析用户意图", "parameters": null}},
+        {{"step": 2, "name": "es_fulltext_search", "description": "检索相关内容", "parameters": null}},
+        {{"step": 3, "name": "generate_outline", "description": "生成大纲", "parameters": null}},
+        {{"step": 4, "name": "document_compose", "description": "撰写文档", "parameters": null}}
+    ]
+}}
+```
+
+正确的输出(参数未定义不影响验证):
+```json
+{{
+    "is_valid": true,
+    "errors": [],
+    "warnings": [],
+    "suggestions": ["建议在步骤2和3之间添加document_extraction步骤以提取内容"],
+    "mermaid_diagram": "graph TD\n    Start[[开始]] --> Step1[步骤1: 分析用户意图]\n    Step1 --> Step2[步骤2: 检索相关内容]\n    Step2 --> Step3[步骤3: 生成大纲]\n    Step3 --> Step4[步骤4: 撰写文档]\n    Step4 --> End[[结束]]"
 }}
 ```
 """

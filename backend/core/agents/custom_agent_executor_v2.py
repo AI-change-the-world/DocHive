@@ -430,9 +430,14 @@ class DynamicPlanner:
         query: str,
         template_id: int,
         db: AsyncSession,
+        initial_plan: Optional[List[Dict[str, Any]]] = None,  # 新增: 初始计划(含固定步骤)
     ) -> Dict[str, Any]:
         """
         使用LLM动态规划执行步骤 + 生成state schema
+
+        ⭐ 新增: 支持固定步骤
+        - 如果 initial_plan 中有 is_pinned=True 的步骤,这些步骤必须保留
+        - LLM 只能在固定步骤基础上补充必要的辅助步骤
 
         Returns:
             {
@@ -444,6 +449,23 @@ class DynamicPlanner:
         """
         from core.tools.tool_registry import get_tool_metadata
         from core.tools.base import get_all_tools
+
+        # 0. 提取固定步骤(is_pinned=True)
+        pinned_steps = []
+        if initial_plan:
+            for step in initial_plan:
+                if step.get("is_pinned", False):
+                    pinned_steps.append(step)
+
+        # 如果全部都是固定步骤,直接返回,不需要LLM规划
+        if pinned_steps and initial_plan and len(pinned_steps) == len(initial_plan):
+            logger.info(f"📌 全部为固定步骤({len(pinned_steps)}个),跳过LLM规划")
+            return {
+                "steps": initial_plan,
+                "state_schema": {},  # 固定步骤不需要额外schema
+                "errors": [],
+                "warnings": [],
+            }
 
         # 1. 获取可用工具列表(包含output_fields信息)
         all_tools_dict = get_all_tools()  # 返回字典: {tool_name: tool_info}
@@ -459,6 +481,22 @@ class DynamicPlanner:
                 })
 
         # 2. 构造规划prompt(包含state schema生成要求)
+        # ⭐ 如果有固定步骤,需要在prompt中告知LLM
+        pinned_steps_info = ""
+        if pinned_steps:
+            pinned_steps_info = f"""
+
+【⭐⭐⭐ 固定步骤(必须保留,不可修改) ⭐⭐⭐】
+以下步骤是用户明确指定的固定步骤,你必须完整保留,不能修改、删除或重新排序:
+{json.dumps(pinned_steps, ensure_ascii=False, indent=2)}
+
+你的任务是:
+1. 保留所有固定步骤(is_pinned=True)
+2. 在固定步骤之间或之后,根据需要补充必要的辅助步骤
+3. 确保最终计划完整可执行
+4. 固定步骤的参数(pinned_parameters/parameter_template)不要修改
+"""
+
         system_prompt = f"""你是一个专业的任务规划器。
 
 【任务背景】
@@ -473,7 +511,7 @@ Agent描述: {agent_description}
 
 【可用工具列表】
 {json.dumps(tools_summary, ensure_ascii=False, indent=2)}
-
+{pinned_steps_info}
 【核心要求】
 1. 根据用户查询和Agent目标,规划执行步骤
 2. 同时设计state schema(状态字段结构)
@@ -485,12 +523,17 @@ Agent描述: {agent_description}
    - write_fields: 将写入的state字段列表(如["document_ids", "quality.retrieval_count"])
    - expectations: 自然语言描述的期望,如"检索到至少5个文档"
    - on_fail_strategy: 失败策略,如"重试最多3次"、"回退到步骤2"
+   - is_pinned: 是否为固定步骤(固定步骤必须为true)
+   - pinned_parameters: 固定参数(固定步骤需保留原值)
+   - parameter_template: 参数模板(固定步骤需保留原值)
+   - template_variables: 模板变量说明(固定步骤需保留原值)
 4. state schema设计:
    - 根据规划的步骤,汇总所有write_fields
    - 每个字段指定type(list/dict/string/number)和default默认值
    - 可包含quality子字段用于质量监控
 5. 步骤要简洁但完整,避免冗余
 6. 如果缺少关键工具,返回errors说明
+7. ⭐ 固定步骤必须完整保留,包括其is_pinned/pinned_parameters/parameter_template/template_variables字段
 
 【返回格式】
 请返回JSON:
@@ -503,7 +546,11 @@ Agent描述: {agent_description}
             "read_fields": [],
             "write_fields": ["field1", "quality.metric1"],
             "expectations": "期望结果描述",
-            "on_fail_strategy": "失败处理策略"
+            "on_fail_strategy": "失败处理策略",
+            "is_pinned": false,
+            "pinned_parameters": null,
+            "parameter_template": null,
+            "template_variables": null
         }}
     ],
     "state_schema": {{
@@ -693,6 +740,13 @@ class CustomAgentExecutorV2:
         """
         logger.info(f"🚀 开始执行Agent V2: {agent.name}")
 
+        # ⭐ 检查是否有固定步骤
+        initial_plan = agent.initial_plan or []
+        pinned_count = sum(
+            1 for s in initial_plan if s.get("is_pinned", False))
+        if pinned_count > 0:
+            logger.info(f"📌 发现 {pinned_count} 个固定步骤,将优先使用")
+
         # 1. 动态规划阶段
         yield {
             "event": "planning",
@@ -709,6 +763,7 @@ class CustomAgentExecutorV2:
             query=query,
             template_id=template_id,
             db=db,
+            initial_plan=initial_plan,  # ⭐ 传入固定步骤
         )
 
         if plan_result["errors"]:
@@ -1166,7 +1221,41 @@ class CustomAgentExecutorV2:
 - 错误的query: "张三于2024年1月被某平台骗取资金..." (这是错误的!不应直接复制原始输入)
 """
 
-        user_prompt = f"为工具 {step_name} 生成参数。当前步骤目标: {step_description}"
+        # 这个参数用来固定一些工具的输出，尤其是es全文检索，如果不固定很容易出事情
+        # 切记！！！
+        _extra_ = """     
+【特定规则】
+- 如果当前工具名为 es_fulltext_search,或者multi_query_search，那么在构建参数的时候，需要遵循以下规则：
+```markdown
+【提取规则】
+1. primary_keywords（核心关键词）
+   - 必须是实体、事件、主题、专有名词、可被检索的对象
+     例如：公车私用、住房公积金、商业贿赂、供应链金融、心脏支架、ChatGPT
+   - 不能是提问结构词，如：
+     如何、为什么、是否、会不会、可以吗、怎么办
+   - 不能是泛化词，如：
+     法律法规、政策、规定、办法、问题、影响、处理方式、后果
+   - 不能是动作辅助词：
+     触犯、涉及、属于、构成、导致、存在
+   - **数量控制**
+     1. 如果查询是简单句或单个问题：限制 1-2 个核心关键词
+     2. 如果查询是复杂句或多问题：可以适当增加，但一般不超过 5 个
+
+2. context_keywords（上下文扩展词）
+   - 描述核心词的领域、属性、范围、场景
+     例如：法律责任、财务审计、交通安全、职务行为、医疗器械
+   - 可以包含抽象词，但不能替代核心词
+
+3. related_keywords（相关词）
+   - 与核心词可能相关的补充检索词或同义词
+   - 可包括：常见别名、对应领域、技术名词、常见问题
+
+```
+        """
+
+        logger.info(f"🚀 为工具 {step_name} 生成参数。")
+
+        user_prompt = f"为工具 {step_name} 生成参数。当前步骤目标: {step_description}\n {_extra_}"
 
         try:
             llm_client = get_llm_client()
