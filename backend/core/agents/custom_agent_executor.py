@@ -6,8 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import ExecutionContext
 from utils.llm_client import get_llm_client
+from typing_extensions import deprecated
 
 
+@deprecated("use `CustomAgentExecutorV2` instead")
 class CustomExecutionState(ExecutionContext):
     """
     自定义Agent执行状态 - 继承自 ExecutionContext
