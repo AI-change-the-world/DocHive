@@ -17,6 +17,7 @@ import {
   Alert,
   List,
   Radio,
+  Tooltip,
 } from "antd";
 import {
   SendOutlined,
@@ -37,17 +38,20 @@ import {
   ThunderboltOutlined,
   ApiOutlined,
   DeleteOutlined,
+  BarChartOutlined,
 } from "@ant-design/icons";
 import type {
   QADocumentReference,
   QARequest,
   TemplateSelection,
+  ExecutionReportResponse,
 } from "../../types";
 import { qaService } from "../../services/qa";
 import { documentService } from "../../services/document";
 import ReactMarkdown from "react-markdown";
 import { v4 as uuidv4 } from "uuid";
 import html2canvas from "html2canvas";
+import ExecutionReport from "./ExecutionReport";
 
 const { TextArea } = Input;
 const { Title, Text, Paragraph } = Typography;
@@ -90,6 +94,7 @@ interface Message {
   timestamp: Date;
   agentStages?: AgentStage[];
   executionPattern?: string; // 执行模式
+  executionReport?: ExecutionReportResponse; // 新增: 执行报告
 }
 
 export default function QABetaPage() {
@@ -133,6 +138,12 @@ export default function QABetaPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+
+  // 执行报告相关状态
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [currentReport, setCurrentReport] =
+    useState<ExecutionReportResponse | null>(null);
+  const executionReportRef = useRef<ExecutionReportResponse | null>(null);
 
   // 自动滚动
   const scrollToBottom = () => {
@@ -413,6 +424,7 @@ export default function QABetaPage() {
                   referencesCount: currentReferencesRef.current.length,
                   stagesCount: agentStagesRef.current.length,
                   pattern: executionPatternRef.current,
+                  hasReport: !!executionReportRef.current,
                 });
 
                 const completedStages = agentStagesRef.current.map((s) => ({
@@ -427,6 +439,7 @@ export default function QABetaPage() {
                 const finalAnswer = currentAnswerRef.current;
                 const finalReferences = [...currentReferencesRef.current];
                 const finalPattern = executionPatternRef.current;
+                const finalReport = executionReportRef.current;
 
                 const newMessage: Message = {
                   id: Date.now().toString(),
@@ -436,6 +449,7 @@ export default function QABetaPage() {
                   timestamp: new Date(),
                   agentStages: completedStages,
                   executionPattern: finalPattern,
+                  executionReport: finalReport || undefined,
                 };
 
                 setMessages((prev) => [...prev, newMessage]);
@@ -450,12 +464,19 @@ export default function QABetaPage() {
                   currentReferencesRef.current = [];
                   agentStagesRef.current = [];
                   executionPatternRef.current = "";
+                  executionReportRef.current = null;
                 }, 200);
                 break;
 
               case "error":
                 message.error(eventData.data?.message || "问答失败");
                 setIsStreaming(false);
+                break;
+
+              case "execution_report":
+                // 收到执行报告
+                console.log("[收到执行报告]", eventData.data);
+                executionReportRef.current = eventData.data as ExecutionReportResponse;
                 break;
             }
           } catch (parseError) {
@@ -793,8 +814,8 @@ export default function QABetaPage() {
           >
             <Card
               className={`w-full md:max-w-[85%] lg:max-w-[80%] ${msg.type === "user"
-                  ? "bg-primary-50 border-primary-200"
-                  : "bg-white border-gray-200"
+                ? "bg-primary-50 border-primary-200"
+                : "bg-white border-gray-200"
                 }`}
             >
               <div className="flex items-start space-x-2">
@@ -858,10 +879,10 @@ export default function QABetaPage() {
                                       key={idx}
                                       size="small"
                                       className={`${stage.status === "finish"
-                                          ? "bg-green-50 border-green-200"
-                                          : stage.status === "process"
-                                            ? "bg-blue-50 border-blue-200"
-                                            : "bg-gray-50 border-gray-200"
+                                        ? "bg-green-50 border-green-200"
+                                        : stage.status === "process"
+                                          ? "bg-blue-50 border-blue-200"
+                                          : "bg-gray-50 border-gray-200"
                                         }`}
                                     >
                                       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -962,6 +983,26 @@ export default function QABetaPage() {
                           </div>
                         </>
                       )}
+
+                      {/* 执行报告按钮 */}
+                      {msg.executionReport && (
+                        <div className="mt-3 pt-3 border-t border-gray-100">
+                          <Tooltip title="查看详细的执行报告，包括每个步骤的结果和流程图">
+                            <Button
+                              type="link"
+                              size="small"
+                              icon={<BarChartOutlined />}
+                              onClick={() => {
+                                setCurrentReport(msg.executionReport!);
+                                setShowReportModal(true);
+                              }}
+                              className="text-purple-600 hover:text-purple-800 p-0"
+                            >
+                              查看执行报告
+                            </Button>
+                          </Tooltip>
+                        </div>
+                      )}
                     </>
                   )}
                   <Text type="secondary" className="text-xs block mt-2">
@@ -1001,7 +1042,7 @@ export default function QABetaPage() {
                         </Text>
                         <Badge
                           count={`${agentStages.filter((s) => s.status === "finish")
-                              .length
+                            .length
                             }/${agentStages.length}`}
                           style={{ backgroundColor: "#722ed1" }}
                         />
@@ -1016,10 +1057,10 @@ export default function QABetaPage() {
                             key={idx}
                             size="small"
                             className={`${stage.status === "finish"
-                                ? "bg-green-50 border-green-200"
-                                : stage.status === "process"
-                                  ? "bg-white border-purple-300"
-                                  : "bg-gray-50 border-gray-200"
+                              ? "bg-green-50 border-green-200"
+                              : stage.status === "process"
+                                ? "bg-white border-purple-300"
+                                : "bg-gray-50 border-gray-200"
                               }`}
                           >
                             <div className="flex flex-wrap items-start justify-between gap-2">
@@ -1373,6 +1414,16 @@ export default function QABetaPage() {
           )}
         </div>
       </Modal>
+
+      {/* 执行报告模态框 */}
+      <ExecutionReport
+        visible={showReportModal}
+        onClose={() => {
+          setShowReportModal(false);
+          setCurrentReport(null);
+        }}
+        reportData={currentReport}
+      />
     </div>
   );
 }

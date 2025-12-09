@@ -9,13 +9,13 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_config, get_db, get_search_engine
+from api.deps import get_config, get_current_user, get_db, get_search_engine
 from core.agent_editor import (
     AgentExecutionBuilder,
     AgentLLMValidator,
     AgentMarkdownParser,
 )
-from models.database_models import CustomAgent
+from models.database_models import CustomAgent, User
 from schemas.agent_schemas import (
     AgentCreateRequest,
     AgentMarkdownRequest,
@@ -248,6 +248,7 @@ async def execute_agent(
     agent_id: int,
     request_body: dict,
     request: Request,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     search_engine=Depends(get_search_engine),
     config=Depends(get_config),
@@ -313,6 +314,7 @@ async def execute_agent(
                     db=db,
                     es_client=es_client,
                     es_index=es_index,
+                    user_id=current_user.id,  # 传入用户ID
                 ):
                     yield json.dumps(event, ensure_ascii=False)
             except Exception as e:

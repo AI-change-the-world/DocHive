@@ -5,6 +5,7 @@ from api.v1 import (
     auth,
     document_types,
     documents,
+    execution_records,
     llm_logs,
     qa,
     sys_config,
@@ -29,3 +30,4 @@ api_v1_router.include_router(llm_logs.router)
 api_v1_router.include_router(template_configs.router)
 api_v1_router.include_router(agent_editor.router)
 api_v1_router.include_router(writing_templates.router)
+api_v1_router.include_router(execution_records.router)

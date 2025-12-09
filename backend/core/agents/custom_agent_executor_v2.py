@@ -728,6 +728,7 @@ class CustomAgentExecutorV2:
         db: AsyncSession,
         es_client,
         es_index: str = "dochive_documents",
+        user_id: Optional[int] = None,  # 新增: 用户ID
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         执行自定义Agent
@@ -739,6 +740,22 @@ class CustomAgentExecutorV2:
         4. 智能回退: 失败时根据回退策略表决定下一步
         """
         logger.info(f"🚀 开始执行Agent V2: {agent.name}")
+
+        # 创建执行记录
+        from services.execution_record_service import ExecutionRecordService
+
+        execution_record = await ExecutionRecordService.create_record(
+            db=db,
+            agent_id=agent.id,
+            agent_name=agent.name,
+            query=query,
+            template_id=template_id,
+            execution_pattern=agent.execution_pattern or "hybrid",
+            session_id=session_id or "",
+            user_id=user_id,
+        )
+        record_id = execution_record.id
+        logger.info(f"📝 创建执行记录 ID={record_id}")
 
         # ⭐ 检查是否有固定步骤
         initial_plan = agent.initial_plan or []
@@ -839,12 +856,21 @@ class CustomAgentExecutorV2:
             }
 
             try:
-                # 执行工具
-                arguments = await CustomAgentExecutorV2._build_tool_arguments(
+                # 执行工具 - 返回参数和LLM调用信息
+                build_result = await CustomAgentExecutorV2._build_tool_arguments(
                     step=step,
                     state=state,
                     db=db,
                 )
+
+                # 解构返回值
+                if isinstance(build_result, dict) and "arguments" in build_result:
+                    arguments = build_result["arguments"]
+                    llm_calls = build_result.get("llm_calls", [])
+                else:
+                    # 兼容旧版返回格式
+                    arguments = build_result
+                    llm_calls = []
 
                 result = await execute_tool(
                     step_name,
@@ -862,12 +888,14 @@ class CustomAgentExecutorV2:
                 # 更新质量指标
                 state.update_quality_from_result(step_name, result)
 
-                # 记录历史
+                # 记录历史 - 包含LLM调用信息
                 state.add_step_to_history({
                     "step": step_num,
                     "name": step_name,
                     "description": step_desc,
+                    "arguments": arguments,  # 记录参数
                     "result": result,
+                    "llm_calls": llm_calls,  # 记录LLM调用
                 })
 
                 # 评估期望
@@ -1014,13 +1042,76 @@ class CustomAgentExecutorV2:
             },
         }
 
-        # 5. 完成
+        # 5. 生成执行报告
+        from core.agents.execution_report import ExecutionReportGenerator
+
+        final_result = {
+            "composed_document": state.state.get("composed_document"),
+            "reviewed_document": state.state.get("reviewed_document"),
+            "documents": state.state.get("documents"),
+        }
+
+        # 生成结构化报告数据
+        report_data = ExecutionReportGenerator.generate_report_data(
+            agent_name=agent.name,
+            query=query,
+            steps=steps,
+            step_history=state.get_step_history(),
+            final_result=final_result,
+        )
+
+        # 生成 HTML 报告
+        html_report = ExecutionReportGenerator.generate_html_report(
+            agent_name=agent.name,
+            query=query,
+            steps=steps,
+            step_history=state.get_step_history(),
+            final_result=final_result,
+        )
+
+        # 生成 Markdown 报告
+        markdown_report = ExecutionReportGenerator.generate_markdown_report(
+            agent_name=agent.name,
+            query=query,
+            steps=steps,
+            step_history=state.get_step_history(),
+            final_result=final_result,
+        )
+
+        yield {
+            "event": "execution_report",
+            "data": {
+                "report": report_data,
+                "html": html_report,
+                "markdown": markdown_report,
+            },
+        }
+
+        # 6. 保存执行记录
+        try:
+            await ExecutionRecordService.complete_record(
+                db=db,
+                record_id=record_id,
+                execution_plan=steps,
+                step_history=state.get_step_history(),
+                final_result=final_result,
+                report_data=report_data,
+                html_report=html_report,
+                markdown_report=markdown_report,
+                status="completed",
+            )
+            logger.info(f"✅ 执行记录已保存 ID={record_id}")
+        except Exception as e:
+            logger.error(f"⚠️ 保存执行记录失败: {e}")
+
+        # 7. 完成
         yield {
             "event": "done",
             "data": {
                 "success": True,
                 "message": "Agent执行完成",
                 "iterations": state.state["control"]["iterations"],
+                "record_id": record_id,  # 新增: 返回记录ID
             },
         }
 
@@ -1034,6 +1125,12 @@ class CustomAgentExecutorV2:
     ) -> Dict[str, Any]:
         """
         构造工具参数
+
+        返回格式:
+        {
+            "arguments": {...},  # 工具参数
+            "llm_calls": [...]  # LLM调用记录
+        }
 
         核心逻辑(用户定义优先):
         1. ⭐ 完全固定(is_pinned=True, pinned_parameters存在): 直接使用,跳过LLM
@@ -1053,6 +1150,9 @@ class CustomAgentExecutorV2:
         parameter_template = step.get("parameter_template")
         template_variables = step.get("template_variables", {}) or {}
 
+        # LLM调用记录列表
+        llm_calls = []
+
         # ⭐ 模式1: 完全固定参数 - 直接使用,跳过LLM
         if is_pinned and pinned_parameters:
             logger.info(f"📌 完全固定步骤 [{step_name}]: 直接使用用户指定参数")
@@ -1061,7 +1161,9 @@ class CustomAgentExecutorV2:
             if "template_id" not in final_params and state.template_id:
                 final_params["template_id"] = state.template_id
             # 从 state 补充工具所需的中间数据
-            return CustomAgentExecutorV2._supplement_params_from_state(step_name, final_params, state)
+            final_args = CustomAgentExecutorV2._supplement_params_from_state(
+                step_name, final_params, state)
+            return {"arguments": final_args, "llm_calls": llm_calls}
 
         # ⭐ 模式2: 模板化固定参数 - LLM推断变量值并填充模板
         if is_pinned and parameter_template:
@@ -1103,14 +1205,25 @@ class CustomAgentExecutorV2:
 """
 
             try:
+                user_prompt_template = f"请根据用户输入推断变量值"
                 response = await llm_client.extract_json_response(
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"请根据用户输入推断变量值"},
+                        {"role": "user", "content": user_prompt_template},
                     ],
                     db=db,
                     max_tokens=1024,
                 )
+
+                # 记录LLM调用
+                llm_calls.append({
+                    "purpose": "模板变量推断",
+                    "input": {
+                        "system_prompt": system_prompt[:500] + "..." if len(system_prompt) > 500 else system_prompt,
+                        "user_prompt": user_prompt_template,
+                    },
+                    "output": response,
+                })
 
                 logger.info(f"🔮 LLM推断变量值: {response}")
 
@@ -1130,12 +1243,14 @@ class CustomAgentExecutorV2:
 
                 logger.info(
                     f"📋 填充后的参数: {json.dumps(final_params, ensure_ascii=False, default=str)[:500]}")
-                return CustomAgentExecutorV2._supplement_params_from_state(step_name, final_params, state)
+                final_args = CustomAgentExecutorV2._supplement_params_from_state(
+                    step_name, final_params, state)
+                return {"arguments": final_args, "llm_calls": llm_calls}
 
             except Exception as e:
                 logger.error(f"❌ 模板变量推断失败: {e}")
                 # Fallback: 直接使用模板(变量未替换)
-                return dict(parameter_template)
+                return {"arguments": dict(parameter_template), "llm_calls": llm_calls}
 
         # ⭐ 模式3: 用户预定义参数 - 直接使用
         if predefined_params:
@@ -1143,14 +1258,16 @@ class CustomAgentExecutorV2:
             final_params = dict(predefined_params)
             if "template_id" not in final_params and state.template_id:
                 final_params["template_id"] = state.template_id
-            return CustomAgentExecutorV2._supplement_params_from_state(step_name, final_params, state)
+            final_args = CustomAgentExecutorV2._supplement_params_from_state(
+                step_name, final_params, state)
+            return {"arguments": final_args, "llm_calls": llm_calls}
 
         # ⭐ 模式4: LLM智能推断参数
         from core.tools.tool_registry import get_tool_metadata
 
         tool_meta = get_tool_metadata(step_name)
         if not tool_meta:
-            return {"template_id": state.template_id}
+            return {"arguments": {"template_id": state.template_id}, "llm_calls": llm_calls}
 
         param_schema = tool_meta.get("parameters", {})
 
@@ -1226,32 +1343,10 @@ class CustomAgentExecutorV2:
         _extra_ = """     
 【特定规则】
 - 如果当前工具名为 es_fulltext_search,或者multi_query_search，那么在构建参数的时候，需要遵循以下规则：
-```markdown
-【提取规则】
-1. primary_keywords（核心关键词）
-   - 必须是实体、事件、主题、专有名词、可被检索的对象
-     例如：公车私用、住房公积金、商业贿赂、供应链金融、心脏支架、ChatGPT
-   - 不能是提问结构词，如：
-     如何、为什么、是否、会不会、可以吗、怎么办
-   - 不能是泛化词，如：
-     法律法规、政策、规定、办法、问题、影响、处理方式、后果
-   - 不能是动作辅助词：
-     触犯、涉及、属于、构成、导致、存在
-   - **数量控制**
-     1. 如果查询是简单句或单个问题：限制 1-2 个核心关键词
-     2. 如果查询是复杂句或多问题：可以适当增加，但一般不超过 5 个
-
-2. context_keywords（上下文扩展词）
-   - 描述核心词的领域、属性、范围、场景
-     例如：法律责任、财务审计、交通安全、职务行为、医疗器械
-   - 可以包含抽象词，但不能替代核心词
-
-3. related_keywords（相关词）
-   - 与核心词可能相关的补充检索词或同义词
-   - 可包括：常见别名、对应领域、技术名词、常见问题
-
 ```
-        """
+
+
+```"""
 
         logger.info(f"🚀 为工具 {step_name} 生成参数。")
 
@@ -1268,6 +1363,16 @@ class CustomAgentExecutorV2:
                 max_tokens=4096,
             )
 
+            # 记录LLM调用
+            llm_calls.append({
+                "purpose": "参数构造",
+                "input": {
+                    "system_prompt_brief": system_prompt[:800] + "..." if len(system_prompt) > 800 else system_prompt,
+                    "user_prompt": user_prompt[:500] + "..." if len(user_prompt) > 500 else user_prompt,
+                },
+                "output": response,
+            })
+
             logger.info(f"🤖 LLM生成参数: {response}")
 
             # 处理字段引用: 如果参数值是字段名,从state中获取实际值
@@ -1280,7 +1385,7 @@ class CustomAgentExecutorV2:
                 else:
                     resolved_response[key] = value
 
-            return resolved_response
+            return {"arguments": resolved_response, "llm_calls": llm_calls}
 
         except Exception as e:
             logger.error(f"❌ LLM生成参数失败: {e},使用fallback")
@@ -1335,7 +1440,7 @@ class CustomAgentExecutorV2:
 
             logger.info(
                 f"🔧 Fallback参数: {json.dumps(fallback_params, ensure_ascii=False, default=str)[:200]}...")
-            return fallback_params
+            return {"arguments": fallback_params, "llm_calls": llm_calls}
 
     @staticmethod
     def _supplement_params_from_state(

@@ -686,6 +686,160 @@ class WritingTemplate(Base, ToDictMixin):
         return result
 
 
+class AgentExecutionRecord(Base, ToDictMixin):
+    """智能体执行记录表"""
+
+    __tablename__ = "agent_execution_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_id = Column(Integer, index=True)  # 关联 custom_agents.id
+    agent_name = Column(String(200), nullable=False, index=True)  # Agent名称快照
+    query = Column(Text, nullable=False)  # 用户查询
+    template_id = Column(Integer, index=True)  # 关联的模板ID
+
+    # 执行信息
+    # 执行模式: tool_only, agent_only, hybrid等
+    execution_pattern = Column(String(50))
+    session_id = Column(String(100), index=True)  # 会话 ID
+
+    # 执行结果
+    # running, completed, failed, cancelled
+    status = Column(String(50), default="running", index=True)
+    _execution_plan = Column("execution_plan", Text)  # 执行计划 JSON
+    _step_history = Column("step_history", Text)  # 步骤历史 JSON
+    _final_result = Column("final_result", Text)  # 最终结果 JSON
+    _report_data = Column("report_data", Text)  # 报告数据 JSON
+    html_report = Column(Text)  # HTML报告
+    markdown_report = Column(Text)  # Markdown报告
+
+    # 统计信息
+    total_steps = Column(Integer, default=0)  # 总步骤数
+    executed_steps = Column(Integer, default=0)  # 已执行步骤数
+    successful_steps = Column(Integer, default=0)  # 成功步骤数
+    failed_steps = Column(Integer, default=0)  # 失败步骤数
+    success_rate = Column(Integer, default=0)  # 成功率(百分比)
+
+    # 时间信息
+    start_time = Column(Integer, index=True)  # 开始执行时间戳
+    end_time = Column(Integer, index=True)  # 结束执行时间戳
+    duration_seconds = Column(Integer)  # 执行时长(秒)
+
+    # 审计信息
+    user_id = Column(Integer, index=True)  # 执行用户 ID
+    created_at = Column(Integer, default=lambda: int(time.time()), index=True)
+    updated_at = Column(Integer, default=lambda: int(time.time()))
+
+    @property
+    def execution_plan(self):
+        """JSON字符串转 list"""
+        import json
+        if self._execution_plan and isinstance(self._execution_plan, str):
+            try:
+                return json.loads(self._execution_plan)
+            except:
+                return []
+        return self._execution_plan if self._execution_plan else []
+
+    @execution_plan.setter
+    def execution_plan(self, value):
+        """list 转 JSON字符串"""
+        import json
+        if isinstance(value, (list, dict)):
+            self._execution_plan = json.dumps(value, ensure_ascii=False)
+        else:
+            self._execution_plan = value
+
+    @property
+    def step_history(self):
+        """JSON字符串转 list"""
+        import json
+        if self._step_history and isinstance(self._step_history, str):
+            try:
+                return json.loads(self._step_history)
+            except:
+                return []
+        return self._step_history if self._step_history else []
+
+    @step_history.setter
+    def step_history(self, value):
+        """list 转 JSON字符串"""
+        import json
+        if isinstance(value, (list, dict)):
+            self._step_history = json.dumps(value, ensure_ascii=False)
+        else:
+            self._step_history = value
+
+    @property
+    def final_result(self):
+        """JSON字符串转 dict"""
+        import json
+        if self._final_result and isinstance(self._final_result, str):
+            try:
+                return json.loads(self._final_result)
+            except:
+                return {}
+        return self._final_result if self._final_result else {}
+
+    @final_result.setter
+    def final_result(self, value):
+        """dict 转 JSON字符串"""
+        import json
+        if isinstance(value, (list, dict)):
+            self._final_result = json.dumps(value, ensure_ascii=False)
+        else:
+            self._final_result = value
+
+    @property
+    def report_data(self):
+        """JSON字符串转 dict"""
+        import json
+        if self._report_data and isinstance(self._report_data, str):
+            try:
+                return json.loads(self._report_data)
+            except:
+                return {}
+        return self._report_data if self._report_data else {}
+
+    @report_data.setter
+    def report_data(self, value):
+        """dict 转 JSON字符串"""
+        import json
+        if isinstance(value, (list, dict)):
+            self._report_data = json.dumps(value, ensure_ascii=False)
+        else:
+            self._report_data = value
+
+    def to_dict(self):
+        """重写to_dict，确保 JSON 字段返回解析后的值"""
+        result = super().to_dict()
+        import json
+
+        # 解析 JSON 字段
+        for field in ["execution_plan", "step_history", "final_result", "report_data"]:
+            private_field = f"_{field}"
+            if private_field in result:
+                value = result.pop(private_field)
+                try:
+                    result[field] = json.loads(value) if isinstance(value, str) else (
+                        value if value else ({} if field in ["final_result", "report_data"] else []))
+                except:
+                    result[field] = {} if field in [
+                        "final_result", "report_data"] else []
+
+        # 修复时间字段：将 ISO 字符串转回整数时间戳
+        from datetime import datetime
+        for time_field in ["created_at", "updated_at", "start_time", "end_time"]:
+            if time_field in result and isinstance(result[time_field], str):
+                try:
+                    # 将 ISO 字符串转回时间戳
+                    dt = datetime.fromisoformat(result[time_field])
+                    result[time_field] = int(dt.timestamp())
+                except:
+                    pass
+
+        return result
+
+
 # 注册 before_update 事件监听器，自动更新 updated_at 时间戳
 event.listen(User, "before_update", update_timestamp_before_update)
 event.listen(ClassTemplate, "before_update", update_timestamp_before_update)
@@ -697,3 +851,5 @@ event.listen(DocumentTypeField, "before_update",
 event.listen(SystemConfig, "before_update", update_timestamp_before_update)
 event.listen(CustomAgent, "before_update", update_timestamp_before_update)
 event.listen(WritingTemplate, "before_update", update_timestamp_before_update)
+event.listen(AgentExecutionRecord, "before_update",
+             update_timestamp_before_update)

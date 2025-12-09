@@ -122,7 +122,7 @@ async def search_writing_templates(
                     conditions.append(
                         WritingTemplate.title.ilike(f"%{keyword}%"))
                     conditions.append(
-                        WritingTemplate.tags.ilike(f"%{keyword}%"))
+                        WritingTemplate._tags.ilike(f"%{keyword}%"))
                     conditions.append(
                         WritingTemplate.description.ilike(f"%{keyword}%"))
 

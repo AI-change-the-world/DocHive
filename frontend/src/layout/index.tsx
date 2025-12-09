@@ -11,6 +11,7 @@ import {
   SettingOutlined,
   ThunderboltOutlined,
   RobotOutlined,
+  HistoryOutlined,
 } from "@ant-design/icons";
 
 const { Header, Sider, Content } = Layout;
@@ -33,6 +34,7 @@ export default function AppLayout() {
     if (path.includes("/llm-logs")) return "llm-logs";
     if (path.includes("/template-configs")) return "template-configs";
     if (path.includes("/agent-editor")) return "agent-editor";
+    if (path.includes("/execution-records")) return "execution-records";
     return "dashboard"; // 默认选中项
   };
 
@@ -174,6 +176,7 @@ export default function AppLayout() {
                 onClick: () => navigate("/agent-editor"),
                 icon: <RobotOutlined className="text-blue-600" />,
               },
+
               {
                 key: "templates",
                 label: <span className="font-medium">编码模板</span>,
@@ -197,20 +200,27 @@ export default function AppLayout() {
                   },
                 ],
               },
-              // {
-              //     key: 'search',
-              //     label: <span className="font-medium">文档检索</span>,
-              //     onClick: () => navigate('/search'),
-              //     icon: <SearchOutlined className="text-primary-600" />,
-              //     className: 'mx-2 mb-1 rounded-lg hover:bg-primary-50 transition-all duration-200'
-              // },
-
               {
-                key: "llm-logs",
-                label: <span className="font-medium">LLM日志</span>,
-                onClick: () => navigate("/llm-logs"),
+                key: "logs",
+                label: <span className="font-medium">日志</span>,
                 icon: <BarChartOutlined className="text-primary-600" />,
+                children: [
+                  {
+                    key: "execution-records",
+                    label: <span className="font-medium">Agent日志</span>,
+                    onClick: () => navigate("/execution-records"),
+                    icon: <HistoryOutlined className="text-green-600" />,
+                  },
+                  {
+                    key: "llm-logs",
+                    label: <span className="font-medium">LLM日志</span>,
+                    onClick: () => navigate("/llm-logs"),
+                    icon: <BarChartOutlined className="text-primary-600" />,
+                  },
+                ],
               },
+
+
               {
                 key: "template-configs",
                 label: <span className="font-medium">模板配置</span>,

@@ -11,6 +11,7 @@ import QABetaPage from "../pages/QABeta";
 import LLMLogPage from "../pages/LLMLog";
 import TemplateConfigPage from "../pages/TemplateConfig";
 import AgentEditorPage from "../pages/AgentEditor";
+import ExecutionRecordsPage from "../pages/ExecutionRecords";
 
 export const router = createBrowserRouter([
   {
@@ -32,6 +33,7 @@ export const router = createBrowserRouter([
       { path: "/llm-logs", element: <LLMLogPage /> },
       { path: "/template-configs", element: <TemplateConfigPage /> },
       { path: "/agent-editor", element: <AgentEditorPage /> },
+      { path: "/execution-records", element: <ExecutionRecordsPage /> },
     ],
   },
   { path: "*", element: <Error /> },

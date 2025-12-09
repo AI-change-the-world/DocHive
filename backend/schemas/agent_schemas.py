@@ -156,3 +156,49 @@ class AgentExecutionResponse(BaseModel):
     execution_plan: List[Dict[str, Any]] = Field(default_factory=list)
     step_results: List[Dict[str, Any]] = Field(default_factory=list)
     error: Optional[str] = None
+
+
+# ============= 执行报告相关 =============
+
+
+class ExecutionStepDetail(BaseModel):
+    """执行步骤详情"""
+    step: int = Field(..., description="步骤序号")
+    name: str = Field(..., description="工具名称")
+    description: str = Field("", description="步骤描述")
+    expectations: Optional[str] = Field(None, description="期望结果")
+    status: str = Field(..., description="状态: success | failed | pending")
+    result: Dict[str, Any] = Field(default_factory=dict, description="执行结果")
+    error: Optional[str] = Field(None, description="错误信息")
+
+
+class ExecutionStatistics(BaseModel):
+    """执行统计信息"""
+    total_steps: int = Field(..., description="总步骤数")
+    executed_steps: int = Field(..., description="已执行步骤数")
+    successful_steps: int = Field(..., description="成功步骤数")
+    failed_steps: int = Field(..., description="失败步骤数")
+    success_rate: float = Field(..., description="成功率(百分比)")
+
+
+class ExecutionReportData(BaseModel):
+    """执行报告数据结构"""
+    agent_name: str = Field(..., description="智能体名称")
+    query: str = Field(..., description="用户查询")
+    generated_at: str = Field(..., description="报告生成时间")
+    start_time: Optional[str] = Field(None, description="开始执行时间")
+    end_time: Optional[str] = Field(None, description="结束执行时间")
+    duration_seconds: Optional[float] = Field(None, description="执行时长(秒)")
+    statistics: ExecutionStatistics = Field(..., description="执行统计")
+    steps: List[ExecutionStepDetail] = Field(
+        default_factory=list, description="步骤详情")
+    final_result: Dict[str, Any] = Field(
+        default_factory=dict, description="最终结果")
+    mermaid_diagram: str = Field("", description="Mermaid流程图")
+
+
+class ExecutionReportResponse(BaseModel):
+    """执行报告响应"""
+    report: ExecutionReportData = Field(..., description="结构化报告数据")
+    html: str = Field("", description="HTML格式报告")
+    markdown: str = Field("", description="Markdown格式报告")

@@ -279,3 +279,109 @@ export interface TemplateConfig {
 export interface TemplateConfigUpdate {
   config_value: string;
 }
+
+// LLM调用记录类型
+export interface LLMCallRecord {
+  purpose: string;  // 调用目的，如"参数构造"、"模板变量推断"
+  input: {
+    system_prompt_brief?: string;
+    system_prompt?: string;
+    user_prompt: string;
+  };
+  output: Record<string, any>;  // LLM输出
+}
+
+// 执行报告相关类型
+export interface ExecutionStepDetail {
+  step: number;
+  name: string;
+  description: string;
+  expectations?: string;
+  status: "success" | "failed" | "pending";
+  arguments?: Record<string, any>;  // 工具参数
+  result: Record<string, any>;
+  llm_calls?: LLMCallRecord[];  // LLM调用记录
+  error?: string;
+}
+
+export interface ExecutionStatistics {
+  total_steps: number;
+  executed_steps: number;
+  successful_steps: number;
+  failed_steps: number;
+  success_rate: number;
+}
+
+export interface ExecutionReportData {
+  agent_name: string;
+  query: string;
+  generated_at: string;
+  start_time?: string;
+  end_time?: string;
+  duration_seconds?: number;
+  statistics: ExecutionStatistics;
+  steps: ExecutionStepDetail[];
+  final_result: Record<string, any>;
+  mermaid_diagram: string;
+}
+
+export interface ExecutionReportResponse {
+  report: ExecutionReportData;
+  html: string;
+  markdown: string;
+}
+
+// 执行记录相关类型
+export interface ExecutionRecord {
+  id: number;
+  agent_id: number;
+  agent_name: string;
+  query: string;
+  template_id?: number;
+  execution_pattern?: string;
+  session_id?: string;
+
+  // 执行结果
+  execution_plan?: any[];
+  step_history?: any[];
+  final_result?: Record<string, any>;
+  report_data?: ExecutionReportData;
+  html_report?: string;
+  markdown_report?: string;
+
+  // 统计信息
+  total_steps: number;
+  executed_steps: number;
+  successful_steps: number;
+  failed_steps: number;
+  success_rate: number;
+
+  // 时间信息
+  start_time: number;
+  end_time?: number;
+  duration_seconds?: number;
+
+  // 状态
+  status: "running" | "completed" | "failed" | "cancelled";
+  error_message?: string;
+
+  // 用户信息
+  user_id: number;
+  created_at: string;
+}
+
+export interface ExecutionRecordListRequest extends PaginationParams {
+  agent_id?: number;
+  status?: string;
+  start_date?: string;
+  end_date?: string;
+}
+
+export interface ExecutionRecordStatistics {
+  total_records: number;
+  total_duration_seconds: number;
+  avg_duration_seconds: number;
+  by_status: Record<string, number>;
+  by_agent: Record<string, number>;
+  avg_success_rate: number;
+}
