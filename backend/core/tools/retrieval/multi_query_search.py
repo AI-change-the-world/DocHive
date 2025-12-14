@@ -9,7 +9,8 @@ from typing import Any, Dict, List
 
 from loguru import logger
 
-from core.tools.base import ToolContext, tool, ValidationMode
+from auto_agent import func_tool, ValidationMode
+from core.tools.base import ToolContext
 
 
 def _compress_search_result(result: Dict[str, Any], state: Any) -> Dict[str, Any]:
@@ -89,32 +90,22 @@ def _validate_search(
         return True, "检索完成,暂无匹配文档"
 
 
-@tool(
+@func_tool(
     name="multi_query_search",
+    context_param="ctx",
     description="使用多个查询词进行ES全文检索，适用于需要从多个角度或多个主题同时检索文档的场景。例如文档大纲的多个部分需要不同的数据支持。",
-    parameters={
-        "queries": {
-            "type": "array",
-            "description": "查询词列表，每个查询词是一个字符串",
-            "items": {"type": "string"},
-        },
-        "template_id": {"type": "integer", "description": "模板ID"},
-        "top_k_per_query": {
-            "type": "integer",
-            "description": "每个查询返回的文档数量，默认5",
-            "default": 5,
-        },
-        "deduplication": {
-            "type": "boolean",
-            "description": "是否对结果去重，默认True",
-            "default": True,
-        },
-    },
-    required=["queries", "template_id"],
+    parameters=[
+        {"name": "queries", "type": "array", "description": "查询词列表，每个查询词是一个字符串", "required": True},
+        {"name": "template_id", "type": "integer", "description": "模板ID", "required": True},
+        {"name": "top_k_per_query", "type": "integer", "description": "每个查询返回的文档数量，默认5", "required": False, "default": 5},
+        {"name": "deduplication", "type": "boolean", "description": "是否对结果去重，默认True", "required": False, "default": True},
+    ],
     category="retrieval",
     tags=["检索", "ES", "多查询", "全文搜索"],
     validate_function=_validate_search,
     compress_function=_compress_search_result,
+    # 参数别名：从 state["search_queries"] 读取值赋给 queries
+    param_aliases={"queries": "search_queries"},
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "document_ids": {

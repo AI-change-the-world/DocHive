@@ -44,3 +44,6 @@ nacos-sdk-python==2.0.7
 sse_starlette
 langchain_core
 langgraph
+
+# Auto Agent 框架
+git+https://github.com/AI-change-the-world/auto_agent.git@main#egg=auto-agent

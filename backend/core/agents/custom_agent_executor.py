@@ -1,3 +1,7 @@
+"""
+使用auto-agent重构了项目，这个文件已废弃，未来会删除
+"""
+
 import json
 from typing import Any, AsyncGenerator, Dict, List, Optional
 

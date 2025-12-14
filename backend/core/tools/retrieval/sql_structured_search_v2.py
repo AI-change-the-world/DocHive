@@ -9,26 +9,20 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 from sqlalchemy import or_, select
 
-from core.tools.base import ToolContext, tool
+from auto_agent import func_tool
+from core.tools.base import ToolContext
 
 
-@tool(
+@func_tool(
     name="sql_structured_search",
+    context_param="ctx",
     description="基于分类编码和类别字段进行结构化SQL查询。适用于需要精确匹配特定分类的场景。",
-    parameters={
-        "template_id": {"type": "integer", "description": "模板ID"},
-        "class_code": {
-            "type": "string",
-            "description": "分类编码，如'01.02'，不提供则查询所有",
-        },
-        "category_field_code": {"type": "string", "description": "类别字段编码"},
-        "top_k": {
-            "type": "integer",
-            "description": "返回文档数量，默认50",
-            "default": 50,
-        },
-    },
-    required=["template_id"],
+    parameters=[
+        {"name": "template_id", "type": "integer", "description": "模板ID", "required": True},
+        {"name": "class_code", "type": "string", "description": "分类编码，如'01.02'，不提供则查询所有", "required": False},
+        {"name": "category_field_code", "type": "string", "description": "类别字段编码", "required": False},
+        {"name": "top_k", "type": "integer", "description": "返回文档数量，默认50", "required": False, "default": 50},
+    ],
     category="retrieval",
     tags=["检索", "SQL", "结构化查询"],
 )

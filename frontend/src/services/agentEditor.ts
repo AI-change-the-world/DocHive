@@ -95,23 +95,36 @@ export const agentEditorService = {
 
     while (true) {
       const { value, done } = await reader.read();
-      if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
+      if (value) {
+        buffer += decoder.decode(value, { stream: true });
+      }
+
+      // 处理 buffer 中的完整行
       const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+
+      // 如果流结束，处理所有行；否则保留最后一行（可能不完整）
+      if (done) {
+        buffer = "";
+      } else {
+        buffer = lines.pop() || "";
+      }
 
       for (const line of lines) {
         if (!line.trim() || !line.startsWith("data:")) continue;
 
         try {
           const jsonStr = line.substring(5).trim();
-          const eventData = JSON.parse(jsonStr);
-          onEvent(eventData);
+          if (jsonStr) {
+            const eventData = JSON.parse(jsonStr);
+            onEvent(eventData);
+          }
         } catch (e) {
           console.error("解析SSE事件失败:", e, line);
         }
       }
+
+      if (done) break;
     }
   },
 };

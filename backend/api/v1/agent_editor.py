@@ -263,8 +263,8 @@ async def execute_agent(
 
     from sse_starlette import EventSourceResponse
 
-    # 使用新的V2执行器
-    from core.agents.custom_agent_executor_v2 import CustomAgentExecutorV2
+    # 使用 V3 执行器（基于 auto_agent 框架）
+    from core.agents.agent_executor_v3 import AgentExecutorV3
 
     try:
         logger.info(f"📝 执行自定义Agent V2: ID={agent_id}")
@@ -303,10 +303,10 @@ async def execute_agent(
             or config.ELASTICSEARCH_INDEX
         )
 
-        # 4. 创建SSE生成器(使用V2执行器)
+        # 4. 创建SSE生成器(使用V3执行器 - 基于 auto_agent 框架)
         async def event_generator():
             try:
-                async for event in CustomAgentExecutorV2.execute(
+                async for event in AgentExecutorV3.execute(
                     agent=agent,
                     query=query,
                     template_id=template_id,
@@ -314,7 +314,7 @@ async def execute_agent(
                     db=db,
                     es_client=es_client,
                     es_index=es_index,
-                    user_id=current_user.id,  # 传入用户ID
+                    user_id=current_user.id,
                 ):
                     yield json.dumps(event, ensure_ascii=False)
             except Exception as e:

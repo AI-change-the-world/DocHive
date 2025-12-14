@@ -9,7 +9,8 @@ from typing import Any, Dict, Optional
 
 from loguru import logger
 
-from core.tools.base import ToolContext, tool, ValidationMode
+from auto_agent import func_tool, ValidationMode
+from core.tools.base import ToolContext
 
 
 def _compress_document_review(result: Dict[str, Any], state: Any) -> Dict[str, Any]:
@@ -134,31 +135,15 @@ async def _validate_document_review(
         return False, "LLM验证异常,降级为简单验证:无审阅结果"
 
 
-@tool(
+@func_tool(
     name="document_review",
-    description="""
-    对生成的文档进行校对和润色。
-    包括：语法错误检查、用词准确性、笔误修正、政治性错误检查、格式规范等。
-    根据文档类型（公文、汇报、方案等）进行风格润色，确保文档专业、准确、规范。
-    """,
-    parameters={
-        "document": {
-            "type": "object",
-            "description": "需要校对的文档，包含title和content字段",
-        },
-        "document_type": {
-            "type": "string",
-            "description": "文档类型（可选），如：方案、报告、总结、公文、汇报等，用于确定润色风格",
-            "default": "auto",
-        },
-        "review_focus": {
-            "type": "array",
-            "description": "校对重点（可选），如：['grammar', 'spelling', 'political', 'style']",
-            "items": {"type": "string"},
-            "default": ["grammar", "spelling", "political", "style"],
-        },
-    },
-    required=["document"],
+    description="对生成的文档进行校对和润色，包括语法、用词、笔误、政治性错误检查等。",
+    context_param="ctx",
+    parameters=[
+        {"name": "document", "type": "object", "description": "需要校对的文档", "required": True},
+        {"name": "document_type", "type": "string", "description": "文档类型", "default": "auto"},
+        {"name": "review_focus", "type": "array", "description": "校对重点"},
+    ],
     category="document",
     tags=["文档", "校对", "润色", "review"],
     validate_function=_validate_document_review,

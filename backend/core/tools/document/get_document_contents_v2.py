@@ -9,25 +9,18 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 from sqlalchemy import select
 
-from core.tools.base import ToolContext, tool
+from auto_agent import func_tool
+from core.tools.base import ToolContext
 
 
-@tool(
+@func_tool(
     name="get_document_contents",
+    context_param="ctx",
     description="获取指定文档的完整内容。适用于需要读取具体文档详情的场景。",
-    parameters={
-        "document_ids": {
-            "type": "array",
-            "items": {"type": "integer"},
-            "description": "文档ID列表",
-        },
-        "include_fields": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "需要包含的字段，默认: id, title, content_text, ai_summary",
-        },
-    },
-    required=["document_ids"],
+    parameters=[
+        {"name": "document_ids", "type": "array", "description": "文档ID列表", "required": True},
+        {"name": "include_fields", "type": "array", "description": "需要包含的字段，默认: id, title, content_text, ai_summary", "required": False},
+    ],
     category="document",
     tags=["文档", "读取", "内容"],
     output_schema={

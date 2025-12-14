@@ -9,20 +9,18 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 from sqlalchemy import select
 
-from core.tools.base import ToolContext, tool
+from auto_agent import func_tool
+from core.tools.base import ToolContext
 
 
-@tool(
+@func_tool(
     name="search_documents_by_classification",
+    context_param="ctx",
     description="根据分类编码搜索文档，可以查找特定分类下的文档列表",
-    parameters={
-        "template_id": {"type": "integer", "description": "模板ID"},
-        "class_code": {
-            "type": "string",
-            "description": "分类编码，如果不提供则返回所有文档",
-        },
-    },
-    required=["template_id"],
+    parameters=[
+        {"name": "template_id", "type": "integer", "description": "模板ID", "required": True},
+        {"name": "class_code", "type": "string", "description": "分类编码，如果不提供则返回所有文档"},
+    ],
     category="statistics",
     tags=["搜索", "分类", "文档列表"],
 )

@@ -9,7 +9,8 @@ from typing import Any, Dict, List
 
 from loguru import logger
 
-from core.tools.base import ToolContext, tool, ValidationMode
+from auto_agent import func_tool, ValidationMode
+from core.tools.base import ToolContext
 
 
 def _compress_document_compose(result: Dict[str, Any], state: Any) -> Dict[str, Any]:
@@ -130,37 +131,24 @@ async def _validate_document_compose(
         return False, f"LLM验证异常,降级为简单验证:文档过短({word_count}字)"
 
 
-@tool(
+@func_tool(
     name="document_compose",
-    description="""
-    根据文档大纲和摘取的内容片段，组合生成完整的文档。
-    将各个章节的摘取内容进行整合、润色、结构化，生成符合大纲要求的完整文档。
-    适用于将分散的内容片段组合成结构化的正式文档。
-    """,
-    parameters={
-        "outline": {
-            "type": "object",
-            "description": "文档大纲结构，包含标题和章节信息",
-        },
-        "extracted_content": {
-            "type": "object",
-            "description": "按章节组织的摘取内容，来自document_extraction工具的输出",
-        },
-        "query": {
-            "type": "string",
-            "description": "用户原始查询，用于理解文档需求",
-        },
-        "document_style": {
-            "type": "string",
-            "description": "文档风格（可选），如：方案、报告、总结、规划等，默认自动推断",
-            "default": "auto",
-        },
-    },
-    required=["outline", "extracted_content", "query"],
+    description="根据文档大纲和摘取的内容片段，组合生成完整的文档。",
+    context_param="ctx",
+    parameters=[
+        {"name": "outline", "type": "object", "description": "文档大纲结构", "required": True},
+        {"name": "extracted_content", "type": "object", "description": "按章节组织的摘取内容", "required": True},
+        {"name": "query", "type": "string", "description": "用户原始查询", "required": True},
+        {"name": "document_style", "type": "string", "description": "文档风格", "default": "auto"},
+    ],
     category="document",
     tags=["文档", "组合", "生成", "compose"],
     validate_function=_validate_document_compose,
     compress_function=_compress_document_compose,
+    # 参数别名：从 state 中读取对应字段
+    param_aliases={"query": "inputs.query"},
+    # 状态映射：将 document 写入 state["composed_document"]
+    state_mapping={"document": "composed_document"},
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "document": {

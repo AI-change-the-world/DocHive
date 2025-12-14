@@ -9,20 +9,17 @@ from typing import Any, Dict, List
 from loguru import logger
 from sqlalchemy import select
 
-from core.tools.base import ToolContext, tool
+from auto_agent import func_tool
+from core.tools.base import ToolContext
 
 
-@tool(
+@func_tool(
     name="skim_documents",
+    context_param="ctx",
     description="粗读文档：只获取标题和AI摘要。适合快速浏览、统计数量、了解大致内容的场景。优势：速度快、节省Token、可处理大量文档。",
-    parameters={
-        "document_ids": {
-            "type": "array",
-            "items": {"type": "integer"},
-            "description": "文档ID列表",
-        }
-    },
-    required=["document_ids"],
+    parameters=[
+        {"name": "document_ids", "type": "array", "description": "文档ID列表", "required": True},
+    ],
     category="document",
     tags=["文档", "粗读", "摘要"],
 )

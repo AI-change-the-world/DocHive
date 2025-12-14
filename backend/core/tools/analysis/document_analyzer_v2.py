@@ -8,26 +8,19 @@ from typing import Any, Dict, List
 
 from loguru import logger
 
-from core.tools.base import ToolContext, tool
+from auto_agent import func_tool
+from core.tools.base import ToolContext
 
 
-@tool(
+@func_tool(
     name="analyze_documents",
+    context_param="ctx",
     description="智能分析文档内容，根据文档数量自动选择批量分析或逐篇分析策略。适用于需要总结、归纳、对比文档内容的场景。",
-    parameters={
-        "query": {"type": "string", "description": "用户的分析请求"},
-        "documents": {
-            "type": "array",
-            "items": {"type": "object"},
-            "description": "待分析的文档列表",
-        },
-        "max_context_length": {
-            "type": "integer",
-            "description": "最大上下文长度，默认10000",
-            "default": 10000,
-        },
-    },
-    required=["query", "documents"],
+    parameters=[
+        {"name": "query", "type": "string", "description": "用户的分析请求", "required": True},
+        {"name": "documents", "type": "array", "description": "待分析的文档列表", "required": True},
+        {"name": "max_context_length", "type": "integer", "description": "最大上下文长度，默认10000", "required": False, "default": 10000},
+    ],
     category="analysis",
     tags=["分析", "总结", "归纳"],
 )

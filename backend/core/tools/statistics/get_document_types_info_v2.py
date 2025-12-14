@@ -9,14 +9,17 @@ from typing import Any, Dict, List
 from loguru import logger
 from sqlalchemy import select
 
-from core.tools.base import ToolContext, tool
+from auto_agent import func_tool
+from core.tools.base import ToolContext
 
 
-@tool(
+@func_tool(
     name="get_document_types_info",
+    context_param="ctx",
     description="获取模板下的所有文档类型定义及其说明",
-    parameters={"template_id": {"type": "integer", "description": "模板ID"}},
-    required=["template_id"],
+    parameters=[
+        {"name": "template_id", "type": "integer", "description": "模板ID", "required": True},
+    ],
     category="statistics",
     tags=["文档类型", "模板", "元信息"],
 )

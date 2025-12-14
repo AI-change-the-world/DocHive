@@ -10,7 +10,8 @@ from typing import Any, Dict
 from loguru import logger
 from sqlalchemy import and_, func, select
 
-from core.tools.base import ToolContext, tool
+from auto_agent import func_tool
+from core.tools.base import ToolContext
 
 
 def _to_iso(t):
@@ -31,11 +32,13 @@ def _to_iso(t):
     return None
 
 
-@tool(
+@func_tool(
     name="get_template_statistics",
+    context_param="ctx",
     description="获取指定模板的统计信息，包括文档总数、分类分布、文档类型分布、最近上传的文档等",
-    parameters={"template_id": {"type": "integer", "description": "模板ID"}},
-    required=["template_id"],
+    parameters=[
+        {"name": "template_id", "type": "integer", "description": "模板ID", "required": True},
+    ],
     category="statistics",
     tags=["统计", "模板", "概览"],
 )

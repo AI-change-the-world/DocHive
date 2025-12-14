@@ -9,25 +9,18 @@ from typing import Any, Dict, List
 from loguru import logger
 from sqlalchemy import select
 
-from core.tools.base import ToolContext, tool
+from auto_agent import func_tool
+from core.tools.base import ToolContext
 
 
-@tool(
+@func_tool(
     name="read_documents",
+    context_param="ctx",
     description="精读文档：获取完整正文内容。适合需要深入理解、提取详细信息的场景。优势：信息完整、细节准确。限制：速度较慢、消耗更多Token、不适合大量文档。",
-    parameters={
-        "document_ids": {
-            "type": "array",
-            "items": {"type": "integer"},
-            "description": "文档ID列表",
-        },
-        "max_documents": {
-            "type": "integer",
-            "description": "最多读取文档数，防止超过LLM上下文限制，默认10",
-            "default": 10,
-        },
-    },
-    required=["document_ids"],
+    parameters=[
+        {"name": "document_ids", "type": "array", "description": "文档ID列表", "required": True},
+        {"name": "max_documents", "type": "integer", "description": "最多读取文档数，防止超过LLM上下文限制，默认10", "required": False, "default": 10},
+    ],
     category="document",
     tags=["文档", "精读", "全文"],
 )

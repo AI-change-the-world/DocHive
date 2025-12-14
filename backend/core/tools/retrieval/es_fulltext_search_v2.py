@@ -9,7 +9,8 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
-from core.tools.base import ToolContext, tool, ValidationMode
+from auto_agent import func_tool, ValidationMode
+from core.tools.base import ToolContext
 
 
 def _compress_search_result(result: Dict[str, Any], state: Any) -> Dict[str, Any]:
@@ -89,49 +90,26 @@ def _validate_search(
         return True, "检索完成,暂无匹配文档"
 
 
-@tool(
+@func_tool(
     name="es_fulltext_search",
     description="使用Elasticsearch进行全文检索，基于BM25算法召回相关文档。适用于需要基于关键词匹配的检索场景。",
-    parameters={
-        "query": {"type": "string", "description": "用户查询文本"},
-        "template_id": {"type": "integer", "description": "模板ID"},
-        "top_k": {
-            "type": "integer",
-            "description": "返回文档数量，默认10",
-            "default": 10,
-        },
-        "optimized_query": {
-            "type": "object",
-            "description": "优化后的查询（包含 primary_keywords/context_keywords/related_keywords）",
-        },
-    },
-    required=["query", "template_id"],
+    parameters=[
+        {"name": "query", "type": "string", "description": "用户查询文本", "required": True},
+        {"name": "template_id", "type": "integer", "description": "模板ID", "required": True},
+        {"name": "top_k", "type": "integer", "description": "返回文档数量，默认10", "default": 10},
+        {"name": "optimized_query", "type": "object", "description": "优化后的查询"},
+    ],
     category="retrieval",
     tags=["检索", "ES", "全文搜索"],
     validate_function=_validate_search,
     compress_function=_compress_search_result,
+    context_param="ctx",
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
-        "document_ids": {
-            "type": "array",
-            "description": "检索到的文档ID列表",
-            "items": {"type": "integer"},
-        },
-        "documents": {
-            "type": "array",
-            "description": "检索到的文档摘要列表",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "document_id": {"type": "integer", "description": "文档ID"},
-                    "title": {"type": "string", "description": "文档标题"},
-                    "snippet": {"type": "string", "description": "高亮摘要"},
-                    "score": {"type": "number", "description": "相关性分数"},
-                },
-            },
-        },
+        "document_ids": {"type": "array", "description": "检索到的文档ID列表"},
+        "documents": {"type": "array", "description": "检索到的文档摘要列表"},
         "count": {"type": "integer", "description": "检索到的文档数量"},
-        "error": {"type": "string", "description": "错误信息（仅在失败时返回）"},
+        "error": {"type": "string", "description": "错误信息"},
     },
 )
 async def es_fulltext_search(

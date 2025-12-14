@@ -10,38 +10,25 @@ from typing import Any, Dict, List
 from loguru import logger
 from sqlalchemy import and_, or_, select
 
-from core.tools.base import ToolContext, tool
+from auto_agent import func_tool
+from core.tools.base import ToolContext
 
 
-@tool(
+@func_tool(
     name="search_writing_templates",
+    context_param="ctx",
     description="""
     根据query查询写作模板库，查找与查询主题相关的优秀写作样本。
     写作模板是用户上传的优质文章，用于为后续文档润色提供参考。
     支持按主题、标签、关键词等多维度检索。
     适用于文档润色、风格参考、结构借鉴等场景。
     """,
-    parameters={
-        "query": {
-            "type": "string",
-            "description": "查询文本，描述需要的写作风格或主题",
-        },
-        "template_id": {
-            "type": "integer",
-            "description": "模板ID，用于限定检索范围",
-        },
-        "theme": {
-            "type": "string",
-            "description": "主题过滤（可选），如：报告、方案、总结等",
-            "default": None,
-        },
-        "top_k": {
-            "type": "integer",
-            "description": "返回模板数量，默认3",
-            "default": 3,
-        },
-    },
-    required=["query", "template_id"],
+    parameters=[
+        {"name": "query", "type": "string", "description": "查询文本，描述需要的写作风格或主题", "required": True},
+        {"name": "template_id", "type": "integer", "description": "模板ID，用于限定检索范围", "required": True},
+        {"name": "theme", "type": "string", "description": "主题过滤（可选），如：报告、方案、总结等", "required": False},
+        {"name": "top_k", "type": "integer", "description": "返回模板数量，默认3", "required": False, "default": 3},
+    ],
     category="retrieval",
     tags=["检索", "写作模板", "文档润色", "参考样本"],
     validate_function=None,

@@ -9,7 +9,8 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
-from core.tools.base import ToolContext, tool, ValidationMode
+from auto_agent import func_tool, ValidationMode
+from core.tools.base import ToolContext
 
 
 def _compress_document_extraction(result: Dict[str, Any], state: Any) -> Dict[str, Any]:
@@ -68,29 +69,15 @@ def _validate_document_extraction(
         return True, "执行成功"
 
 
-@tool(
+@func_tool(
     name="document_extraction",
-    description="""
-    根据文档大纲和检索到的文档，智能摘取每个章节所需的内容片段。
-    分析文档内容与大纲章节的匹配度，提取最相关的段落和关键信息。
-    适用于从大量检索结果中筛选和提取与文档大纲各章节相关的具体内容。
-    """,
-    parameters={
-        "outline": {
-            "type": "object",
-            "description": "文档大纲结构，包含章节标题和说明",
-        },
-        "documents": {
-            "type": "array",
-            "description": "检索到的文档列表，每个文档包含id、title、content等字段",
-            "items": {"type": "object"},
-        },
-        "query": {
-            "type": "string",
-            "description": "用户原始查询，用于理解文档需求",
-        },
-    },
-    required=["outline", "documents", "query"],
+    description="根据文档大纲和检索到的文档，智能摘取每个章节所需的内容片段。",
+    context_param="ctx",
+    parameters=[
+        {"name": "outline", "type": "object", "description": "文档大纲结构", "required": True},
+        {"name": "documents", "type": "array", "description": "检索到的文档列表", "required": True},
+        {"name": "query", "type": "string", "description": "用户原始查询", "required": True},
+    ],
     category="document",
     tags=["文档", "摘取", "提取", "extraction"],
     validate_function=_validate_document_extraction,

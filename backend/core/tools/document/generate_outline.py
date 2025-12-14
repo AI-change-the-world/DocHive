@@ -9,7 +9,8 @@ import json
 
 from loguru import logger
 
-from core.tools.base import ToolContext, tool, ValidationMode
+from auto_agent import func_tool, ValidationMode
+from core.tools.base import ToolContext
 
 
 def _compress_generate_outline(result: Dict[str, Any], state: Any) -> Dict[str, Any]:
@@ -111,24 +112,19 @@ async def _validate_generate_outline(
         return False, f"LLM验证异常,降级为简单验证:无大纲输出"
 
 
-@tool(
+@func_tool(
     name="generate_outline",
-    description="""
-    根据用户输入智能推断用户想生成的文档类型（如方案、报告、总结、规划、PPT 等），
-    自动生成结构化文档大纲，包括章节标题、每章内容说明，并给出后续写作所需的检索 query。
-    适用于自动生成方案、报告、规划、设计文档等大纲。
-    """,
-    parameters={
-        "query": {
-            "type": "string",
-            "description": '用户的生成大纲请求，如"帮我写一个xxx方案的大纲"',
-        },
-    },
-    required=["query"],
+    description="根据用户输入智能生成结构化文档大纲，包括章节标题、内容说明和检索query。",
+    context_param="ctx",
+    parameters=[
+        {"name": "query", "type": "string", "description": "用户的生成大纲请求", "required": True},
+    ],
     category="document",
     tags=["文档", "大纲", "outline"],
     validate_function=_validate_generate_outline,
     compress_function=_compress_generate_outline,
+    # 状态映射：将 search_query 写入 state["search_queries"]
+    state_mapping={"search_query": "search_queries", "title": "document_title"},
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "title": {"type": "string", "description": "文档标题"},

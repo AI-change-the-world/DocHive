@@ -10,7 +10,8 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
-from core.tools.base import ToolContext, tool, ValidationMode
+from auto_agent import func_tool, ValidationMode
+from core.tools.base import ToolContext
 
 
 def _compress_analyze_result(result: Dict[str, Any], state: Any) -> Dict[str, Any]:
@@ -106,30 +107,21 @@ def _validate_analyze_input(
         return True, "执行成功"
 
 
-@tool(
+@func_tool(
     name="analyze_input",
-    description="分析用户输入的文本内容。适用于分析举报信、案件材料、用户描述等直接输入的文本。可以识别案件类型、提取关键信息、生成摘要。这是处理用户输入文本的首选工具，不需要document_ids。",
-    parameters={
-        "input_text": {
-            "type": "string",
-            "description": "用户输入的文本内容（如举报信、案件材料等）",
-        },
-        "analysis_goals": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "分析目标列表，如['识别案件类型', '提取关键人物', '总结主要事实']",
-        },
-        "output_fields": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "期望输出的字段名列表，如['case_type', 'key_persons', 'summary']",
-        },
-    },
-    required=["input_text"],
+    description="分析用户输入的文本内容。适用于分析举报信、案件材料、用户描述等直接输入的文本。",
+    context_param="ctx",
+    parameters=[
+        {"name": "input_text", "type": "string", "description": "用户输入的文本内容", "required": True},
+        {"name": "analysis_goals", "type": "array", "description": "分析目标列表"},
+        {"name": "output_fields", "type": "array", "description": "期望输出的字段名列表"},
+    ],
     category="analysis",
     tags=["分析", "用户输入", "案件类型", "信息提取"],
     validate_function=_validate_analyze_input,
     compress_function=_compress_analyze_result,
+    # 参数别名：从 state["inputs.query"] 读取值赋给 input_text
+    param_aliases={"input_text": "inputs.query"},
     output_schema={
         "case_summary": {"type": "string", "description": "内容摘要"},
         "case_type": {"type": "list", "description": "识别出的案件/内容类型"},

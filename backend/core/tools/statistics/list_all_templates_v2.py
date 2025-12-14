@@ -9,14 +9,15 @@ from typing import Any, Dict, List
 from loguru import logger
 from sqlalchemy import func, select
 
-from core.tools.base import ToolContext, tool
+from auto_agent import func_tool
+from core.tools.base import ToolContext
 
 
-@tool(
+@func_tool(
     name="list_all_templates",
+    context_param="ctx",
     description="列出系统中所有可用的模板及其基本信息，包括模板名称、描述、版本、文档数量等",
-    parameters={},
-    required=[],
+    parameters=[],
     category="statistics",
     tags=["模板", "列表", "系统信息"],
 )
