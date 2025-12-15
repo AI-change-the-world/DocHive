@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Card, Row, Col, Statistic, Table, Tabs, Divider, Badge } from "antd";
+import { Card, Row, Col, Table, Tabs, Divider, Badge } from "antd";
 import {
   FileTextOutlined,
   DatabaseOutlined,
@@ -21,6 +21,26 @@ import type {
 } from "../../types";
 
 const { TabPane } = Tabs;
+
+// 数字格式化函数
+const formatNumber = (num: number): { value: number; suffix: string } => {
+  if (num >= 1000000000) {
+    return { value: Math.round((num / 1000000000) * 10) / 10, suffix: "B" };
+  }
+  if (num >= 1000000) {
+    return { value: Math.round((num / 1000000) * 10) / 10, suffix: "M" };
+  }
+  if (num >= 1000) {
+    return { value: Math.round((num / 1000) * 10) / 10, suffix: "K" };
+  }
+  return { value: num, suffix: "" };
+};
+
+// Token 数量格式化
+const formatTokens = (tokens: number): string => {
+  const formatted = formatNumber(tokens);
+  return `${formatted.value}${formatted.suffix}`;
+};
 
 const Dashboard: React.FC = () => {
   const [stats, setStats] = useState<DocumentStatistics | null>(null);
@@ -170,136 +190,159 @@ const Dashboard: React.FC = () => {
       </div>
 
       {/* 核心指标卡片 */}
-      <Row gutter={[24, 24]}>
-        <Col xs={24} sm={12} lg={6}>
-          <Card
-            bordered={false}
-            style={{
-              borderRadius: "16px",
-              background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-              boxShadow: "0 8px 24px rgba(102, 126, 234, 0.25)",
-              transition: "all 0.3s ease",
-            }}
-            bodyStyle={{ padding: "24px" }}
-            hoverable
-          >
-            <Statistic
-              title={
-                <span
-                  style={{ color: "rgba(255,255,255,0.85)", fontSize: "14px" }}
-                >
-                  总文档数
-                </span>
-              }
-              value={stats?.total_documents || 0}
-              prefix={
-                <FileTextOutlined style={{ fontSize: "24px", color: "#fff" }} />
-              }
-              valueStyle={{
-                color: "#fff",
-                fontSize: "32px",
-                fontWeight: "600",
-              }}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card
-            bordered={false}
-            style={{
-              borderRadius: "16px",
-              background: "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
-              boxShadow: "0 8px 24px rgba(240, 147, 251, 0.25)",
-              transition: "all 0.3s ease",
-            }}
-            bodyStyle={{ padding: "24px" }}
-            hoverable
-          >
-            <Statistic
-              title={
-                <span
-                  style={{ color: "rgba(255,255,255,0.85)", fontSize: "14px" }}
-                >
-                  模板数量
-                </span>
-              }
-              value={templateCount}
-              prefix={
-                <DatabaseOutlined style={{ fontSize: "24px", color: "#fff" }} />
-              }
-              valueStyle={{
-                color: "#fff",
-                fontSize: "32px",
-                fontWeight: "600",
-              }}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card
-            bordered={false}
-            style={{
-              borderRadius: "16px",
-              background: "linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)",
-              boxShadow: "0 8px 24px rgba(79, 172, 254, 0.25)",
-              transition: "all 0.3s ease",
-            }}
-            bodyStyle={{ padding: "24px" }}
-            hoverable
-          >
-            <Statistic
-              title={
-                <span
-                  style={{ color: "rgba(255,255,255,0.85)", fontSize: "14px" }}
-                >
-                  LLM调用次数
-                </span>
-              }
-              value={totalLLMCalls}
-              prefix={
-                <ApiOutlined style={{ fontSize: "24px", color: "#fff" }} />
-              }
-              valueStyle={{
-                color: "#fff",
-                fontSize: "32px",
-                fontWeight: "600",
-              }}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card
-            bordered={false}
-            style={{
-              borderRadius: "16px",
-              background: "linear-gradient(135deg, #fa709a 0%, #fee140 100%)",
-              boxShadow: "0 8px 24px rgba(250, 112, 154, 0.25)",
-              transition: "all 0.3s ease",
-            }}
-            bodyStyle={{ padding: "24px" }}
-            hoverable
-          >
-            <Statistic
-              title={
-                <span
-                  style={{ color: "rgba(255,255,255,0.85)", fontSize: "14px" }}
-                >
-                  消耗Token数
-                </span>
-              }
-              value={totalTokens}
-              prefix={
-                <BarChartOutlined style={{ fontSize: "24px", color: "#fff" }} />
-              }
-              valueStyle={{
-                color: "#fff",
-                fontSize: "32px",
-                fontWeight: "600",
-              }}
-            />
-          </Card>
-        </Col>
-      </Row>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "24px" }}>
+        <div
+          style={{
+            flex: "1 1 200px",
+            minWidth: "200px",
+            maxWidth: "100%",
+            height: "120px",
+            borderRadius: "16px",
+            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            boxShadow: "0 8px 32px rgba(102, 126, 234, 0.25)",
+            padding: "24px",
+            cursor: "pointer",
+            transition: "transform 0.3s ease, box-shadow 0.3s ease",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = "translateY(-4px)";
+            e.currentTarget.style.boxShadow = "0 12px 40px rgba(102, 126, 234, 0.35)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = "translateY(0)";
+            e.currentTarget.style.boxShadow = "0 8px 32px rgba(102, 126, 234, 0.25)";
+          }}
+        >
+          <div>
+            <div style={{ color: "rgba(255,255,255,0.85)", fontSize: "14px", marginBottom: "12px" }}>
+              总文档数
+            </div>
+            <div style={{ color: "#fff", fontSize: "32px", fontWeight: "600", lineHeight: "1" }}>
+              {(stats?.total_documents || 0).toLocaleString()}
+            </div>
+          </div>
+          <FileTextOutlined style={{ fontSize: "40px", color: "rgba(255,255,255,0.3)" }} />
+        </div>
+
+        <div
+          style={{
+            flex: "1 1 200px",
+            minWidth: "200px",
+            maxWidth: "100%",
+            height: "120px",
+            borderRadius: "16px",
+            background: "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
+            boxShadow: "0 8px 32px rgba(240, 147, 251, 0.25)",
+            padding: "24px",
+            cursor: "pointer",
+            transition: "transform 0.3s ease, box-shadow 0.3s ease",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = "translateY(-4px)";
+            e.currentTarget.style.boxShadow = "0 12px 40px rgba(240, 147, 251, 0.35)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = "translateY(0)";
+            e.currentTarget.style.boxShadow = "0 8px 32px rgba(240, 147, 251, 0.25)";
+          }}
+        >
+          <div>
+            <div style={{ color: "rgba(255,255,255,0.85)", fontSize: "14px", marginBottom: "12px" }}>
+              模板数量
+            </div>
+            <div style={{ color: "#fff", fontSize: "32px", fontWeight: "600", lineHeight: "1" }}>
+              {templateCount.toLocaleString()}
+            </div>
+          </div>
+          <DatabaseOutlined style={{ fontSize: "40px", color: "rgba(255,255,255,0.3)" }} />
+        </div>
+
+        <div
+          style={{
+            flex: "1 1 200px",
+            minWidth: "200px",
+            maxWidth: "100%",
+            height: "120px",
+            borderRadius: "16px",
+            background: "linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)",
+            boxShadow: "0 8px 32px rgba(79, 172, 254, 0.25)",
+            padding: "24px",
+            cursor: "pointer",
+            transition: "transform 0.3s ease, box-shadow 0.3s ease",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = "translateY(-4px)";
+            e.currentTarget.style.boxShadow = "0 12px 40px rgba(79, 172, 254, 0.35)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = "translateY(0)";
+            e.currentTarget.style.boxShadow = "0 8px 32px rgba(79, 172, 254, 0.25)";
+          }}
+        >
+          <div>
+            <div style={{ color: "rgba(255,255,255,0.85)", fontSize: "14px", marginBottom: "12px" }}>
+              LLM调用次数
+            </div>
+            <div style={{ color: "#fff", fontSize: "32px", fontWeight: "600", lineHeight: "1" }}>
+              {totalLLMCalls.toLocaleString()}
+            </div>
+          </div>
+          <ApiOutlined style={{ fontSize: "40px", color: "rgba(255,255,255,0.3)" }} />
+        </div>
+
+        <div
+          style={{
+            flex: "1 1 200px",
+            minWidth: "200px",
+            maxWidth: "100%",
+            height: "120px",
+            borderRadius: "16px",
+            background: "linear-gradient(135deg, #fa709a 0%, #fee140 100%)",
+            boxShadow: "0 8px 32px rgba(250, 112, 154, 0.25)",
+            padding: "24px",
+            cursor: "pointer",
+            transition: "transform 0.3s ease, box-shadow 0.3s ease",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = "translateY(-4px)";
+            e.currentTarget.style.boxShadow = "0 12px 40px rgba(250, 112, 154, 0.35)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = "translateY(0)";
+            e.currentTarget.style.boxShadow = "0 8px 32px rgba(250, 112, 154, 0.25)";
+          }}
+        >
+          <div>
+            <div style={{ color: "rgba(255,255,255,0.85)", fontSize: "14px", marginBottom: "8px" }}>
+              消耗Token数
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: "2px" }}>
+              <span style={{ color: "#fff", fontSize: "28px", fontWeight: "600", lineHeight: "1" }}>
+                {formatNumber(totalTokens).value}
+              </span>
+              <span style={{ color: "#fff", fontSize: "16px", fontWeight: "500" }}>
+                {formatNumber(totalTokens).suffix}
+              </span>
+            </div>
+            <div style={{ color: "rgba(255,255,255,0.7)", fontSize: "11px", marginTop: "4px" }}>
+              {totalTokens.toLocaleString()} tokens
+            </div>
+          </div>
+          <BarChartOutlined style={{ fontSize: "40px", color: "rgba(255,255,255,0.3)" }} />
+        </div>
+      </div>
 
       {/* 图表和表格区域 */}
       <div style={{ marginTop: "32px" }}>
@@ -321,10 +364,10 @@ const Dashboard: React.FC = () => {
             key="1"
           >
             <Card
-              bordered={false}
               style={{
                 borderRadius: "16px",
                 boxShadow: "0 4px 16px rgba(0,0,0,0.06)",
+                border: "none",
               }}
             >
               <Table
@@ -351,10 +394,10 @@ const Dashboard: React.FC = () => {
             key="2"
           >
             <Card
-              bordered={false}
               style={{
                 borderRadius: "16px",
                 boxShadow: "0 4px 16px rgba(0,0,0,0.06)",
+                border: "none",
               }}
             >
               <h3
@@ -407,9 +450,11 @@ const Dashboard: React.FC = () => {
                                 color="#667eea"
                                 text={
                                   <span style={{ fontSize: "14px" }}>
-                                    <strong>{provider}</strong>: {data.calls}{" "}
-                                    次调用, {data.tokens.toLocaleString()}{" "}
-                                    tokens
+                                    <strong>{provider}</strong>: {data.calls.toLocaleString()}{" "}
+                                    次调用, {formatTokens(data.tokens)} tokens
+                                    <span style={{ color: "#8c8c8c", fontSize: "12px", marginLeft: "8px" }}>
+                                      ({data.tokens.toLocaleString()})
+                                    </span>
                                   </span>
                                 }
                               />
@@ -457,9 +502,11 @@ const Dashboard: React.FC = () => {
                                 color="#4facfe"
                                 text={
                                   <span style={{ fontSize: "14px" }}>
-                                    <strong>{model}</strong>: {data.calls}{" "}
-                                    次调用, {data.tokens.toLocaleString()}{" "}
-                                    tokens
+                                    <strong>{model}</strong>: {data.calls.toLocaleString()}{" "}
+                                    次调用, {formatTokens(data.tokens)} tokens
+                                    <span style={{ color: "#8c8c8c", fontSize: "12px", marginLeft: "8px" }}>
+                                      ({data.tokens.toLocaleString()})
+                                    </span>
                                   </span>
                                 }
                               />
