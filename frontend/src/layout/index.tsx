@@ -52,21 +52,14 @@ export default function AppLayout() {
   };
 
   return (
-    <Layout className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50">
-      <Header className="flex items-center px-4 md:px-6 bg-white/80 backdrop-blur-md border-b border-gray-200/50 h-16 fixed top-0 left-0 right-0 z-50 shadow-soft">
+    <Layout className="app-shell min-h-screen">
+      <Header className="app-header flex items-center px-4 md:px-6">
         <div className="flex items-center">
-          {/* <img
-                        src={defaultThumbnail}
-                        alt="Logo"
-                        className="h-8 w-8 mr-3 animate-bounce-gentle"
-                    /> */}
           <div className="hidden sm:block">
-            <span className="font-bold text-xl bg-gradient-to-r from-primary-600 to-primary-900 bg-clip-text text-transparent">
-              DocHive 文档管理系统
-            </span>
+            <span className="app-title text-xl">DocHive 文档管理系统</span>
           </div>
         </div>
-        <div className="flex-1"></div>
+        <div className="flex-1" />
         <div className="flex items-center space-x-4">
           <div className="hidden md:flex items-center space-x-2 bg-primary-50 px-3 py-1 rounded-full">
             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
@@ -78,45 +71,24 @@ export default function AppLayout() {
       </Header>
       <Layout>
         <Sider
-          className="bg-white/90 backdrop-blur-md border-r border-gray-200/50 overflow-y-auto fixed left-0 h-screen z-40 shadow-soft"
-          style={{
-            top: "64px",
-            height: "calc(100vh - 64px)",
-            width: "240px",
-          }}
+          className="app-sider z-40"
           width={240}
         >
-          {/* 精简并修复过的样式：关键在于覆盖 AntD 给父级 submenu 加的 selected/active/open 状态样式 */}
           <style>{`
-            /* ---- 强制父级 submenu 标题在子项被选中或展开时保持透明/不变色 ---- */
-            .ant-menu-submenu.ant-menu-submenu-selected > .ant-menu-submenu-title,
-            .ant-menu-submenu.ant-menu-submenu-open > .ant-menu-submenu-title,
-            .ant-menu-submenu.ant-menu-submenu-active > .ant-menu-submenu-title {
-              background-color: transparent !important;
-              color: inherit !important;
-              box-shadow: none !important;
+            /* 一级菜单左对齐，适度内边距 */
+            .dochive-menu > .ant-menu-item,
+            .dochive-menu > .ant-menu-submenu > .ant-menu-submenu-title {
+              padding-inline-start: 12px !important;
+              text-align: left !important;
             }
-
-            /* 一级菜单项和 submenu 标题的 hover 效果 */
-            .ant-menu-item:hover,
-            .ant-menu-submenu > .ant-menu-submenu-title:hover {
-              background-color: rgba(24, 144, 255, 0.06) !important;
+            /* 二级菜单加大缩进 */
+            .dochive-menu .ant-menu-sub .ant-menu-item,
+            .dochive-menu .ant-menu-sub .ant-menu-submenu-title {
+              padding-inline-start: 28px !important;
+              text-align: left !important;
             }
-
-            /* 选中状态 */
-            .ant-menu-item-selected {
-              background-color: rgba(24, 144, 255, 0.1) !important;
-            }
-
-            /* 保证图标/文字颜色在父级状态变化时不受影响 */
-            .ant-menu-submenu-title .ant-menu-title-content,
-            .ant-menu-submenu-title .anticon {
-              color: inherit !important;
-            }
-
-            /* 细微：防止 submenu-title 在被焦点或 active 时出现内边框样式 */
-            .ant-menu-submenu-title:focus {
-              outline: none;
+            .dochive-menu .ant-menu-title-content {
+              font-weight: 500;
             }
           `}</style>
 
@@ -125,8 +97,7 @@ export default function AppLayout() {
             selectedKeys={[getSelectedKey()]}
             openKeys={openKeys}
             onOpenChange={handleOpenChange}
-            className="bg-transparent border-none pt-4"
-            theme="light"
+            className="dochive-menu app-menu"
             items={[
               {
                 key: "dashboard",
@@ -192,11 +163,13 @@ export default function AppLayout() {
                     key: "documents",
                     label: <span className="font-medium">文档管理</span>,
                     onClick: () => navigate("/documents"),
+                    icon: <FileTextOutlined className="text-primary-600" />,
                   },
                   {
                     key: "writing-templates",
                     label: <span className="font-medium">写作样例</span>,
                     onClick: () => navigate("/writing-templates"),
+                    icon: <FileTextOutlined className="text-primary-600" />,
                   },
                 ],
               },
@@ -232,18 +205,9 @@ export default function AppLayout() {
         </Sider>
 
         <Content
-          className="bg-transparent transition-all duration-300"
-          style={{
-            padding: "24px",
-            marginLeft: "240px",
-            marginTop: "64px",
-            height: "calc(100vh - 64px)",
-            overflow: "hidden",
-          }}
+          className="app-content"
         >
-          <div className="bg-white/70 backdrop-blur-sm rounded-2xl shadow-soft border border-white/50 p-6 h-full overflow-auto transition-all duration-300 hover:shadow-medium">
-            <Outlet />
-          </div>
+          <Outlet />
         </Content>
       </Layout>
     </Layout>

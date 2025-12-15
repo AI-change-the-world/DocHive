@@ -10,9 +10,6 @@ import {
     Typography,
     DatePicker,
     Select,
-    Row,
-    Col,
-    Statistic,
     Tooltip,
 } from "antd";
 import {
@@ -20,12 +17,12 @@ import {
     DeleteOutlined,
     EyeOutlined,
     DownloadOutlined,
-    BarChartOutlined,
     CheckCircleOutlined,
     CloseCircleOutlined,
     ClockCircleOutlined,
     SyncOutlined,
     FileTextOutlined,
+    HistoryOutlined,
 } from "@ant-design/icons";
 import type {
     ExecutionRecord,
@@ -39,7 +36,7 @@ import dayjs from "dayjs";
 
 const { RangePicker } = DatePicker;
 const { Option } = Select;
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 export default function ExecutionRecordsPage() {
     const [records, setRecords] = useState<ExecutionRecord[]>([]);
@@ -56,9 +53,8 @@ export default function ExecutionRecordsPage() {
         dateRange?: [string, string];
     }>({});
 
-    // 统计信息
-    const [statistics, setStatistics] = useState<ExecutionRecordStatistics | null>(null);
-    const [showStatistics, setShowStatistics] = useState(true);
+    // 统计信息（保留以备将来使用）
+    const [_statistics, setStatistics] = useState<ExecutionRecordStatistics | null>(null);
 
     // 报告查看
     const [showReportModal, setShowReportModal] = useState(false);
@@ -342,108 +338,62 @@ export default function ExecutionRecordsPage() {
     ];
 
     return (
-        <div style={{ padding: "24px" }}>
-            <Title level={2}>执行记录管理</Title>
-
-            {/* 统计信息卡片 */}
-            {showStatistics && statistics && (
-                <Card
-                    style={{ marginBottom: 16 }}
-                    extra={
-                        <Button
-                            type="link"
-                            icon={<BarChartOutlined />}
-                            onClick={() => setShowStatistics(!showStatistics)}
-                        >
-                            {showStatistics ? "隐藏" : "显示"}统计
-                        </Button>
-                    }
-                >
-                    <Row gutter={16}>
-                        <Col span={6}>
-                            <Statistic
-                                title="总记录数"
-                                value={statistics.total_records}
-                                prefix={<FileTextOutlined />}
-                            />
-                        </Col>
-                        <Col span={6}>
-                            <Statistic
-                                title="平均成功率"
-                                value={statistics.avg_success_rate}
-                                suffix="%"
-                                precision={1}
-                                valueStyle={{
-                                    color: statistics.avg_success_rate >= 80 ? "#3f8600" : "#cf1322",
-                                }}
-                            />
-                        </Col>
-                        <Col span={6}>
-                            <Statistic
-                                title="平均执行时长"
-                                value={statistics.avg_duration_seconds}
-                                suffix="秒"
-                                precision={1}
-                            />
-                        </Col>
-                        <Col span={6}>
-                            <Statistic
-                                title="总执行时长"
-                                value={formatDuration(statistics.total_duration_seconds)}
-                            />
-                        </Col>
-                    </Row>
-                </Card>
-            )}
-
-            {/* 筛选条件 */}
-            <Card style={{ marginBottom: 16 }}>
-                <Space size="middle" wrap>
-                    <Select
-                        placeholder="选择状态"
-                        style={{ width: 150 }}
-                        allowClear
-                        onChange={(value) => setFilters({ ...filters, status: value })}
-                    >
-                        <Option value="running">运行中</Option>
-                        <Option value="completed">已完成</Option>
-                        <Option value="failed">失败</Option>
-                        <Option value="cancelled">已取消</Option>
-                    </Select>
-
-                    <RangePicker
-                        showTime
-                        onChange={(dates) => {
-                            if (dates && dates[0] && dates[1]) {
-                                setFilters({
-                                    ...filters,
-                                    dateRange: [
-                                        dates[0].toISOString(),
-                                        dates[1].toISOString(),
-                                    ],
-                                });
-                            } else {
-                                const { dateRange, ...rest } = filters;
-                                setFilters(rest);
-                            }
-                        }}
-                    />
-
-                    <Button
-                        icon={<ReloadOutlined />}
-                        onClick={() => {
-                            setFilters({});
-                            loadRecords();
-                            loadStatistics();
-                        }}
-                    >
-                        重置
-                    </Button>
-                </Space>
-            </Card>
-
-            {/* 执行记录表格 */}
+        <div className="p-6">
             <Card>
+                <div className="mb-4 flex justify-between items-center">
+                    <h2 className="text-2xl font-bold flex items-center">
+                        {/* <HistoryOutlined className="mr-3 text-primary-600" /> */}
+                        执行记录管理
+                    </h2>
+                </div>
+
+                {/* 筛选条件 */}
+                <div className="mb-4">
+                    <Space size="middle" wrap>
+                        <Select
+                            placeholder="选择状态"
+                            style={{ width: 150 }}
+                            allowClear
+                            onChange={(value) => setFilters({ ...filters, status: value })}
+                        >
+                            <Option value="running">运行中</Option>
+                            <Option value="completed">已完成</Option>
+                            <Option value="failed">失败</Option>
+                            <Option value="cancelled">已取消</Option>
+                        </Select>
+
+                        <RangePicker
+                            showTime
+                            onChange={(dates) => {
+                                if (dates && dates[0] && dates[1]) {
+                                    setFilters({
+                                        ...filters,
+                                        dateRange: [
+                                            dates[0].toISOString(),
+                                            dates[1].toISOString(),
+                                        ],
+                                    });
+                                } else {
+                                    const { dateRange, ...rest } = filters;
+                                    setFilters(rest);
+                                }
+                            }}
+                        />
+
+                        <Button
+                            icon={<ReloadOutlined />}
+                            onClick={() => {
+                                setFilters({});
+                                loadRecords();
+                                loadStatistics();
+                            }}
+                        >
+                            重置
+                        </Button>
+                    </Space>
+                </div>
+
+                {/* 执行记录表格 */}
                 <Table
                     columns={columns}
                     dataSource={records}

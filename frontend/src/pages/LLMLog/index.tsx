@@ -152,134 +152,134 @@ export default function LLMLogPage() {
   ];
 
   return (
-    <div className="h-full flex flex-col space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <BarChartOutlined className="text-3xl text-primary-600" />
-          <Title level={2} className="!mb-0">
-            LLM调用日志
-          </Title>
-        </div>
-      </div>
-
-      {/* 统计卡片 */}
-      {statistics && (
-        <Row gutter={16}>
-          <Col span={6}>
-            <Card>
-              <Statistic
-                title="总调用次数"
-                value={statistics.total_calls}
-                valueStyle={{ color: "#3f8600" }}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card>
-              <Statistic
-                title="总Token消耗"
-                value={statistics.total_tokens}
-                valueStyle={{ color: "#cf1322" }}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card>
-              <Statistic
-                title="成功率"
-                value={
-                  statistics.total_calls > 0
-                    ? (
-                        ((statistics.by_status?.success || 0) /
-                          statistics.total_calls) *
-                        100
-                      ).toFixed(2)
-                    : 0
-                }
-                suffix="%"
-                valueStyle={{ color: "#1890ff" }}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card>
-              <Statistic
-                title="平均Token"
-                value={
-                  statistics.total_calls > 0
-                    ? Math.round(
-                        statistics.total_tokens / statistics.total_calls
-                      )
-                    : 0
-                }
-              />
-            </Card>
-          </Col>
-        </Row>
-      )}
-
-      {/* 筛选条件 */}
+    <div className="p-6">
       <Card>
-        <Space wrap>
-          <Select
-            placeholder="选择提供商"
-            style={{ width: 150 }}
-            allowClear
-            onChange={(value) =>
-              setFilters({ ...filters, provider: value, page: 1 })
-            }
-          >
-            <Select.Option value="openai">OpenAI</Select.Option>
-            <Select.Option value="deepseek">DeepSeek</Select.Option>
-          </Select>
+        <div className="mb-4 flex justify-between items-center">
+          <h2 className="text-2xl font-bold flex items-center">
+            {/* <BarChartOutlined className="mr-3 text-primary-600" /> */}
+            LLM调用日志
+          </h2>
+        </div>
 
-          <Select
-            placeholder="选择状态"
-            style={{ width: 120 }}
-            allowClear
-            onChange={(value) =>
-              setFilters({ ...filters, status: value, page: 1 })
-            }
-          >
-            <Select.Option value="success">成功</Select.Option>
-            <Select.Option value="error">失败</Select.Option>
-          </Select>
+        {/* 统计卡片 */}
+        {statistics && (
+          <div className="mb-4">
+            <Row gutter={[24, 24]}>
+              <Col xs={24} sm={12} lg={6}>
+                <Card className="hover:shadow-medium transition-all duration-300">
+                  <Statistic
+                    title="总调用次数"
+                    value={statistics.total_calls}
+                    valueStyle={{ color: "#3f8600" }}
+                  />
+                </Card>
+              </Col>
+              <Col xs={24} sm={12} lg={6}>
+                <Card className="hover:shadow-medium transition-all duration-300">
+                  <Statistic
+                    title="总Token消耗"
+                    value={statistics.total_tokens}
+                    valueStyle={{ color: "#cf1322" }}
+                  />
+                </Card>
+              </Col>
+              <Col xs={24} sm={12} lg={6}>
+                <Card className="hover:shadow-medium transition-all duration-300">
+                  <Statistic
+                    title="成功率"
+                    value={
+                      statistics.total_calls > 0
+                        ? (
+                          ((statistics.by_status?.success || 0) /
+                            statistics.total_calls) *
+                          100
+                        ).toFixed(2)
+                        : 0
+                    }
+                    suffix="%"
+                    valueStyle={{ color: "#1890ff" }}
+                  />
+                </Card>
+              </Col>
+              <Col xs={24} sm={12} lg={6}>
+                <Card className="hover:shadow-medium transition-all duration-300">
+                  <Statistic
+                    title="平均Token"
+                    value={
+                      statistics.total_calls > 0
+                        ? Math.round(
+                          statistics.total_tokens / statistics.total_calls
+                        )
+                        : 0
+                    }
+                  />
+                </Card>
+              </Col>
+            </Row>
+          </div>
+        )}
 
-          <RangePicker
-            showTime
-            onChange={(dates) => {
-              if (dates) {
-                setFilters({
-                  ...filters,
-                  start_date: dates[0]?.toISOString(),
-                  end_date: dates[1]?.toISOString(),
-                  page: 1,
-                });
-              } else {
-                setFilters({
-                  ...filters,
-                  start_date: undefined,
-                  end_date: undefined,
-                  page: 1,
-                });
+        {/* 筛选条件 */}
+        <div className="mb-4">
+          <Space wrap>
+            <Select
+              placeholder="选择提供商"
+              style={{ width: 150 }}
+              allowClear
+              onChange={(value) =>
+                setFilters({ ...filters, provider: value, page: 1 })
               }
-            }}
-          />
+            >
+              <Select.Option value="openai">OpenAI</Select.Option>
+              <Select.Option value="deepseek">DeepSeek</Select.Option>
+            </Select>
 
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={() => {
-              loadLogs();
-              loadStatistics();
-            }}
-          >
-            刷新
-          </Button>
-        </Space>
-      </Card>
+            <Select
+              placeholder="选择状态"
+              style={{ width: 120 }}
+              allowClear
+              onChange={(value) =>
+                setFilters({ ...filters, status: value, page: 1 })
+              }
+            >
+              <Select.Option value="success">成功</Select.Option>
+              <Select.Option value="error">失败</Select.Option>
+            </Select>
 
-      {/* 日志表格 */}
-      <Card className="flex-1">
+            <RangePicker
+              showTime
+              onChange={(dates) => {
+                if (dates) {
+                  setFilters({
+                    ...filters,
+                    start_date: dates[0]?.toISOString(),
+                    end_date: dates[1]?.toISOString(),
+                    page: 1,
+                  });
+                } else {
+                  setFilters({
+                    ...filters,
+                    start_date: undefined,
+                    end_date: undefined,
+                    page: 1,
+                  });
+                }
+              }}
+            />
+
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={() => {
+                loadLogs();
+                loadStatistics();
+              }}
+            >
+              刷新
+            </Button>
+          </Space>
+        </div>
+
+        {/* 日志表格 */}
         <Table
           columns={columns}
           dataSource={logs}
@@ -295,7 +295,7 @@ export default function LLMLogPage() {
               setFilters({ ...filters, page, page_size: pageSize });
             },
           }}
-          scroll={{ y: "calc(100vh - 550px)" }}
+          scroll={{ x: 'max-content' }}
         />
       </Card>
 

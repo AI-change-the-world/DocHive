@@ -146,38 +146,36 @@ export default function TemplateConfigPage() {
   ];
 
   return (
-    <div className="h-full flex flex-col space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <SettingOutlined className="text-3xl text-primary-600" />
-          <Title level={2} className="!mb-0">
-            模板配置管理
-          </Title>
-        </div>
-      </div>
-
-      {/* 模板选择 */}
+    <div className="p-6">
       <Card>
-        <Space>
-          <Text strong>选择模板:</Text>
-          <Select
-            placeholder="请选择模板"
-            style={{ width: 300 }}
-            value={selectedTemplateId}
-            onChange={setSelectedTemplateId}
-            options={templates.map((t) => ({
-              label: t.name,
-              value: t.id,
-            }))}
-          />
-          {selectedTemplateId && (
-            <Text type="secondary">共 {configs.length} 个配置项</Text>
-          )}
-        </Space>
-      </Card>
+        <div className="mb-4 flex justify-between items-center">
+          <h2 className="text-2xl font-bold flex items-center">
+            {/* <SettingOutlined className="mr-3 text-primary-600" /> */}
+            模板配置管理
+          </h2>
+        </div>
 
-      {/* 配置列表 */}
-      <Card className="flex-1">
+        {/* 模板选择 */}
+        <div className="mb-4">
+          <Space>
+            <Text strong>选择模板:</Text>
+            <Select
+              placeholder="请选择模板"
+              style={{ width: 300 }}
+              value={selectedTemplateId}
+              onChange={setSelectedTemplateId}
+              options={templates.map((t) => ({
+                label: t.name,
+                value: t.id,
+              }))}
+            />
+            {selectedTemplateId && (
+              <Text type="secondary">共 {configs.length} 个配置项</Text>
+            )}
+          </Space>
+        </div>
+
+        {/* 配置列表 */}
         {selectedTemplateId ? (
           <Table
             columns={columns}
@@ -185,7 +183,7 @@ export default function TemplateConfigPage() {
             loading={loading}
             rowKey="id"
             pagination={false}
-            scroll={{ y: "calc(100vh - 350px)" }}
+            scroll={{ x: 'max-content' }}
           />
         ) : (
           <div className="flex items-center justify-center h-64 text-gray-400">

@@ -625,6 +625,8 @@ export default function AgentEditorPage() {
       title: "名称",
       dataIndex: "name",
       key: "name",
+      width: 200,
+      fixed: 'left' as const,
       render: (text: string) => (
         <Space>
           <RobotOutlined />
@@ -637,17 +639,20 @@ export default function AgentEditorPage() {
       dataIndex: "description",
       key: "description",
       ellipsis: true,
+      width: 300,
     },
     {
       title: "执行模式",
       dataIndex: "execution_pattern",
       key: "execution_pattern",
+      width: 120,
       render: (pattern: string) => <Tag color="blue">{pattern}</Tag>,
     },
     {
       title: "步骤数/目标数",
       dataIndex: "steps",
       key: "steps",
+      width: 150,
       render: (_: any, record: any) => {
         // V2: 支持goals或steps
         if (record.goals && record.goals.length > 0) {
@@ -661,17 +666,21 @@ export default function AgentEditorPage() {
       title: "创建时间",
       dataIndex: "created_at",
       key: "created_at",
+      width: 180,
       render: (time: string) => time.replace("T", " "),
     },
     {
       title: "操作",
       key: "action",
+      width: 180,
+      fixed: 'right' as const,
       render: (_: any, record: any) => (
-        <Space>
+        <Space size="small">
           <Button
             type="default"
             icon={<EyeOutlined />}
             onClick={() => viewAgentDetail(record)}
+            size="small"
           >
             查看
           </Button>
@@ -679,6 +688,7 @@ export default function AgentEditorPage() {
             type="primary"
             icon={<PlayCircleOutlined />}
             onClick={() => handleOpenExecuteModal(record)}
+            size="small"
           >
             执行
           </Button>
@@ -688,41 +698,34 @@ export default function AgentEditorPage() {
   ];
 
   return (
-    <div style={{ padding: 24, height: "100%" }}>
-      {/* 页面标题 */}
-      <Card style={{ marginBottom: 16 }}>
-        <Row justify="space-between" align="middle">
-          <Col>
-            <Title level={2}>
-              <RobotOutlined /> 自定义Agent管理
-            </Title>
-            <Paragraph>管理和执行自定义的智能体工作流</Paragraph>
-          </Col>
-          <Col>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              size="large"
-              onClick={handleOpenCreateDrawer}
-            >
-              创建Agent
-            </Button>
-          </Col>
-        </Row>
-      </Card>
-
-      {/* Agent列表 */}
+    <div className="p-6">
       <Card>
+        <div className="mb-4 flex justify-between items-center">
+          <h2 className="text-2xl font-bold flex items-center">
+            {/* <RobotOutlined className="mr-3 text-primary-600" /> */}
+            自定义Agent管理
+          </h2>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={handleOpenCreateDrawer}
+          >
+            创建Agent
+          </Button>
+        </div>
+
         <Table
           columns={columns}
           dataSource={agents}
           rowKey="id"
           loading={loadingAgents}
+          scroll={{ x: 'max-content' }}
           pagination={{
             pageSize: 10,
             showTotal: (total) => `共 ${total} 个Agent`,
           }}
         />
+
       </Card>
 
       {/* 创建Agent抽屉 */}
