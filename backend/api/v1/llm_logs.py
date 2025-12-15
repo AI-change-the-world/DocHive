@@ -1,3 +1,4 @@
+import traceback
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -118,21 +119,18 @@ async def get_llm_statistics(
         if user_id:
             conditions.append(LLMLog.user_id == user_id)
 
-        # 统计总调用次数
-        count_query = select(func.count(LLMLog.id))
+        # 统计总调用次数和总token数
+        summary_query = select(
+            func.count(LLMLog.id).label("total_calls"),
+            func.sum(LLMLog.total_tokens).label("total_tokens")
+        )
         if conditions:
-            count_query = count_query.where(and_(*conditions))
+            summary_query = summary_query.where(and_(*conditions))
 
-        total_result = await db.execute(count_query)
-        total_calls = total_result.scalar()
-
-        # 统计总token数
-        token_query = select(func.sum(LLMLog.total_tokens))
-        if conditions:
-            token_query = token_query.where(and_(*conditions))
-
-        token_result = await db.execute(token_query)
-        total_tokens = token_result.scalar() or 0
+        summary_result = await db.execute(summary_query)
+        summary_row = summary_result.first()
+        total_calls = summary_row.total_calls if summary_row else 0
+        total_tokens = summary_row.total_tokens or 0
 
         # 按状态统计
         status_query = select(
@@ -143,7 +141,8 @@ async def get_llm_statistics(
             status_query = status_query.where(and_(*conditions))
 
         status_result = await db.execute(status_query)
-        by_status = {row.status: row.count for row in status_result.all()}
+        status_rows = list(status_result.all())
+        by_status = {row.status: row.count for row in status_rows}
 
         # 按提供商统计
         provider_query = select(
@@ -156,9 +155,10 @@ async def get_llm_statistics(
             provider_query = provider_query.where(and_(*conditions))
 
         provider_result = await db.execute(provider_query)
+        provider_rows = list(provider_result.all())
         by_provider = {
             row.provider: {"calls": row.count, "tokens": row.tokens or 0}
-            for row in provider_result.all()
+            for row in provider_rows
         }
 
         # 按模型统计
@@ -172,9 +172,10 @@ async def get_llm_statistics(
             model_query = model_query.where(and_(*conditions))
 
         model_result = await db.execute(model_query)
+        model_rows = list(model_result.all())
         by_model = {
             row.model: {"calls": row.count, "tokens": row.tokens or 0}
-            for row in model_result.all()
+            for row in model_rows
         }
 
         return ResponseBase(
@@ -189,6 +190,7 @@ async def get_llm_statistics(
         )
 
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"统计失败: {str(e)}",

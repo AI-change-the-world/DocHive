@@ -5,7 +5,7 @@ app:
   secret_key: M6tz2TdDzT0mo4Z_OlGwSzSNJbS0PMDlnhZ06m4Tdls=
 
 database:
-  url: sqlite:///./dochive.db
+  url: mysql://dochive_user:dochive_pass@localhost:3307/dochive
   pool_size: 20
   max_overflow: 10
 

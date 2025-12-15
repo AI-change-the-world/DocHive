@@ -7,7 +7,8 @@ pydantic-settings==2.11.0
 
 # 数据库相关
 sqlalchemy==2.0.44
-aiosqlite # SQLite 适配器
+aiomysql  # MySQL 异步适配器
+PyMySQL  # MySQL 驱动
 
 # 文件处理
 python-multipart==0.0.20

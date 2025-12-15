@@ -656,12 +656,13 @@ class DocumentService:
         query = query.order_by(Document.upload_time.desc()).offset(skip).limit(limit)
 
         result = await db.execute(query)
-        documents = result.scalars().all()
+        documents = list(result.scalars().all())
 
         count_result = await db.execute(count_query)
-        total = len(count_result.scalars().all())
+        count_rows = list(count_result.scalars().all())
+        total = len(count_rows)
 
-        return list(documents), total
+        return documents, total
 
     @staticmethod
     async def update_document(

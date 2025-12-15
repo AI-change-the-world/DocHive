@@ -148,6 +148,10 @@ async def _validate_document_review(
     tags=["文档", "校对", "润色", "review"],
     validate_function=_validate_document_review,
     compress_function=_compress_document_review,
+    # 参数别名：state 中的 composed_document 映射到 document 参数
+    param_aliases={"document": ["composed_document", "generated_document", "draft_document"]},
+    # 状态映射：工具输出如何更新 state
+    state_mapping={"reviewed_document": "reviewed_document"},
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "reviewed_document": {

@@ -216,6 +216,9 @@ async def get_document(
             detail="文档不存在",
         )
 
+    # 立即将文档转换为字典，避免后续查询导致 cursor 失效
+    response_data = document.to_dict()
+
     # 获取映射表信息
     result = await db.execute(
         select(TemplateDocumentMapping).where(
@@ -224,8 +227,7 @@ async def get_document(
     )
     mapping = result.scalar_one_or_none()
 
-    # 创建响应数据，包含映射表中的信息
-    response_data = document.to_dict()
+    # 添加映射表中的信息
     if mapping:
         response_data["class_code"] = getattr(mapping, "class_code")
         response_data["status"] = getattr(mapping, "status")
@@ -258,8 +260,16 @@ async def list_documents(
         db, skip=skip, limit=page_size, template_id=template_id, status=status
     )
 
+    # 立即将文档转换为字典，避免后续查询导致 cursor 失效
+    documents_data = []
+    document_ids = []
+    for doc in documents:
+        doc_data = doc.to_dict()
+        documents_data.append(doc_data)
+        document_ids.append(doc.id)
+
     # 获取映射表信息
-    document_ids = [doc.id for doc in documents]
+    mapping_dict = {}
     if document_ids:
         result = await db.execute(
             select(TemplateDocumentMapping).where(
@@ -267,21 +277,26 @@ async def list_documents(
             )
         )
         mappings = result.scalars().all()
-        mapping_dict = {mapping.document_id: mapping for mapping in mappings}
-    else:
-        mapping_dict = {}
+        # 立即提取映射数据
+        for mapping in mappings:
+            mapping_dict[mapping.document_id] = {
+                "class_code": getattr(mapping, "class_code"),
+                "status": getattr(mapping, "status"),
+                "error_message": getattr(mapping, "error_message"),
+                "processed_time": getattr(mapping, "processed_time"),
+                "extracted_data": mapping.extracted_data,
+            }
 
     # 创建响应数据，包含映射表中的信息
     response_items = []
-    for doc in documents:
-        doc_data = doc.to_dict()
-        mapping = mapping_dict.get(doc.id)
-        if mapping:
-            doc_data["class_code"] = getattr(mapping, "class_code")
-            doc_data["status"] = getattr(mapping, "status")
-            doc_data["error_message"] = getattr(mapping, "error_message")
-            doc_data["processed_time"] = getattr(mapping, "processed_time")
-            doc_data["extracted_data"] = mapping.extracted_data
+    for doc_data in documents_data:
+        mapping_data = mapping_dict.get(doc_data.get("id"))
+        if mapping_data:
+            doc_data["class_code"] = mapping_data["class_code"]
+            doc_data["status"] = mapping_data["status"]
+            doc_data["error_message"] = mapping_data["error_message"]
+            doc_data["processed_time"] = mapping_data["processed_time"]
+            doc_data["extracted_data"] = mapping_data["extracted_data"]
         response_items.append(DocumentResponse.model_validate(doc_data))
 
     return ResponseBase(
@@ -310,6 +325,9 @@ async def update_document(
             detail="文档不存在",
         )
 
+    # 立即将文档转换为字典，避免后续查询导致 cursor 失效
+    response_data = document.to_dict()
+
     # 获取映射表信息
     result = await db.execute(
         select(TemplateDocumentMapping).where(
@@ -318,8 +336,7 @@ async def update_document(
     )
     mapping = result.scalar_one_or_none()
 
-    # 创建响应数据，包含映射表中的信息
-    response_data = document.to_dict()
+    # 添加映射表中的信息
     if mapping:
         response_data["class_code"] = getattr(mapping, "class_code")
         response_data["status"] = getattr(mapping, "status")

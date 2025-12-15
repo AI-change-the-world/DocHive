@@ -167,11 +167,13 @@ class AgentExecutorV3:
                     state[field] = {}
 
         # 5. 创建 ExecutionEngine 并执行
+        # Memory 系统由 auto_agent 框架内部管理，只需传 user_id
         retry_config = RetryConfig(max_retries=3, base_delay=1.0)
         engine = ExecutionEngine(
             tool_registry=registry,
             retry_config=retry_config,
             llm_client=llm_adapter,
+            memory_storage_path="./dochive_memory",  # 可选：自定义存储路径
         )
 
         # 自定义工具执行器（传递 DocHive 的 ToolContext）
@@ -187,6 +189,7 @@ class AgentExecutorV3:
             "description": agent.description,
             "goals": agent.goals or [],
             "constraints": agent.constraints or [],
+            "user_id": str(user_id) if user_id else "default",
         }
         async for event in engine.execute_plan_stream(
             plan=plan,

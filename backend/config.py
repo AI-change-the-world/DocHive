@@ -268,7 +268,7 @@ class DynamicConfig:
         origins = self._get_config("cors.origins")
         if isinstance(origins, list):
             return ",".join(origins)
-        return origins or "http://localhost:3000,http://localhost:5173"
+        return origins or "http://localhost:3000,http://localhost:5173,http://localhost:15173"
 
     @property
     def cors_origins_list(self) -> List[str]:

@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@ant-design/icons": "^6.1.0",
-    "antd": "^5.27.5",
+    "antd": "^6.1.0",
     "axios": "^1.6.0",
     "dayjs": "^1.11.10",
     "html2canvas": "^1.4.1",
@@ -33,6 +33,7 @@
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^5.0.4",
     "autoprefixer": "^10.4.21",
+    "baseline-browser-mapping": "^2.9.7",
     "eslint": "^9.36.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.22",

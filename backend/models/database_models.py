@@ -47,7 +47,7 @@ class User(Base, ToDictMixin):
 
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     username = Column(String(50), unique=True, nullable=False, index=True)
     email = Column(String(100), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
@@ -62,7 +62,7 @@ class ClassTemplate(Base, ToDictMixin):
 
     __tablename__ = "class_templates"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     name = Column(String(100), nullable=False, index=True)
     description = Column(Text)
     _levels = Column(
@@ -154,7 +154,7 @@ class ClassTemplateConfigs(Base, ToDictMixin):
 
     __tablename__ = "class_template_configs"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     template_id = Column(
         Integer, nullable=False, index=True
     )  # 关联 class_templates.id，无外键约束
@@ -172,7 +172,7 @@ class Document(Base, ToDictMixin):
 
     __tablename__ = "documents"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     title = Column(String(255), nullable=False, index=True)
     original_filename = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=False)  # 对象存储路径
@@ -241,7 +241,7 @@ class OperationLog(Base, ToDictMixin):
 
     __tablename__ = "operation_logs"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(Integer, index=True)  # 关联 users.id，无外键约束
     action = Column(
         String(50), nullable=False
@@ -258,7 +258,7 @@ class DocumentType(Base, ToDictMixin):
 
     __tablename__ = "document_types"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     template_id = Column(Integer, nullable=False,
                          index=True)  # 关联 class_templates.id
     type_code = Column(
@@ -276,7 +276,7 @@ class DocumentTypeField(Base, ToDictMixin):
 
     __tablename__ = "document_type_fields"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     doc_type_id = Column(Integer, nullable=False,
                          index=True)  # 关联 document_types.id
     field_name = Column(String(100), nullable=False)  # 字段名称，如：编制人、任务数量
@@ -295,7 +295,7 @@ class TemplateDocumentMapping(Base, ToDictMixin):
 
     __tablename__ = "template_document_mappings"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     template_id = Column(Integer, nullable=False,
                          index=True)  # 关联 class_templates.id
     document_id = Column(Integer, nullable=False,
@@ -345,7 +345,7 @@ class SystemConfig(Base, ToDictMixin):
 
     __tablename__ = "system_configs"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     config_key = Column(String(100), unique=True, nullable=False, index=True)
     config_value = Column(Text, nullable=False)
     description = Column(Text)
@@ -358,7 +358,7 @@ class LLMLog(Base, ToDictMixin):
 
     __tablename__ = "llm_logs"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     provider = Column(String(50), nullable=False,
                       index=True)  # openai, deepseek等
     model = Column(String(100), nullable=False, index=True)  # 模型名称
@@ -416,7 +416,7 @@ class CustomAgent(Base, ToDictMixin):
 
     __tablename__ = "custom_agents"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     name = Column(String(100), nullable=False, index=True, comment="Agent名称")
     description = Column(Text, comment="Agent描述")
     template_id = Column(Integer, index=True, comment="关联的模板ID")
@@ -629,7 +629,7 @@ class WritingTemplate(Base, ToDictMixin):
 
     __tablename__ = "writing_templates"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     title = Column(String(255), nullable=False, index=True, comment="模板标题")
     theme = Column(String(100), nullable=False, index=True, comment="主题分类")
     content = Column(Text, nullable=False, comment="模板内容(完整文章)")
@@ -691,7 +691,7 @@ class AgentExecutionRecord(Base, ToDictMixin):
 
     __tablename__ = "agent_execution_records"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     agent_id = Column(Integer, index=True)  # 关联 custom_agents.id
     agent_name = Column(String(200), nullable=False, index=True)  # Agent名称快照
     query = Column(Text, nullable=False)  # 用户查询

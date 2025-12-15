@@ -82,6 +82,14 @@ def _validate_document_extraction(
     tags=["文档", "摘取", "提取", "extraction"],
     validate_function=_validate_document_extraction,
     compress_function=_compress_document_extraction,
+    # 参数别名：state 中的不同名称映射到参数
+    param_aliases={
+        "documents": ["search_results", "retrieved_documents", "document_list"],
+        "outline": ["document_outline", "generated_outline"],
+        "query": ["user_query", "original_query"],
+    },
+    # 状态映射：工具输出如何更新 state
+    state_mapping={"extracted_content": "extracted_content"},
     output_schema={
         "success": {"type": "boolean", "description": "执行是否成功"},
         "extracted_content": {
